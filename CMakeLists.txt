@@ -7,7 +7,7 @@ include_directories(engine_example)
 include_directories(engine_race)
 include_directories(include)
 
-add_executable(engine
+add_library(engine_race
         engine_example/data_store.cc
         engine_example/data_store.h
         engine_example/door_plate.cc
@@ -16,6 +16,9 @@ add_executable(engine
         engine_example/engine_example.h
         engine_example/util.cc
         engine_example/util.h
+        )
+
+add_executable(engine
         engine_race/engine_race.cc
         engine_race/engine_race.h
         include/engine.h
