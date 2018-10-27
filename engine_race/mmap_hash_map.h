@@ -124,19 +124,9 @@ public:
     }
 
     node *find(const char *key, int8_t len) {
-        cout << "find" << endl;
-
         auto hash = MurmurHash2(key, len);
         auto index = hash & SLOT_MASK;
-        cout << index << endl;
-        cout << hash_table_[index].length_ << endl;
         node *obj = &hash_table_[index];
-        if (obj == nullptr) {
-            cout << "false" << endl;
-        } else {
-            cout << "true" << endl;
-            cout << obj << endl;
-        }
         for (; obj->length_ != 0;) {
             cout << obj->length_ << endl;
             // Case 1st: already exists (len == obj->length_), and is equal to
