@@ -47,10 +47,12 @@ namespace polar_race {
         auto *engine_race = new EngineRace(name);
         engine_race->value_redis_fd_ =
                 open((name + "/" + value_file_name).c_str(), O_APPEND | O_WRONLY | O_CREAT, 0644);
+        engine_race->value_redis_read_only_fd_ =
+                open((name + "/" + value_file_name).c_str(), O_RDONLY, 0644);
         *eptr = engine_race;
         engine_race->mmap_hash_map_arr_ = (mmap_hash_map *) malloc(sizeof(mmap_hash_map) * PARTITION_NUM);
         engine_race->mutex_arr_ = new mutex[PARTITION_NUM];
-#pragma omp parallel for
+//#pragma omp parallel for
         for (int i = 0; i < PARTITION_NUM; i++) {
             string key_file_name = name + std::string("/redis_index_") + to_string(i);
             log_info("file name: %.*s", key_file_name.length(), key_file_name.c_str());
@@ -61,6 +63,8 @@ namespace polar_race {
 
 // 2. Close engine
     EngineRace::~EngineRace() {
+//        close(value_redis_fd_);
+//        close(value_redis_read_only_fd_);
     }
 
 // 3. Write a key-value pair into engine
@@ -70,14 +74,13 @@ namespace polar_race {
         log_info("write tid: %d", tid);
         cnt++;
         if (cnt == 0) {
-            log_info("%lld", polar_str_to_int64(key));
-            log_info("%.*s", value.size(), value.data());
+            log_info("key: %lld", polar_str_to_int64(key));
+            log_info("value: %.*s", value.size(), value.data());
         }
         // 1st: update the index
         auto key_int = polar_str_to_int64(key);
         int val_idx = ++value_id;
         auto partition_slot = static_cast<int32_t>(key_int % PARTITION_NUM);
-        log_info("partition slot: %d", partition_slot);
         {
             unique_lock<mutex> lock(mutex_arr_[partition_slot]);
             mmap_hash_map_arr_[partition_slot].put(key.data(), KEY_SIZE, val_idx);
@@ -90,6 +93,15 @@ namespace polar_race {
 
 // 4. Read value of a key
     RetCode EngineRace::Read(const PolarString &key, std::string *value) {
+        auto key_int = polar_str_to_int64(key);
+        auto partition_slot = static_cast<int32_t>(key_int % PARTITION_NUM);
+        node *node = mmap_hash_map_arr_[partition_slot].find(key.data(), KEY_SIZE);
+        int64_t offset = node->value_idx_ * static_cast<int64_t >(VALUE_SIZE);
+        static thread_local char values[VALUE_SIZE];
+        pread(value_redis_read_only_fd_, values, VALUE_SIZE, offset);
+
+        value->clear();
+        *value = std::string(values, VALUE_SIZE);
         return kSucc;
     }
 

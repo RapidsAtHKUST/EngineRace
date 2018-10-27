@@ -26,13 +26,7 @@ echo ${fileURL}
 
 touch -r ${logfile} timestamp.old
 
-wget -c -N --tries=5 -T20 ${fileURL}
+wget ${fileURL}
 
-if [ ! -f timestamp.old ] || [ ${logfile} -nt timestamp.old ]
-then
-  echo "we got a new log file.. save log to ${latestFolder}"
-  echo "we got a new log file.. save log to ${latestFolder}" >> ./../../news.txt
-  mkdir -p ${folderName}
-  tar xvf ${logfile} -C ${folderName}
-  #tail -n300 ${folderName}/assessment.*.log > assessment-short.txt
-fi
+mkdir -p ${folderName}
+tar xvf ${logfile} -C ${folderName}

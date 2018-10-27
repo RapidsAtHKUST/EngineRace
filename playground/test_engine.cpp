@@ -37,22 +37,21 @@ int main() {
 
 //#pragma omp parallel num_threads(1)
     {
-        ret = engine->Write("aaa", "aaaaaaaaaaa");
+        ret = engine->Write("aaaaaaaa", "aaaaaaaaaaa");
         assert (ret == kSucc);
-        ret = engine->Write("aaa", "111111111111111111111111111111111111111111");
-        ret = engine->Write("aaa", "2222222");
-        ret = engine->Write("aaa", "33333333333333333333");
-        ret = engine->Write("aaa", "4");
+        ret = engine->Write("aaaaaaaa", "111111111111111111111111111111111111111111");
+        ret = engine->Write("aaaaaaaa", "2222222");
+        ret = engine->Write("aaaaaaaaaa", "4");
 
-        ret = engine->Write("bbb", "bbbbbbbbbbbb");
+        ret = engine->Write("bbbbbbbb", "bbbbbbbbbbbb");
         assert (ret == kSucc);
 
-        ret = engine->Write("ccd", "cbbbbbbbbbbbb");
+        ret = engine->Write("ccdddddd", "cbbbbbbbbbbbb");
         std::string value;
-        ret = engine->Read("aaa", &value);
+        ret = engine->Read("aaaaaaaa", &value);
         printf("Read aaa value: %s\n", value.c_str());
 
-        ret = engine->Read("bbb", &value);
+        ret = engine->Read("bbbbbbbb", &value);
         assert (ret == kSucc);
         printf("Read bbb value: %s\n", value.c_str());
 

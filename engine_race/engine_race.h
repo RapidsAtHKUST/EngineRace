@@ -14,6 +14,7 @@ namespace polar_race {
     class EngineRace : public Engine {
     public:
         int value_redis_fd_;
+        int value_redis_read_only_fd_;
         mmap_hash_map *mmap_hash_map_arr_;
         mutex *mutex_arr_;
     public:
