@@ -11,6 +11,7 @@
 #include "mmap_hash_map.h"
 
 namespace polar_race {
+    using namespace std;
     std::atomic_int num_threads(-1);
     std::atomic_int num_threads_tmp(-1);
     std::atomic_int value_id(-1);
@@ -18,7 +19,7 @@ namespace polar_race {
     constexpr int32_t VALUE_SIZE = 4096;
     constexpr int32_t KEY_SIZE = 8;
     constexpr int32_t PARTITION_NUM = 128;
-    std::string value_file_name = "value.redis";
+    const char *value_file_name = "value.redis";
 
     int64_t polar_str_to_int64(PolarString ps) {
         int64_t int3;
@@ -42,13 +43,18 @@ namespace polar_race {
 
 // 1. Open engine
     RetCode EngineRace::Open(const std::string &name, Engine **eptr) {
-        *eptr = NULL;
-        EngineRace *engine_race = new EngineRace(name);
+        *eptr = nullptr;
+        auto *engine_race = new EngineRace(name);
         engine_race->value_redis_fd_ =
                 open((name + "/" + value_file_name).c_str(), O_APPEND | O_WRONLY | O_CREAT, 0644);
         *eptr = engine_race;
+        engine_race->mmap_hash_map_arr_ = (mmap_hash_map *) malloc(sizeof(mmap_hash_map) * PARTITION_NUM);
+        engine_race->mutex_arr_ = new mutex[PARTITION_NUM];
+#pragma omp parallel for
         for (int i = 0; i < PARTITION_NUM; i++) {
-
+            string key_file_name = name + std::string("/redis_index_") + to_string(i);
+            log_info("file name: %.*s", key_file_name.length(), key_file_name.c_str());
+            engine_race->mmap_hash_map_arr_[i].open_mmap(key_file_name.c_str());
         }
         return kSucc;
     }
@@ -67,11 +73,17 @@ namespace polar_race {
             log_info("%lld", polar_str_to_int64(key));
             log_info("%.*s", value.size(), value.data());
         }
-
+        // 1st: update the index
+        auto key_int = polar_str_to_int64(key);
         int val_idx = ++value_id;
-
+        auto partition_slot = static_cast<int32_t>(key_int % PARTITION_NUM);
+        log_info("partition slot: %d", partition_slot);
+        {
+            unique_lock<mutex> lock(mutex_arr_[partition_slot]);
+            mmap_hash_map_arr_[partition_slot].put(key.data(), KEY_SIZE, val_idx);
+        }
         // 2nd: write the value to the storage
-        auto value_off = static_cast< int64_t>(VALUE_SIZE) * val_idx;
+        auto value_off = static_cast<int64_t>(VALUE_SIZE) * val_idx;
         pwrite(value_redis_fd_, value.data(), VALUE_SIZE, value_off);
         return kSucc;
     }

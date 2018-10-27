@@ -3,13 +3,19 @@
 #define ENGINE_RACE_ENGINE_RACE_H_
 
 #include <string>
+#include <mutex>
+
 #include "include/engine.h"
+#include "mmap_hash_map.h"
 
 namespace polar_race {
+    using namespace std;
 
     class EngineRace : public Engine {
     public:
         int value_redis_fd_;
+        mmap_hash_map *mmap_hash_map_arr_;
+        mutex *mutex_arr_;
     public:
         static RetCode Open(const std::string &name, Engine **eptr);
 
