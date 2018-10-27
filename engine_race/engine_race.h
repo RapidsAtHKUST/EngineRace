@@ -9,9 +9,12 @@ namespace polar_race {
 
     class EngineRace : public Engine {
     public:
+        int value_redis_fd_;
+    public:
         static RetCode Open(const std::string &name, Engine **eptr);
 
         explicit EngineRace(const std::string &dir) {
+
         }
 
         ~EngineRace();
