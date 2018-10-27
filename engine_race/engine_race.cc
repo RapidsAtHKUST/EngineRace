@@ -1,9 +1,23 @@
 // Copyright [2018] Alibaba Cloud All rights reserved
 #include "engine_race.h"
 
+#include <atomic>
+#include "log.h"
+
 namespace polar_race {
+    std::atomic_int num_threads(-1);
+    std::atomic_int num_threads_tmp(-1);
+
+    int64_t polar_str_to_int64(PolarString ps) {
+        int64_t int3;
+        memcpy(&int3, ps.data(), sizeof(int64_t));
+        return int3;
+    }
 
     RetCode Engine::Open(const std::string &name, Engine **eptr) {
+        static thread_local int32_t tid = ++num_threads;
+        log_info("\"open... %d", tid);
+        log_info("%.*s", name.length(), name.c_str());
         return EngineRace::Open(name, eptr);
     }
 
@@ -29,6 +43,14 @@ namespace polar_race {
 
 // 3. Write a key-value pair into engine
     RetCode EngineRace::Write(const PolarString &key, const PolarString &value) {
+        static thread_local int32_t tid = ++num_threads;
+        static thread_local int32_t cnt = 0;
+        log_info("%d", tid);
+        cnt++;
+        if (cnt == 0) {
+            log_info("%lld", polar_str_to_int64(key));
+            log_info("%.*s", value.size(), value.data());
+        }
         return kSucc;
     }
 

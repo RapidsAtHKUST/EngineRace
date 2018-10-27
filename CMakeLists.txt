@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.12)
 project(engine)
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 11)
 
 include_directories(engine_example)
 include_directories(engine_race)
@@ -20,7 +20,7 @@ add_library(engine_race
         engine_example/util.h
         )
 
-add_executable(engine
+add_library(test_engine
         engine_race/engine_race.cc
         engine_race/engine_race.h
         include/engine.h
