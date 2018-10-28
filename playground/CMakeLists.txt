@@ -12,4 +12,7 @@ endif ()
 add_executable(test_engine_nonoff test_engine.cpp ../engine_race/engine_race.cc ../engine_race/log.cc)
 #link_directories(${CMAKE_SOURCE_DIR}/lib)
 message(${CMAKE_SOURCE_DIR})
+
+
+add_executable(test_sparsepp test_sparsepp.cpp stat.cpp log.cpp)
 #target_link_libraries(test_engine_nonoff PRIVATE ${CMAKE_SOURCE_DIR}/engine_race/lib/libengine.a)

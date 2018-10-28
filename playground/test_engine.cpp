@@ -33,7 +33,7 @@ int main() {
     Engine *engine = nullptr;
 
     int64_t round_size = 100000;
-    int64_t iter_num = 2;   // switch this to test different settings
+    int64_t iter_num = 3;   // switch this to test different settings
     for (int64_t iter = 0; iter < iter_num; iter++) {
         // 1st: write
         Engine::Open(kEnginePath, &engine);
