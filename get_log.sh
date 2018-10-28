@@ -25,8 +25,7 @@ echo ${fileURL}
 #backup the old file timestamp
 
 touch -r ${logfile} timestamp.old
-
+rm *.tar
 wget ${fileURL}
-
 mkdir -p ${folderName}
 tar xvf ${logfile} -C ${folderName}

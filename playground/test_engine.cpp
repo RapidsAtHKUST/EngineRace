@@ -32,28 +32,30 @@ int main() {
     int seed = 10;
     Engine *engine = nullptr;
 
-//    {
-//        // 1st: write
-//        Engine::Open(kEnginePath, &engine);
-//
-//#pragma omp parallel for num_threads(16)
-//        for (int64_t i = 0; i < 100000; i++) {
-//            static thread_local char polar_key_str[8];
-//            static thread_local char polar_value_str[4096];
-//            memcpy(polar_key_str, &i, sizeof(int64_t));
-//            for (int64_t j = 0; j < 4096; j += 8) {
-//                int64_t tmp = j + i + seed;
-//                memcpy(polar_value_str + j, &tmp, sizeof(int64_t));
-//            }
-//            engine->Write(polar_key_str, polar_value_str);
-//        };
-//    }
+    int64_t round_size = 100000;
+    int64_t iter_num = 2;   // switch this to test different settings
+    for (int64_t iter = 0; iter < iter_num; iter++) {
+        // 1st: write
+        Engine::Open(kEnginePath, &engine);
+
+#pragma omp parallel for num_threads(16)
+        for (int64_t i = iter * round_size; i < (1 + iter) * round_size; i++) {
+            static thread_local char polar_key_str[8];
+            static thread_local char polar_value_str[4096];
+            memcpy(polar_key_str, &i, sizeof(int64_t));
+            for (int64_t j = 0; j < 4096; j += 8) {
+                int64_t tmp = j + i + seed;
+                memcpy(polar_value_str + j, &tmp, sizeof(int64_t));
+            }
+            engine->Write(polar_key_str, polar_value_str);
+        };
+    }
 
     {
         // 2nd: read
         Engine::Open(kEnginePath, &engine);
 #pragma omp parallel for num_threads(16) schedule(dynamic, 48)
-        for (int64_t i = 0; i < 100000; i++) {
+        for (int64_t i = 0; i < round_size * iter_num; i++) {
             static thread_local char polar_key_str[8];
             static thread_local std::string tmp_str;
             static thread_local bool is_first = true;
