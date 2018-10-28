@@ -4,22 +4,27 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
+#include <unistd.h>
 
 #include <atomic>
+#include <iostream>
 
 #include "log.h"
-#include "mmap_hash_map.h"
 
 namespace polar_race {
+    inline bool file_exists(const char *file_name) {
+        struct stat buffer;
+        return (stat(file_name, &buffer) == 0);
+    }
+
     using namespace std;
     std::atomic_int num_threads(-1);
-    std::atomic_int num_threads_tmp(-1);
-    std::atomic_int value_id(-1);
 
-    constexpr int32_t VALUE_SIZE = 4096;
-    constexpr int32_t KEY_SIZE = 8;
-    constexpr int32_t PARTITION_NUM = 128;
     const char *value_file_name = "value.redis";
+    const char *index_meta_file_name = "index-meta.redis";
+    const char *value_meta_file_name = "value-meta.redis";
 
     int64_t polar_str_to_int64(PolarString ps) {
         int64_t int3;
@@ -29,9 +34,6 @@ namespace polar_race {
 
     RetCode Engine::Open(const std::string &name, Engine **eptr) {
         // recompute value id first
-        static thread_local int32_t tid = ++num_threads_tmp;
-        log_info("\"open... tid: %d", tid);
-        cout << "open..." << endl;
         log_info("%.*s", name.length(), name.c_str());
         return EngineRace::Open(name, eptr);
     }
@@ -42,52 +44,90 @@ namespace polar_race {
 /*
  * Complete the functions below to implement you own engine
  */
+    EngineRace::EngineRace(const std::string &dir) :
+            hash_map_mutex_arr_(new mutex[PARTITION_NUM]),
+            index_file_fd_arr_(new int[PARTITION_NUM]),
+            hash_map_arr_(PARTITION_NUM) {
+        // 1st: hash index element count array
+        string index_meta_path = dir + "/" + string(index_meta_file_name);
+        bool is_first = file_exists(index_meta_path.c_str());
+        index_meta_fd_ = open(index_meta_path.c_str(), O_WRONLY | O_CREAT, 0644);
+        if (is_first) {
+            ftruncate(index_meta_fd_, META_INDEX_SIZE);
+            mmap_hash_count_arr_ = (int32_t *) mmap(nullptr, (size_t) META_INDEX_SIZE, \
+                   PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, index_meta_fd_, 0);
+            memset(mmap_hash_count_arr_, 0, META_INDEX_SIZE);
+        } else {
+            mmap_hash_count_arr_ = (int32_t *) mmap(nullptr, (size_t) META_INDEX_SIZE, \
+                   PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, index_meta_fd_, 0);
+        }
+
+        // 2nd: hash table files
+        for (int i = 0; i < PARTITION_NUM; i++) {
+            string key_file_name = dir + std::string("/index_") + to_string(i) + std::string(".redis");
+            is_first = file_exists(key_file_name.c_str());
+            index_file_fd_arr_[i] = open(index_meta_path.c_str(), O_WRONLY | O_CREAT, 0644);
+        }
+        hash_map_mutex_arr_ = new mutex[PARTITION_NUM];
+
+        // 3rd: value meta count array
+        string value_meta_path = dir + "/" + string(value_meta_file_name);
+        is_first = file_exists(value_meta_path.c_str());
+        value_meta_fd_ = open(value_meta_path.c_str(), O_WRONLY | O_CREAT, 0644);
+        if (is_first) {
+            ftruncate(value_meta_fd_, META_VALUE_SIZE);
+            mmap_value_id_pair_arr_ = (pair<int32_t, int32_t> *) mmap(
+                    nullptr, (size_t) META_VALUE_SIZE,
+                    PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, value_meta_fd_, 0);
+            for (int i = 0; i < NUM_THREADS; i++) {
+                mmap_value_id_pair_arr_[i].first = i * ID_SKIP;
+                mmap_value_id_pair_arr_[i].second = i * ID_SKIP;
+            }
+        } else {
+            mmap_value_id_pair_arr_ = (pair<int32_t, int32_t> *) mmap(
+                    nullptr, (size_t) META_VALUE_SIZE,
+                    PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, value_meta_fd_, 0);
+        }
+
+        // 4th: value file
+        string value_file_path = (dir + "/" + value_file_name);
+        is_first = file_exists(value_file_path.c_str());
+        if (is_first) {
+            value_write_only_fd_ = open(value_file_path.c_str(), O_WRONLY | O_CREAT, 0644);
+            ftruncate(value_write_only_fd_, static_cast<int64_t >(ID_SKIP) * VALUE_SIZE * NUM_THREADS);
+        } else {
+            value_write_only_fd_ = open(value_file_path.c_str(), O_WRONLY, 0644);
+        }
+        value_read_only_fd_ = open(value_file_path.c_str(), O_RDONLY, 0644);
+    }
+
 // 1. Open engine
     RetCode EngineRace::Open(const std::string &name, Engine **eptr) {
         *eptr = nullptr;
         auto *engine_race = new EngineRace(name);
-        engine_race->value_redis_fd_ =
-                open((name + "/" + value_file_name).c_str(), O_RDWR | O_CREAT, 0644);
-        cout << "value fd:" << engine_race->value_redis_fd_ << endl;
-        engine_race->value_redis_read_only_fd_ =
-                open((name + "/" + value_file_name).c_str(), O_RDONLY, 0644);
         *eptr = engine_race;
-        engine_race->mmap_hash_map_arr_ = (mmap_hash_map *) malloc(sizeof(mmap_hash_map) * PARTITION_NUM);
-        engine_race->mutex_arr_ = new mutex[PARTITION_NUM];
-        for (int i = 0; i < PARTITION_NUM; i++) {
-            string key_file_name = name + std::string("/redis_index_") + to_string(i);
-            engine_race->mmap_hash_map_arr_[i].open_mmap(key_file_name.c_str());
-            value_id += engine_race->mmap_hash_map_arr_[i].get_insert_num();
-        }
-        log_info("value num: %d", value_id.load());
+        // 4th: value file
         return kSucc;
     }
 
 // 2. Close engine
     EngineRace::~EngineRace() {
+        delete[]hash_map_mutex_arr_;
     }
 
 // 3. Write a key-value pair into engine
     RetCode EngineRace::Write(const PolarString &key, const PolarString &value) {
-        static thread_local int32_t tid = ++num_threads;
-        static thread_local int32_t cnt = 0;
-        cnt++;
-        if (cnt == 0) {
-            log_info("write tid: %d", tid);
-            log_info("key: %lld", polar_str_to_int64(key));
-            log_info("value: %.*s", value.size(), value.data());
-        }
         // 1st: update the index
+        static thread_local int32_t tid = (++num_threads) % NUM_THREADS;
         auto key_int = polar_str_to_int64(key);
         int val_idx = ++value_id;
         auto partition_slot = static_cast<int32_t>(key_int % PARTITION_NUM);
         {
-            unique_lock<mutex> lock(mutex_arr_[partition_slot]);
-            mmap_hash_map_arr_[partition_slot].put(key.data(), KEY_SIZE, val_idx);
+            unique_lock<mutex> lock(hash_map_mutex_arr_[partition_slot]);
         }
         // 2nd: write the value to the storage
         auto value_off = static_cast<int64_t>(VALUE_SIZE) * val_idx;
-        pwrite(value_redis_fd_, value.data(), VALUE_SIZE, value_off);
+        pwrite(value_write_only_fd_, value.data(), VALUE_SIZE, value_off);
 
         return kSucc;
     }
@@ -96,11 +136,10 @@ namespace polar_race {
     RetCode EngineRace::Read(const PolarString &key, std::string *value) {
         auto key_int = polar_str_to_int64(key);
         auto partition_slot = static_cast<int32_t>(key_int % PARTITION_NUM);
-        node *node = mmap_hash_map_arr_[partition_slot].find(key.data(), KEY_SIZE);
         int64_t offset = node->value_idx_ * static_cast<int64_t >(VALUE_SIZE);
         static thread_local char values[VALUE_SIZE];
         log_info("%lld", offset);
-        pread(value_redis_read_only_fd_, values, VALUE_SIZE, offset);
+        pread(value_read_only_fd_, values, VALUE_SIZE, offset);
 
         value->clear();
         *value = std::string(values, VALUE_SIZE);
@@ -122,5 +161,4 @@ namespace polar_race {
                               Visitor &visitor) {
         return kSucc;
     }
-
 }  // namespace polar_race
