@@ -56,7 +56,6 @@ namespace polar_race {
         engine_race->mutex_arr_ = new mutex[PARTITION_NUM];
         for (int i = 0; i < PARTITION_NUM; i++) {
             string key_file_name = name + std::string("/redis_index_") + to_string(i);
-//            log_info("file name: %.*s", key_file_name.length(), key_file_name.c_str());
             engine_race->mmap_hash_map_arr_[i].open_mmap(key_file_name.c_str());
             value_id += engine_race->mmap_hash_map_arr_[i].get_insert_num();
         }

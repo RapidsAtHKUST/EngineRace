@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string>
 #include "include/engine.h"
+#include "../engine_race/log.h"
 
 static const char kEnginePath[] = "/tmp/test_engine";
 static const char kDumpPath[] = "/tmp/test_dump";
@@ -28,39 +29,52 @@ private:
 };
 
 int main() {
-    Engine *engine = NULL;
+    int seed = 10;
+    Engine *engine = nullptr;
 
-    RetCode ret = Engine::Open(kEnginePath, &engine);
-    assert (ret == kSucc);
+//    {
+//        // 1st: write
+//        Engine::Open(kEnginePath, &engine);
+//
+//#pragma omp parallel for num_threads(16)
+//        for (int64_t i = 0; i < 100000; i++) {
+//            static thread_local char polar_key_str[8];
+//            static thread_local char polar_value_str[4096];
+//            memcpy(polar_key_str, &i, sizeof(int64_t));
+//            for (int64_t j = 0; j < 4096; j += 8) {
+//                int64_t tmp = j + i + seed;
+//                memcpy(polar_value_str + j, &tmp, sizeof(int64_t));
+//            }
+//            engine->Write(polar_key_str, polar_value_str);
+//        };
+//    }
 
     {
-        ret = engine->Write("aaaaaaaa", "aaaaaaaaaaa");
-        assert (ret == kSucc);
-        ret = engine->Write("aaaaaaaa", "111111111111111111111111111111111111111111");
-        ret = engine->Write("aaaaaaaa", "2222222");
-        ret = engine->Write("aaaaaaaaaa", "4");
-
-        ret = engine->Write("bbbbbbbb", "bbbbbbbbbbbb");
-        assert (ret == kSucc);
-
-        ret = engine->Write("ccdddddd", "cbbbbbbbbbbbb");
-        std::string value;
-        ret = engine->Read("aaaaaaaa", &value);
-        printf("Read aaa value: %s\n", value.c_str());
-
-        ret = engine->Read("bbbbbbbb", &value);
-        assert (ret == kSucc);
-        printf("Read bbb value: %s\n", value.c_str());
-
-        int key_cnt = 0;
-        DumpVisitor vistor(&key_cnt);
-        ret = engine->Range("b", "", vistor);
-        assert (ret == kSucc);
-        printf("Range key cnt: %d\n", key_cnt);
-    };
-
+        // 2nd: read
+        Engine::Open(kEnginePath, &engine);
+#pragma omp parallel for num_threads(16) schedule(dynamic, 48)
+        for (int64_t i = 0; i < 100000; i++) {
+            static thread_local char polar_key_str[8];
+            static thread_local std::string tmp_str;
+            static thread_local bool is_first = true;
+            int64_t verify_int = -1;
+            memcpy(polar_key_str, &i, sizeof(int64_t));
+            PolarString polar_key(polar_key_str, 8);
+            engine->Read(polar_key, &tmp_str);
+            for (int64_t j = 0; j < 4096; j += 8) {
+                memcpy(&verify_int, tmp_str.c_str() + j, sizeof(int64_t));
+                assert(verify_int == j + i + seed);
+                if (is_first) {
+                    is_first = false;
+                    log_info("%lld, %lld", verify_int, j + i);
+                }
+            }
+            // 2nd: read
+        };
+    }
     delete engine;
 
+    log_info("correct...");
     return 0;
 }
 
