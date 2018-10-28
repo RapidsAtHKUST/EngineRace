@@ -12,8 +12,6 @@
 
 #include <iostream>
 
-#include "polar_string.h"
-
 #include "log.h"
 
 using namespace std;
