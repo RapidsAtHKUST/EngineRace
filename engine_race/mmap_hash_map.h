@@ -12,6 +12,8 @@
 
 #include <iostream>
 
+#include "polar_string.h"
+
 using namespace std;
 
 // https://github.com/AlgorithmPlayer/KeyValuePlay/blob/master/other_topers_codes/5_blahgeek.h
@@ -81,6 +83,8 @@ asm(
 
 extern "C" uint32_t MurmurHash2(const void *, int);
 
+
+
 struct node {
     int8_t length_;
     char key_str_[8];
@@ -95,22 +99,32 @@ inline bool file_exists(const char *file_name) {
 
 #define SLOT_NUM ((1 << 20))
 #define SLOT_MASK ((1 << 20) - 1)
+#define META_SIZE (4096)
 
 class mmap_hash_map {
-    node *hash_table_;
-    int table_fd;
+    // store the current value update num
+    int32_t *meta_info_;
+    int meta_fd_;
 
+    // store the indices for values
+    node *hash_table_;
+    int table_fd_;
 public:
     void open_mmap(const char *file_name) {
         bool is_exists = file_exists(file_name);
-//        bool is_exists = false;
-        table_fd = open(file_name, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
+        meta_fd_ = open(file_name, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
+        ftruncate(meta_fd_, META_SIZE);
+        meta_info_ = (int32_t *) mmap(nullptr, META_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, meta_fd_,
+                                      0);
+
+        table_fd_ = open(file_name, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
         auto buffer_size = SLOT_NUM * sizeof(node);
-        ftruncate(table_fd, buffer_size);
+        ftruncate(table_fd_, buffer_size);
         hash_table_ = (node *)
-                mmap(nullptr, buffer_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, table_fd, 0);
+                mmap(nullptr, buffer_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, table_fd_, 0);
         if (!is_exists) {
             memset(hash_table_, 0, buffer_size);
+            memset(meta_info_, 0, META_SIZE);
         }
     }
 
@@ -120,17 +134,28 @@ public:
 
     ~mmap_hash_map() {
         munmap(hash_table_, SLOT_NUM * sizeof(node));
-        close(table_fd);
+        close(table_fd_);
+
+        munmap(meta_info_, META_SIZE);
+    }
+
+    int64_t polar_str_to_int64_hash(const char *data) {
+        int64_t int3;
+        memcpy(&int3, data, sizeof(int64_t));
+        return int3;
     }
 
     node *find(const char *key, int8_t len) {
-        auto hash = MurmurHash2(key, len);
+//        auto hash = MurmurHash2(key, len);
+        auto hash = polar_str_to_int64_hash(key);
         auto index = hash & SLOT_MASK;
         node *obj = &hash_table_[index];
         for (; obj->length_ != 0;) {
             cout << obj->length_ << endl;
             // Case 1st: already exists (len == obj->length_), and is equal to
-            if (len == obj->length_ && memcmp(key, obj->key_str_, len) == 0) { return obj; }
+            if (len == obj->length_ && memcmp(key, obj->key_str_, len) == 0) {
+                return obj;
+            }
 
             // Case 2nd: linear probing
             index++;
@@ -141,9 +166,14 @@ public:
     }
 
     void insert(node *obj, const char *key, int8_t len, int32_t assign_idx) {
+        meta_info_[0]++;
         obj->length_ = len;
         memcpy(obj->key_str_, key, sizeof(char) * len);
         obj->value_idx_ = assign_idx;
+    }
+
+    int32_t get_insert_num() {
+        return meta_info_[0];
     }
 
     void put(const char *key, int8_t len, int32_t assign_idx) {

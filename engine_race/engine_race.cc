@@ -28,6 +28,7 @@ namespace polar_race {
     }
 
     RetCode Engine::Open(const std::string &name, Engine **eptr) {
+        // recompute value id first
         static thread_local int32_t tid = ++num_threads_tmp;
         log_info("\"open... tid: %d", tid);
         cout << "open..." << endl;
@@ -41,7 +42,6 @@ namespace polar_race {
 /*
  * Complete the functions below to implement you own engine
  */
-
 // 1. Open engine
     RetCode EngineRace::Open(const std::string &name, Engine **eptr) {
         *eptr = nullptr;
@@ -56,9 +56,11 @@ namespace polar_race {
         engine_race->mutex_arr_ = new mutex[PARTITION_NUM];
         for (int i = 0; i < PARTITION_NUM; i++) {
             string key_file_name = name + std::string("/redis_index_") + to_string(i);
-            log_info("file name: %.*s", key_file_name.length(), key_file_name.c_str());
+//            log_info("file name: %.*s", key_file_name.length(), key_file_name.c_str());
             engine_race->mmap_hash_map_arr_[i].open_mmap(key_file_name.c_str());
+            value_id += engine_race->mmap_hash_map_arr_[i].get_insert_num();
         }
+        log_info("value num: %d", value_id.load());
         return kSucc;
     }
 
@@ -70,9 +72,9 @@ namespace polar_race {
     RetCode EngineRace::Write(const PolarString &key, const PolarString &value) {
         static thread_local int32_t tid = ++num_threads;
         static thread_local int32_t cnt = 0;
-        log_info("write tid: %d", tid);
         cnt++;
         if (cnt == 0) {
+            log_info("write tid: %d", tid);
             log_info("key: %lld", polar_str_to_int64(key));
             log_info("value: %.*s", value.size(), value.data());
         }
@@ -87,6 +89,7 @@ namespace polar_race {
         // 2nd: write the value to the storage
         auto value_off = static_cast<int64_t>(VALUE_SIZE) * val_idx;
         pwrite(value_redis_fd_, value.data(), VALUE_SIZE, value_off);
+
         return kSucc;
     }
 
