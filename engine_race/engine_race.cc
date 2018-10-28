@@ -30,6 +30,7 @@ namespace polar_race {
     RetCode Engine::Open(const std::string &name, Engine **eptr) {
         static thread_local int32_t tid = ++num_threads_tmp;
         log_info("\"open... tid: %d", tid);
+        cout << "open..." << endl;
         log_info("%.*s", name.length(), name.c_str());
         return EngineRace::Open(name, eptr);
     }
@@ -46,13 +47,13 @@ namespace polar_race {
         *eptr = nullptr;
         auto *engine_race = new EngineRace(name);
         engine_race->value_redis_fd_ =
-                open((name + "/" + value_file_name).c_str(), O_APPEND | O_WRONLY | O_CREAT, 0644);
+                open((name + "/" + value_file_name).c_str(), O_RDWR | O_CREAT, 0644);
+        cout << "value fd:" << engine_race->value_redis_fd_ << endl;
         engine_race->value_redis_read_only_fd_ =
                 open((name + "/" + value_file_name).c_str(), O_RDONLY, 0644);
         *eptr = engine_race;
         engine_race->mmap_hash_map_arr_ = (mmap_hash_map *) malloc(sizeof(mmap_hash_map) * PARTITION_NUM);
         engine_race->mutex_arr_ = new mutex[PARTITION_NUM];
-//#pragma omp parallel for
         for (int i = 0; i < PARTITION_NUM; i++) {
             string key_file_name = name + std::string("/redis_index_") + to_string(i);
             log_info("file name: %.*s", key_file_name.length(), key_file_name.c_str());
@@ -63,8 +64,6 @@ namespace polar_race {
 
 // 2. Close engine
     EngineRace::~EngineRace() {
-//        close(value_redis_fd_);
-//        close(value_redis_read_only_fd_);
     }
 
 // 3. Write a key-value pair into engine

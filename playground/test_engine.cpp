@@ -7,8 +7,6 @@
 #include "include/engine.h"
 
 static const char kEnginePath[] = "/tmp/test_engine";
-//static const char kEnginePath[] = "/home/yche/mmap";
-//static const char kDumpPath[] = "/tmp/test_dump";
 static const char kDumpPath[] = "/tmp/test_dump";
 
 using namespace polar_race;
@@ -35,7 +33,6 @@ int main() {
     RetCode ret = Engine::Open(kEnginePath, &engine);
     assert (ret == kSucc);
 
-//#pragma omp parallel num_threads(1)
     {
         ret = engine->Write("aaaaaaaa", "aaaaaaaaaaa");
         assert (ret == kSucc);
