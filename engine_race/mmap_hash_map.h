@@ -14,6 +14,8 @@
 
 #include "polar_string.h"
 
+#include "log.h"
+
 using namespace std;
 
 // https://github.com/AlgorithmPlayer/KeyValuePlay/blob/master/other_topers_codes/5_blahgeek.h
@@ -83,8 +85,6 @@ asm(
 
 extern "C" uint32_t MurmurHash2(const void *, int);
 
-
-
 struct node {
     int8_t length_;
     char key_str_[8];
@@ -95,7 +95,6 @@ inline bool file_exists(const char *file_name) {
     struct stat buffer;
     return (stat(file_name, &buffer) == 0);
 }
-
 
 #define SLOT_NUM ((1 << 20))
 #define SLOT_MASK ((1 << 20) - 1)
@@ -113,16 +112,17 @@ public:
     void open_mmap(const char *file_name) {
         bool is_exists = file_exists(file_name);
         meta_fd_ = open(file_name, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
-        ftruncate(meta_fd_, META_SIZE);
+        if (!is_exists) { ftruncate(meta_fd_, META_SIZE); }
         meta_info_ = (int32_t *) mmap(nullptr, META_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, meta_fd_,
                                       0);
 
         table_fd_ = open(file_name, O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
         auto buffer_size = SLOT_NUM * sizeof(node);
-        ftruncate(table_fd_, buffer_size);
+        if (!is_exists) { ftruncate(table_fd_, buffer_size); }
         hash_table_ = (node *)
                 mmap(nullptr, buffer_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, table_fd_, 0);
         if (!is_exists) {
+            log_info("firs time in ..., %s", file_name);
             memset(hash_table_, 0, buffer_size);
             memset(meta_info_, 0, META_SIZE);
         }
@@ -133,10 +133,11 @@ public:
     }
 
     ~mmap_hash_map() {
-        munmap(hash_table_, SLOT_NUM * sizeof(node));
-        close(table_fd_);
-
-        munmap(meta_info_, META_SIZE);
+//        munmap(hash_table_, SLOT_NUM * sizeof(node));
+//        close(table_fd_);
+//
+//        munmap(meta_info_, META_SIZE);
+//        close(meta_fd_);
     }
 
     int64_t polar_str_to_int64_hash(const char *data) {
@@ -149,7 +150,7 @@ public:
 //        auto hash = MurmurHash2(key, len);
         auto hash = polar_str_to_int64_hash(key);
         auto index = hash & SLOT_MASK;
-        node *obj = &hash_table_[index];
+        node *obj = hash_table_ + index;
         for (; obj->length_ != 0;) {
             cout << obj->length_ << endl;
             // Case 1st: already exists (len == obj->length_), and is equal to
@@ -160,7 +161,7 @@ public:
             // Case 2nd: linear probing
             index++;
             index &= SLOT_MASK;
-            obj = &hash_table_[index];
+            obj = hash_table_ + index;
         }
         return obj;
     }

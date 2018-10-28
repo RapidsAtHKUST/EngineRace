@@ -100,6 +100,7 @@ namespace polar_race {
         node *node = mmap_hash_map_arr_[partition_slot].find(key.data(), KEY_SIZE);
         int64_t offset = node->value_idx_ * static_cast<int64_t >(VALUE_SIZE);
         static thread_local char values[VALUE_SIZE];
+        log_info("%lld", offset);
         pread(value_redis_read_only_fd_, values, VALUE_SIZE, offset);
 
         value->clear();
