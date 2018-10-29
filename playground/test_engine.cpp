@@ -56,7 +56,8 @@ int main() {
 //    exec("rm -r /tmp/test_engine/*");
 
 //    int64_t round_size = 2000;
-    int64_t round_size = 255000 * NUM_THREADS;
+//    int64_t round_size = 255000 * NUM_THREADS;
+    int64_t round_size = 25500 * NUM_THREADS;
     int64_t iter_num = 4;   // switch this to test different settings
     for (int64_t iter = 0; iter < iter_num; iter++) {
         // 1st: write

@@ -7,7 +7,9 @@ include_directories(engine_example)
 include_directories(engine_race)
 include_directories(include)
 
-add_compile_options(-O0 -g)
+add_compile_options(-O2 -g -fno-omit-frame-pointer -W -Wextra -Wall -Wsign-compare
+-Wno-unused-parameter -Woverloaded-virtual
+-Wnon-virtual-dtor -Wno-missing-field-initializers)
 
 add_library(engine_race
         engine_example/data_store.cc

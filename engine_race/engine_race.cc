@@ -11,6 +11,9 @@
 
 #include "log.h"
 
+#include "util.h"
+#include "stat.h"
+
 namespace polar_race {
     inline bool file_exists(const char *file_name) {
         struct stat buffer;
@@ -44,10 +47,10 @@ namespace polar_race {
  * Complete the functions below to implement you own engine
  */
     EngineRace::EngineRace(const std::string &dir) :
-            partition_cardinality_arr_(new int32_t[PARTITION_NUM]),
-            partition_mutex_arr_(new mutex[PARTITION_NUM]),
-            hash_map_arr_(PARTITION_NUM),
             index_file_fd_arr_(new int[PARTITION_NUM]),
+            partition_cardinality_arr_(new int32_t[PARTITION_NUM]),
+            hash_map_arr_(PARTITION_NUM),
+            partition_mutex_arr_(new mutex[PARTITION_NUM]),
             mmap_index_entry_arr_(new IndexEntry *[PARTITION_NUM]),
             value_id_range_arr_(new ValueMetaEntry[NUM_THREADS]),
             mmap_value_entry_arr_(new char *[NUM_THREADS]) {
@@ -62,7 +65,8 @@ namespace polar_race {
         mmap_partition_cardinality_arr_ = (int32_t *) mmap(nullptr, (size_t) META_INDEX_SIZE, \
                    PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, index_meta_fd_, 0);
         memcpy(partition_cardinality_arr_, mmap_partition_cardinality_arr_, sizeof(int32_t) * PARTITION_NUM);
-        log_info("(1) finish index meta, %s", strerror(errno));
+        log_info("(1) finish index meta, %s; mem usage: %s KB", strerror(errno),
+                 FormatWithCommas(getValue()).c_str());
 
         // 2nd: index (partitions, k-v mapping)
         int32_t total_cnt = 0;
@@ -89,7 +93,8 @@ namespace polar_race {
             }
             total_cnt += process_cnt;
         }
-        log_info("(2) finish index re-building, %s", strerror(errno));
+        log_info("(2) finish index re-building, %s; mem usage: %s KB", strerror(errno),
+                 FormatWithCommas(getValue()).c_str());
 
         // 3rd: value meta info
         string value_meta_path = dir + "/" + string(value_meta_file_name);
@@ -111,7 +116,7 @@ namespace polar_race {
         } else {
             memcpy(value_id_range_arr_, mmap_value_id_range_arr_, sizeof(ValueMetaEntry) * NUM_THREADS);
         }
-        log_info("(3) finish value meta, %s", strerror(errno));
+        log_info("(3) finish value meta, %s; mem usage: %s KB", strerror(errno), FormatWithCommas(getValue()).c_str());
 
         // 4th: value file
         string value_file_path = (dir + "/" + value_file_name);
@@ -135,7 +140,7 @@ namespace polar_race {
                         value_write_only_fd_, chunk_id * VALUE_CHUNK_MMAP_SIZE + start_off);
             }
         }
-        log_info("(4) finish value, %s", strerror(errno));
+        log_info("(4) finish value, %s; mem usage: %s KB", strerror(errno), FormatWithCommas(getValue()).c_str());
     }
 
 // 1. Open engine
