@@ -159,12 +159,14 @@ namespace polar_race {
                 munmap(mmap_index_entry_arr_[i], INDEX_CHUNK_MMAP_SIZE);
             }
         }
-        munmap((int32_t *) mmap_partition_cardinality_arr_, META_INDEX_SIZE);
+        munmap(mmap_partition_cardinality_arr_, META_INDEX_SIZE);
         munmap(mmap_value_id_range_arr_, META_VALUE_SIZE);
         delete[]partition_mutex_arr_;
         delete[]index_file_fd_arr_;
         delete[]mmap_index_entry_arr_;
         delete[]mmap_value_entry_arr_;
+        delete[]value_id_range_arr_;
+        delete[]partition_cardinality_arr_;
     }
 
 // 3. Write a key-value pair into engine
