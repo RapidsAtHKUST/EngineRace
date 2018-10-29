@@ -49,13 +49,13 @@ private:
 int main() {
     int seed = 10;
     Engine *engine = nullptr;
-    int NUM_THREADS = 64;
-//    int NUM_THREADS = 1;
+//    int NUM_THREADS = 16;
+    int NUM_THREADS = 1;
     exec("rm -r /home/yche/test_engine/*");
 
-//    int64_t round_size = 1000;
-    int64_t round_size = 25000 * NUM_THREADS;
-    int64_t iter_num = 4;   // switch this to test different settings
+    int64_t round_size = 2000;
+//    int64_t round_size = 255000 * NUM_THREADS;
+    int64_t iter_num = 1;   // switch this to test different settings
     for (int64_t iter = 0; iter < iter_num; iter++) {
         // 1st: write
         log_info("iter: %d", iter);
@@ -70,6 +70,7 @@ int main() {
                 int64_t tmp = j + i + seed;
                 memcpy(polar_value_str + j, &tmp, sizeof(int64_t));
             }
+#pragma omp critical
             engine->Write(polar_key_str, polar_value_str);
         };
     }
@@ -95,7 +96,7 @@ int main() {
                 assert(verify_int == j + i + seed);
                 if (is_first) {
                     is_first = false;
-                    log_info("%lld, %lld", verify_int, j + i);
+                    log_info("%lld, %lld", verify_int, j + i + seed);
                 }
             }
             // 2nd: read

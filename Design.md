@@ -1,10 +1,14 @@
+## Important
+
+Files are append-only or write-only or read-only...
+
 ## Update Logic
 
 accumulate 1MB unmap, requiring `64MB + |P| * 1MB`
 
 ## Index
 
-partition by range, i.e. `partition_id = key_int % |P|`
+partition by range, i.e. `partition_id = key_int_ % |P|`
 
 * in-memory: `|P|` sparesepp hash maps
 * out-of-core: `|P|` : 
