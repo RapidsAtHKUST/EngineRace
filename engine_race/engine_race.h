@@ -10,12 +10,11 @@
 #include "sparsepp/spp.h"
 //#include "google/sparse_hash_map"
 
-#define PARTITION_NUM (1)
+//#define PARTITION_NUM (1)
+#define PARTITION_NUM (64)
 #define META_INDEX_SIZE (4 * PARTITION_NUM)
-#define INDEX_ENTRY_SIZE (12)
-//#define INDEX_ENTRY_GROUP_SIZE (80*1024)
-#define INDEX_ENTRY_GROUP_SIZE (2*1024)
-#define INDEX_CHUNK_MMAP_SIZE (INDEX_ENTRY_SIZE* INDEX_ENTRY_GROUP_SIZE)
+#define INDEX_ENTRY_GROUP_SIZE (40*1024)
+//#define INDEX_ENTRY_GROUP_SIZE (1024)
 
 #define ID_SKIP (1100000)
 #define NUM_THREADS (64)
@@ -37,6 +36,8 @@ namespace polar_race {
         int64_t key_int_;
         int32_t val_idx_;
     };
+#define INDEX_ENTRY_SIZE (sizeof(IndexEntry)) // attention with alignment
+#define INDEX_CHUNK_MMAP_SIZE (INDEX_ENTRY_SIZE* INDEX_ENTRY_GROUP_SIZE)
 
     class EngineRace : public Engine {
     public:

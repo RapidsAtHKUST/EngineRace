@@ -62,7 +62,6 @@ namespace polar_race {
         mmap_partition_cardinality_arr_ = (int32_t *) mmap(nullptr, (size_t) META_INDEX_SIZE, \
                    PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, index_meta_fd_, 0);
         memcpy(partition_cardinality_arr_, mmap_partition_cardinality_arr_, sizeof(int32_t) * PARTITION_NUM);
-        log_info("cardinality : %d", partition_cardinality_arr_[0]);
         log_info("(1) finish index meta, %s", strerror(errno));
 
         // 2nd: index (partitions, k-v mapping)
@@ -71,6 +70,7 @@ namespace polar_race {
             string index_file_path = dir + std::string("/index-") + to_string(i) + std::string(".redis");
             index_file_fd_arr_[i] = open(index_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
             int32_t global_cnt = partition_cardinality_arr_[i];
+            log_info("cardinality of %d: %d", i, global_cnt);
             int32_t process_cnt = 0;
             mmap_index_entry_arr_[i] = nullptr;
             // read pairs for index-rebuilding from the files
@@ -82,8 +82,9 @@ namespace polar_race {
                         mmap(nullptr, INDEX_CHUNK_MMAP_SIZE, PROT_READ | PROT_WRITE,
                              MAP_SHARED | MAP_POPULATE, index_file_fd_arr_[i], j * INDEX_CHUNK_MMAP_SIZE);
                 for (int k = 0; k < INDEX_ENTRY_GROUP_SIZE && process_cnt < global_cnt; k++, process_cnt++) {
-                    log_info("%lld, %d", mmap_index_entry_arr_[i][k].key_int_, mmap_index_entry_arr_[i][k].val_idx_);
-                    hash_map_arr_[i][mmap_index_entry_arr_[i][k].key_int_] = mmap_index_entry_arr_[i][k].val_idx_;
+//                    log_info("%lld, %d", mmap_index_entry_arr_[i][k].key_int_, mmap_index_entry_arr_[i][k].val_idx_);
+                    hash_map_arr_[i][mmap_index_entry_arr_[i][k].key_int_] =
+                            static_cast<int32_t>(mmap_index_entry_arr_[i][k].val_idx_);
                 }
             }
             total_cnt += process_cnt;
@@ -195,9 +196,9 @@ namespace polar_race {
                 if (mmap_index_entry_arr_[partition_slot] != nullptr) {
                     munmap(mmap_index_entry_arr_[partition_slot], INDEX_CHUNK_MMAP_SIZE);
                 }
-                int32_t file_size = (partition_cardinality_count + INDEX_ENTRY_GROUP_SIZE) * INDEX_ENTRY_SIZE;
-                ftruncate(index_file_fd_arr_[partition_slot],file_size);
-                log_info("truncated size: %d", file_size);
+                int32_t file_size = partition_cardinality_count * INDEX_ENTRY_SIZE + INDEX_CHUNK_MMAP_SIZE;
+                ftruncate(index_file_fd_arr_[partition_slot], file_size);
+//                log_info("truncated size: %d", file_size);
                 mmap_index_entry_arr_[partition_slot] = (IndexEntry *)
                         mmap(nullptr, INDEX_CHUNK_MMAP_SIZE, PROT_READ | PROT_WRITE,
                              MAP_SHARED, index_file_fd_arr_[partition_slot],
@@ -207,7 +208,7 @@ namespace polar_race {
             mmap_index_entry_arr_[partition_slot][relative_offset].key_int_ = key_int;
             mmap_index_entry_arr_[partition_slot][relative_offset].val_idx_ = idx;
 
-            log_info("%d, %d", key_int, idx);
+//            log_info("%d, %d", key_int, idx);
             partition_cardinality_count++;
             memcpy(mmap_partition_cardinality_arr_ + partition_slot, partition_cardinality_arr_ + partition_slot,
                    sizeof(int32_t));
@@ -224,9 +225,9 @@ namespace polar_race {
 
         assert(hash_map_arr_[partition_slot].contains(key_int));
         int64_t offset = hash_map_arr_[partition_slot][key_int] * static_cast<int64_t>(VALUE_SIZE);
+//        log_info("%lld", key_int);
 
         static thread_local char values[VALUE_SIZE];
-//        log_info("%lld", offset);
         pread(value_read_only_fd_, values, VALUE_SIZE, offset);
 
         value->clear();
