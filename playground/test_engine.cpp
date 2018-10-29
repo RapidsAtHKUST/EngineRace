@@ -7,8 +7,8 @@
 #include "include/engine.h"
 #include "../engine_race/log.h"
 
-static const char kEnginePath[] = "/tmp/test_engine";
-static const char kDumpPath[] = "/tmp/test_dump";
+static const char kEnginePath[] = "/home/yche/test_engine";
+static const char kDumpPath[] = "/home/yche/test_dump";
 
 using namespace polar_race;
 
@@ -31,14 +31,16 @@ private:
 int main() {
     int seed = 10;
     Engine *engine = nullptr;
+    int NUM_THREADS = 1;
 
-    int64_t round_size = 100000;
+//    int64_t round_size = 100000;
+    int64_t round_size = 1000;
     int64_t iter_num = 3;   // switch this to test different settings
     for (int64_t iter = 0; iter < iter_num; iter++) {
         // 1st: write
         Engine::Open(kEnginePath, &engine);
 
-#pragma omp parallel for num_threads(16)
+#pragma omp parallel for num_threads(NUM_THREADS)
         for (int64_t i = iter * round_size; i < (1 + iter) * round_size; i++) {
             static thread_local char polar_key_str[8];
             static thread_local char polar_value_str[4096];
@@ -54,7 +56,7 @@ int main() {
     {
         // 2nd: read
         Engine::Open(kEnginePath, &engine);
-#pragma omp parallel for num_threads(16) schedule(dynamic, 48)
+#pragma omp parallel for num_threads(NUM_THREADS) schedule(dynamic, 48)
         for (int64_t i = 0; i < round_size * iter_num; i++) {
             static thread_local char polar_key_str[8];
             static thread_local std::string tmp_str;

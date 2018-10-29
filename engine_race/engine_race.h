@@ -9,33 +9,45 @@
 #include "include/engine.h"
 #include "sparsepp/spp.h"
 
-#define VALUE_SIZE (4096)
-#define NUM_THREADS (64)
-#define KEY_SIZE (8)
-#define PARTITION_NUM (128)
+#define PARTITION_NUM (64)
 #define META_INDEX_SIZE (4 * PARTITION_NUM)
-#define META_VALUE_SIZE (4 * NUM_THREADS)
+//#define META_INDEX_SIZE (4096)
+#define INDEX_ENTRY_SIZE (12)
+#define INDEX_ENTRY_GROUP_SIZE (80*1024)
+#define INDEX_CHUNK_MMAP_SIZE (INDEX_ENTRY_SIZE* INDEX_ENTRY_GROUP_SIZE)
+
 #define ID_SKIP (1100000)
-#define INDEX_ENTRY_GROUP (80*1024)
+#define NUM_THREADS (64)
+#define META_VALUE_SIZE (sizeof(int32_t) * 2 * NUM_THREADS)
+#define VALUE_SIZE (4096)
+#define VALUE_ENTRY_GROUP_SIZE (256)
+#define VALUE_CHUNK_MMAP_SIZE (VALUE_SIZE* VALUE_ENTRY_GROUP_SIZE)
+
+#define FILE_PRIVILEGE (S_IRUSR | S_IWUSR)
 
 namespace polar_race {
     using namespace std;
     using namespace spp;
 
+    struct ValueMetaEntry {
+        int32_t beg_idx;
+        int32_t end_idx;
+    };
+
     class EngineRace : public Engine {
     public:
+        int index_meta_fd_;
+        int *index_file_fd_arr_;
+        int32_t *mmap_hash_meta_count_arr_;                         // index-meta
+        pair<int64_t, int32_t> ** mmap_index_entry_arr_;      // index-entry
+        vector<sparse_hash_map<int64_t, int32_t>> hash_map_arr_;    // in-memory
+        mutex *hash_map_mutex_arr_;                                 // in-memory locks
+
+        int value_meta_fd_;
         int value_write_only_fd_;
         int value_read_only_fd_;
-
-        int index_meta_fd_;
-        int* index_file_fd_arr_;
-        int value_meta_fd_;
-
-        int32_t *mmap_hash_count_arr_;
-        pair<int32_t, int32_t> *mmap_value_id_pair_arr_;    // [beg, end)
-        pair<int64_t, int32_t> *mmap_index_entry_arr_;      // key, vid
-        vector<sparse_hash_map<int64_t, int32_t>> hash_map_arr_;
-        mutex *hash_map_mutex_arr_;
+        ValueMetaEntry *mmap_value_meta_id_pair_arr_;       // value-meta
+        char ** mmap_value_entry_arr_;                       // value-entry
     public:
         static RetCode Open(const std::string &name, Engine **eptr);
 

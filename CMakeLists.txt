@@ -7,7 +7,7 @@ include_directories(engine_example)
 include_directories(engine_race)
 include_directories(include)
 
-add_compile_options(-O3 -g)
+add_compile_options(-O2 -g)
 
 add_library(engine_race
         engine_example/data_store.cc
