@@ -94,7 +94,6 @@ namespace polar_race {
             total_cnt += process_cnt;
 //            log_info("%d, %d, %d ...", global_cnt, process_cnt, total_cnt);
         }
-        hash_map_mutex_arr_ = new mutex[PARTITION_NUM];
         log_info("finish index");
         log_info("%s", strerror(errno));
 
@@ -135,7 +134,8 @@ namespace polar_race {
         for (int i = 0; i < NUM_THREADS; i++) {
             mmap_value_entry_arr_[i] = nullptr;
             if (mmap_value_meta_id_pair_arr_[i].end_idx > mmap_value_meta_id_pair_arr_[i].beg_idx) {
-//                log_info("%d...", mmap_value_meta_id_pair_arr_[i].end_idx);
+                log_info("%d: %d...", i,
+                         mmap_value_meta_id_pair_arr_[i].end_idx - mmap_value_meta_id_pair_arr_[i].beg_idx);
                 int64_t chunk_id = (mmap_value_meta_id_pair_arr_[i].end_idx - mmap_value_meta_id_pair_arr_[i].beg_idx)
                                    / VALUE_ENTRY_GROUP_SIZE;
 //                log_info("%s", strerror(errno));
@@ -195,10 +195,7 @@ namespace polar_race {
                     MAP_SHARED, value_write_only_fd_, offset);
 //            log_info("%s, %lld, %d, %d ", strerror(errno), offset, mmap_value_meta_id_pair_arr_[tid].end_idx, tid);
         }
-//        log_info("write %d, %d", mmap_value_meta_id_pair_arr_[tid].end_idx, mmap_value_meta_id_pair_arr_[tid].beg_idx);
         assert(mmap_value_entry_arr_[tid] != nullptr);
-//        log_info("tid: %d", tid);
-
         memcpy(mmap_value_entry_arr_[tid] + relative_offset * VALUE_SIZE, value.data(), VALUE_SIZE);
         int32_t idx = mmap_value_meta_id_pair_arr_[tid].end_idx;
         mmap_value_meta_id_pair_arr_[tid].end_idx++;
@@ -214,7 +211,6 @@ namespace polar_race {
                     munmap(mmap_index_entry_arr_[partition_slot], INDEX_CHUNK_MMAP_SIZE);
                 }
 //                log_info("%s", strerror(errno));
-
                 ftruncate(index_file_fd_arr_[partition_slot],
                           (mmap_hash_meta_count_arr_[partition_slot] + INDEX_ENTRY_GROUP_SIZE) * INDEX_ENTRY_SIZE);
                 mmap_index_entry_arr_[partition_slot] =
