@@ -37,6 +37,7 @@ namespace polar_race {
     }
 
     Engine::~Engine() {
+
     }
 
 /*
@@ -48,21 +49,14 @@ namespace polar_race {
             hash_map_arr_(PARTITION_NUM),
             mmap_index_entry_arr_(new pair<int64_t, int32_t> *[PARTITION_NUM]),
             mmap_value_entry_arr_(new char *[NUM_THREADS]) {
-        // initialization
-        for (int i = 0; i < PARTITION_NUM; i++) {
-            mmap_index_entry_arr_[i] = nullptr;
-        }
-        for (int i = 0; i < NUM_THREADS; i++) {
-            mmap_value_entry_arr_[i] = nullptr;
-        }
 
         // 1st: hash index element count array
-        log_info("%s", strerror(errno));
+//        log_info("%s", strerror(errno));
         string index_meta_path = dir + "/" + string(index_meta_file_name);
         bool is_first = !file_exists(index_meta_path.c_str());
 
         index_meta_fd_ = open(index_meta_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
-        log_info("%s", strerror(errno));
+//        log_info("%s", strerror(errno));
 
         if (is_first) {
             ftruncate(index_meta_fd_, META_INDEX_SIZE);
@@ -77,26 +71,28 @@ namespace polar_race {
         log_info("%s", strerror(errno));
 
         // 2nd: hash table files
+        int32_t total_cnt = 0;
         for (int i = 0; i < PARTITION_NUM; i++) {
             string key_file_path = dir + std::string("/index-") + to_string(i) + std::string(".redis");
             index_file_fd_arr_[i] = open(key_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
             auto global_cnt = mmap_hash_meta_count_arr_[i];
             int32_t process_cnt = 0;
             // read from the files
-            for (int j = 0; j < ((mmap_hash_meta_count_arr_[i] + INDEX_ENTRY_GROUP_SIZE - 1)
-                                 / INDEX_ENTRY_GROUP_SIZE); j++) {
+            mmap_index_entry_arr_[i] = nullptr;
+            for (int j = 0; j < ((global_cnt + INDEX_ENTRY_GROUP_SIZE - 1) / INDEX_ENTRY_GROUP_SIZE); j++) {
 //                log_info("in-mmap...");
                 if (mmap_index_entry_arr_[i] != nullptr) {
                     munmap(mmap_index_entry_arr_[i], INDEX_CHUNK_MMAP_SIZE);
                 }
                 mmap_index_entry_arr_[i] = (pair<int64_t, int32_t> *)
                         mmap(nullptr, INDEX_CHUNK_MMAP_SIZE, PROT_READ | PROT_WRITE,
-                             MAP_SHARED | MAP_POPULATE, index_file_fd_arr_[i],
-                             j * INDEX_CHUNK_MMAP_SIZE);
+                             MAP_SHARED | MAP_POPULATE, index_file_fd_arr_[i], j * INDEX_CHUNK_MMAP_SIZE);
                 for (int k = 0; k < INDEX_ENTRY_GROUP_SIZE && process_cnt < global_cnt; k++, process_cnt++) {
                     hash_map_arr_[i].emplace(mmap_index_entry_arr_[i][k].first, mmap_index_entry_arr_[i][k].second);
                 }
             }
+            total_cnt += process_cnt;
+//            log_info("%d, %d, %d ...", global_cnt, process_cnt, total_cnt);
         }
         hash_map_mutex_arr_ = new mutex[PARTITION_NUM];
         log_info("finish index");
@@ -108,12 +104,13 @@ namespace polar_race {
         value_meta_fd_ = open(value_meta_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
 //        log_info("value-meta-fd: %d", value_meta_fd_);
         if (is_first) {
+            log_info("first time init value meta");
             ftruncate(value_meta_fd_, META_VALUE_SIZE);
             mmap_value_meta_id_pair_arr_ = (ValueMetaEntry *) mmap(
                     nullptr, (size_t) META_VALUE_SIZE,
                     PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, value_meta_fd_, 0);
             for (int i = 0; i < NUM_THREADS; i++) {
-                log_info("value-meta id: %d", i);
+//                log_info("value-meta id: %d", i);
                 mmap_value_meta_id_pair_arr_[i].beg_idx = i * ID_SKIP;
                 mmap_value_meta_id_pair_arr_[i].end_idx = i * ID_SKIP;
             }
@@ -131,9 +128,24 @@ namespace polar_race {
             value_write_only_fd_ = open(value_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
             ftruncate(value_write_only_fd_, static_cast<int64_t >(ID_SKIP) * VALUE_SIZE * NUM_THREADS);
         } else {
-            value_write_only_fd_ = open(value_file_path.c_str(), O_WRONLY, FILE_PRIVILEGE);
+            value_write_only_fd_ = open(value_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
         }
         value_read_only_fd_ = open(value_file_path.c_str(), O_RDONLY, FILE_PRIVILEGE);
+
+        for (int i = 0; i < NUM_THREADS; i++) {
+            mmap_value_entry_arr_[i] = nullptr;
+            if (mmap_value_meta_id_pair_arr_[i].end_idx > mmap_value_meta_id_pair_arr_[i].beg_idx) {
+//                log_info("%d...", mmap_value_meta_id_pair_arr_[i].end_idx);
+                int64_t chunk_id = (mmap_value_meta_id_pair_arr_[i].end_idx - mmap_value_meta_id_pair_arr_[i].beg_idx)
+                                   / VALUE_ENTRY_GROUP_SIZE;
+//                log_info("%s", strerror(errno));
+                int64_t start_off = mmap_value_meta_id_pair_arr_[i].beg_idx * static_cast<int64_t >(VALUE_SIZE);
+                mmap_value_entry_arr_[i] = (char *) mmap(
+                        nullptr, (size_t) VALUE_CHUNK_MMAP_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED,
+                        value_write_only_fd_, chunk_id * VALUE_CHUNK_MMAP_SIZE + start_off);
+//                log_info("%s", strerror(errno));
+            }
+        }
         log_info("finish value");
     }
 
@@ -148,6 +160,17 @@ namespace polar_race {
 
 // 2. Close engine
     EngineRace::~EngineRace() {
+        for (int i = 0; i < NUM_THREADS; i++) {
+            if (mmap_value_entry_arr_[i] != nullptr) {
+                munmap(mmap_value_entry_arr_[i], VALUE_CHUNK_MMAP_SIZE);
+            }
+        }
+
+        for (int i = 0; i < PARTITION_NUM; i++) {
+            if (mmap_index_entry_arr_[i] != nullptr) {
+                munmap(mmap_index_entry_arr_[i], INDEX_CHUNK_MMAP_SIZE);
+            }
+        }
         delete[]hash_map_mutex_arr_;
         delete[]index_file_fd_arr_;
         delete[]mmap_index_entry_arr_;
@@ -164,15 +187,18 @@ namespace polar_race {
             if (mmap_value_entry_arr_[tid] != nullptr) {
                 munmap(mmap_value_entry_arr_[tid], VALUE_CHUNK_MMAP_SIZE);
             }
-            log_info("%s", strerror(errno));
+//            log_info("%s", strerror(errno));
             int64_t offset = static_cast<int64_t >(mmap_value_meta_id_pair_arr_[tid].end_idx) * VALUE_SIZE;
+//            log_info("offset:%lld", offset);
             mmap_value_entry_arr_[tid] = (char *) mmap(
                     nullptr, (size_t) VALUE_CHUNK_MMAP_SIZE, PROT_READ | PROT_WRITE,
-                    MAP_SHARED, value_write_only_fd_,
-                    offset);
-            log_info("%s, %lld, %d, %d ", strerror(errno), offset, mmap_value_meta_id_pair_arr_[tid].end_idx, tid);
+                    MAP_SHARED, value_write_only_fd_, offset);
+//            log_info("%s, %lld, %d, %d ", strerror(errno), offset, mmap_value_meta_id_pair_arr_[tid].end_idx, tid);
         }
 //        log_info("write %d, %d", mmap_value_meta_id_pair_arr_[tid].end_idx, mmap_value_meta_id_pair_arr_[tid].beg_idx);
+        assert(mmap_value_entry_arr_[tid] != nullptr);
+//        log_info("tid: %d", tid);
+
         memcpy(mmap_value_entry_arr_[tid] + relative_offset * VALUE_SIZE, value.data(), VALUE_SIZE);
         int32_t idx = mmap_value_meta_id_pair_arr_[tid].end_idx;
         mmap_value_meta_id_pair_arr_[tid].end_idx++;
@@ -187,7 +213,7 @@ namespace polar_race {
                 if (mmap_index_entry_arr_[partition_slot] != nullptr) {
                     munmap(mmap_index_entry_arr_[partition_slot], INDEX_CHUNK_MMAP_SIZE);
                 }
-                log_info("%s", strerror(errno));
+//                log_info("%s", strerror(errno));
 
                 ftruncate(index_file_fd_arr_[partition_slot],
                           (mmap_hash_meta_count_arr_[partition_slot] + INDEX_ENTRY_GROUP_SIZE) * INDEX_ENTRY_SIZE);
@@ -195,7 +221,7 @@ namespace polar_race {
                         (pair<int64_t, int32_t> *) mmap(nullptr, INDEX_CHUNK_MMAP_SIZE, PROT_WRITE,
                                                         MAP_SHARED, index_file_fd_arr_[partition_slot],
                                                         mmap_hash_meta_count_arr_[partition_slot] * INDEX_ENTRY_SIZE);
-                log_info("%s", strerror(errno));
+//                log_info("%s", strerror(errno));
             }
             relative_offset = mmap_hash_meta_count_arr_[partition_slot] % INDEX_ENTRY_GROUP_SIZE;
             mmap_index_entry_arr_[partition_slot][relative_offset].first = key_int;
@@ -213,8 +239,9 @@ namespace polar_race {
         auto partition_slot = static_cast<int32_t>(key_int % PARTITION_NUM);
 
         int64_t offset = hash_map_arr_[partition_slot][key_int] * static_cast<int64_t>(VALUE_SIZE);
+
         static thread_local char values[VALUE_SIZE];
-        log_info("%lld", offset);
+//        log_info("%lld", offset);
         pread(value_read_only_fd_, values, VALUE_SIZE, offset);
 
         value->clear();

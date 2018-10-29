@@ -1,9 +1,15 @@
 //
 // Created by yche on 10/27/18.
 //
-#include <assert.h>
-#include <stdio.h>
 #include <string>
+#include <cstdio>
+#include <iostream>
+#include <memory>
+#include <stdexcept>
+#include <string>
+#include <array>
+#include <cassert>
+
 #include "include/engine.h"
 #include "../engine_race/log.h"
 
@@ -11,6 +17,18 @@ static const char kEnginePath[] = "/home/yche/test_engine";
 static const char kDumpPath[] = "/home/yche/test_dump";
 
 using namespace polar_race;
+
+std::string exec(const char *cmd) {
+    std::array<char, 128> buffer;
+    std::string result;
+    std::shared_ptr<FILE> pipe(popen(cmd, "r"), pclose);
+    if (!pipe) throw std::runtime_error("popen() failed!");
+    while (!feof(pipe.get())) {
+        if (fgets(buffer.data(), 128, pipe.get()) != nullptr)
+            result += buffer.data();
+    }
+    return result;
+}
 
 class DumpVisitor : public Visitor {
 public:
@@ -31,13 +49,16 @@ private:
 int main() {
     int seed = 10;
     Engine *engine = nullptr;
-    int NUM_THREADS = 1;
+    int NUM_THREADS = 16;
+//    int NUM_THREADS = 1;
+    exec("rm -r /home/yche/test_engine/*");
 
-//    int64_t round_size = 100000;
-    int64_t round_size = 1000;
-    int64_t iter_num = 3;   // switch this to test different settings
+//    int64_t round_size = 1000;
+    int64_t round_size = 250000 * NUM_THREADS;
+    int64_t iter_num = 4;   // switch this to test different settings
     for (int64_t iter = 0; iter < iter_num; iter++) {
         // 1st: write
+        log_info("iter: %d", iter);
         Engine::Open(kEnginePath, &engine);
 
 #pragma omp parallel for num_threads(NUM_THREADS)
@@ -54,6 +75,7 @@ int main() {
     }
 
     {
+        log_info("read");
         // 2nd: read
         Engine::Open(kEnginePath, &engine);
 #pragma omp parallel for num_threads(NUM_THREADS) schedule(dynamic, 48)
@@ -67,6 +89,9 @@ int main() {
             engine->Read(polar_key, &tmp_str);
             for (int64_t j = 0; j < 4096; j += 8) {
                 memcpy(&verify_int, tmp_str.c_str() + j, sizeof(int64_t));
+                if (verify_int != j + i + seed) {
+                    log_info("%d, %d, %d", verify_int, (j + i + seed), i);
+                }
                 assert(verify_int == j + i + seed);
                 if (is_first) {
                     is_first = false;

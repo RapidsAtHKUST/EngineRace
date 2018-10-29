@@ -53,7 +53,7 @@ namespace polar_race {
 
         explicit EngineRace(const std::string &dir);
 
-        ~EngineRace();
+        ~EngineRace() override;
 
         RetCode Write(const PolarString &key,
                       const PolarString &value) override;
