@@ -70,7 +70,7 @@ namespace polar_race {
         mmap_partition_cardinality_arr_ = (int32_t *) mmap(nullptr, (size_t) META_INDEX_SIZE, \
                    PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, index_meta_fd_, 0);
         memcpy(partition_cardinality_arr_, mmap_partition_cardinality_arr_, sizeof(int32_t) * PARTITION_NUM);
-        log_info("(1) finish index meta, %s; mem usage: %s KB", strerror(errno),
+        log_info("(1) index-meta-fd: %d, finish index meta, %s; mem usage: %s KB", index_meta_fd_, strerror(errno),
                  FormatWithCommas(getValue()).c_str());
 
         // 2nd: index (partitions, k-v mapping)
@@ -78,7 +78,8 @@ namespace polar_race {
             string index_file_path = dir_ + std::string("/index-") + to_string(i) + std::string(".redis");
             index_file_fd_arr_[i] = open(index_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
             int32_t global_cnt = partition_cardinality_arr_[i];
-            log_info("cardinality of %d: %d, mem usage: %s KB", i, global_cnt, FormatWithCommas(getValue()).c_str());
+            log_info("index-fd: %d, cardinality of %d: %d, mem usage: %s KB", index_file_fd_arr_[i],
+                     i, global_cnt, FormatWithCommas(getValue()).c_str());
             mmap_index_entry_arr_[i] = nullptr;
             // read pairs for index-rebuilding from the files
             int j = ((global_cnt + INDEX_ENTRY_GROUP_SIZE - 1) / INDEX_ENTRY_GROUP_SIZE) - 1;
@@ -118,7 +119,8 @@ namespace polar_race {
             memcpy(value_id_range_arr_, mmap_value_id_range_arr_,
                    sizeof(ValueMetaEntry) * NUM_THREADS);
         }
-        log_info("(3) finish value meta, %s; mem usage: %s KB", strerror(errno), FormatWithCommas(getValue()).c_str());
+        log_info("(3) value-meta-fd: %d, finish value meta, %s; mem usage: %s KB",
+                 value_meta_fd_, strerror(errno), FormatWithCommas(getValue()).c_str());
 
 // 4th: value file
         string value_file_path = (dir + "/" + value_file_name);
@@ -132,9 +134,7 @@ namespace polar_race {
         }
         value_read_only_fd_ = open(value_file_path.c_str(), O_RDONLY, FILE_PRIVILEGE);
 
-        for (
-                int i = 0;
-                i < NUM_THREADS; i++) {
+        for (int i = 0; i < NUM_THREADS; i++) {
             mmap_value_entry_arr_[i] = nullptr;
             if (value_id_range_arr_[i].end_idx_ > value_id_range_arr_[i].beg_idx_) {
                 int64_t chunk_id = (value_id_range_arr_[i].end_idx_ - value_id_range_arr_[i].beg_idx_)
@@ -145,7 +145,9 @@ namespace polar_race {
                         value_write_only_fd_, chunk_id * VALUE_CHUNK_MMAP_SIZE + start_off);
             }
         }
-        log_info("(4) finish value, %s; mem usage: %s KB\n", strerror(errno), FormatWithCommas(getValue()).c_str());
+        log_info("(4) value-write-only-fd: %d, value-read-only-fd: %d, finish value, %s; mem usage: %s KB\n",
+                 value_write_only_fd_, value_read_only_fd_,
+                 strerror(errno), FormatWithCommas(getValue()).c_str());
     }
 
 // 1. Open engine
@@ -164,6 +166,7 @@ namespace polar_race {
 // 2. Close engine
     EngineRace::~EngineRace() {
         log_info("close engine...");
+        // 1st: unmap
         for (int i = 0; i < NUM_THREADS; i++) {
             if (mmap_value_entry_arr_[i] != nullptr) {
                 munmap(mmap_value_entry_arr_[i], VALUE_CHUNK_MMAP_SIZE);
@@ -177,6 +180,27 @@ namespace polar_race {
         munmap(mmap_partition_cardinality_arr_, META_INDEX_SIZE);
         munmap(mmap_value_id_range_arr_, META_VALUE_SIZE);
         delete[]partition_mutex_arr_;
+        log_info("(1) finish close... unmap things, last err: %s; mem usage: %s KB\n",
+                 strerror(errno), FormatWithCommas(getValue()).c_str());
+
+        // 2nd: lose fds
+        for (int i = 0; i < PARTITION_NUM; i++) {
+            close(index_file_fd_arr_[i]);
+            log_info("(2) finish close... close index-fds %d, last err: %s; mem usage: %s KB\n", i,
+                     strerror(errno), FormatWithCommas(getValue()).c_str());
+        }
+        close(index_meta_fd_);
+        log_info("(3) finish close... close index-meta, last err: %s; mem usage: %s KB\n",
+                 strerror(errno), FormatWithCommas(getValue()).c_str());
+        close(value_meta_fd_);
+        log_info("(4) finish close... close value-meta, value, last err: %s; mem usage: %s KB\n",
+                 strerror(errno), FormatWithCommas(getValue()).c_str());
+        close(value_read_only_fd_);
+        log_info("(5) finish close... close value, last err: %s; mem usage: %s KB\n",
+                 strerror(errno), FormatWithCommas(getValue()).c_str());
+        close(value_write_only_fd_);
+        log_info("(6) finish close... close value (read-only), last err: %s; mem usage: %s KB\n",
+                 strerror(errno), FormatWithCommas(getValue()).c_str());
         delete[]index_file_fd_arr_;
         delete[]mmap_index_entry_arr_;
         delete[]mmap_value_entry_arr_;
