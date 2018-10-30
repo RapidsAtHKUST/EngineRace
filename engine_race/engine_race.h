@@ -41,22 +41,25 @@ namespace polar_race {
 
     class EngineRace : public Engine {
     public:
+        string dir_;
+
         int index_meta_fd_;
         int *index_file_fd_arr_;
 
         int32_t *partition_cardinality_arr_;   // in-memory
         int32_t *mmap_partition_cardinality_arr_;     // index-meta, volatile, write-only
-
-        vector<spp::sparse_hash_map<int64_t, int32_t>> hash_map_arr_;    // in-memory
+//        vector<spp::sparse_hash_map<int64_t, int32_t>> hash_map_arr_;    // in-memory
+        spp::sparse_hash_map<int64_t, int32_t> *hash_map_arr_;    // in-memory
 //        vector<google::sparse_hash_map < int64_t, int32_t>> hash_map_arr_;    // in-memory
         mutex *partition_mutex_arr_;                                 // in-memory locks
+        mutex index_rebuilding_mutex_;
         IndexEntry **mmap_index_entry_arr_;         // index-entry, volatile, write-only
     public:
         int value_meta_fd_;
         int value_write_only_fd_;
         int value_read_only_fd_;
 
-        ValueMetaEntry *value_id_range_arr_;       // value-meta, volatile
+        ValueMetaEntry *value_id_range_arr_;       // in-memory
         ValueMetaEntry *mmap_value_id_range_arr_;       // value-meta, volatile
         char **mmap_value_entry_arr_;                 // value-entry, volatile
     public:
@@ -65,6 +68,8 @@ namespace polar_race {
         explicit EngineRace(const std::string &dir);
 
         ~EngineRace() override;
+
+        void LoadInMemoryIndex();
 
         RetCode Write(const PolarString &key,
                       const PolarString &value) override;

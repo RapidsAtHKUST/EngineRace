@@ -8,6 +8,7 @@
 
 #include <atomic>
 #include <iostream>
+#include <chrono>
 
 #include "log.h"
 
@@ -15,6 +16,8 @@
 #include "stat.h"
 
 namespace polar_race {
+    using namespace std::chrono;
+
     inline bool file_exists(const char *file_name) {
         struct stat buffer;
         return (stat(file_name, &buffer) == 0);
@@ -48,9 +51,10 @@ namespace polar_race {
  * Complete the functions below to implement you own engine
  */
     EngineRace::EngineRace(const std::string &dir) :
+            dir_(dir),
             index_file_fd_arr_(new int[PARTITION_NUM]),
             partition_cardinality_arr_(new int32_t[PARTITION_NUM]),
-            hash_map_arr_(PARTITION_NUM),
+            hash_map_arr_(nullptr),
             partition_mutex_arr_(new mutex[PARTITION_NUM]),
             mmap_index_entry_arr_(new IndexEntry *[PARTITION_NUM]),
             value_id_range_arr_(new ValueMetaEntry[NUM_THREADS]),
@@ -70,31 +74,22 @@ namespace polar_race {
                  FormatWithCommas(getValue()).c_str());
 
         // 2nd: index (partitions, k-v mapping)
-        int32_t total_cnt = 0;
         for (int i = 0; i < PARTITION_NUM; i++) {
-            string index_file_path = dir + std::string("/index-") + to_string(i) + std::string(".redis");
+            string index_file_path = dir_ + std::string("/index-") + to_string(i) + std::string(".redis");
             index_file_fd_arr_[i] = open(index_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
             int32_t global_cnt = partition_cardinality_arr_[i];
             log_info("cardinality of %d: %d, mem usage: %s KB", i, global_cnt, FormatWithCommas(getValue()).c_str());
-            int32_t process_cnt = 0;
             mmap_index_entry_arr_[i] = nullptr;
             // read pairs for index-rebuilding from the files
-            for (int j = 0; j < ((global_cnt + INDEX_ENTRY_GROUP_SIZE - 1) / INDEX_ENTRY_GROUP_SIZE); j++) {
-                if (mmap_index_entry_arr_[i] != nullptr) {
-                    munmap((IndexEntry **) mmap_index_entry_arr_[i], INDEX_CHUNK_MMAP_SIZE);
-                }
+            int j = ((global_cnt + INDEX_ENTRY_GROUP_SIZE - 1) / INDEX_ENTRY_GROUP_SIZE) - 1;
+            if (j >= 0) {
                 mmap_index_entry_arr_[i] = (IndexEntry *)
                         mmap(nullptr, INDEX_CHUNK_MMAP_SIZE, PROT_READ | PROT_WRITE,
                              MAP_SHARED | MAP_POPULATE, index_file_fd_arr_[i], j * INDEX_CHUNK_MMAP_SIZE);
-                for (int k = 0; k < INDEX_ENTRY_GROUP_SIZE && process_cnt < global_cnt; k++, process_cnt++) {
-//                    log_info("%lld, %d", mmap_index_entry_arr_[i][k].key_int_, mmap_index_entry_arr_[i][k].val_idx_);
-                    hash_map_arr_[i][mmap_index_entry_arr_[i][k].key_int_] =
-                            static_cast<int32_t>(mmap_index_entry_arr_[i][k].val_idx_);
-                }
             }
-            total_cnt += process_cnt;
         }
-        log_info("(2) finish index re-building, %s; mem usage: %s KB", strerror(errno),
+
+        log_info("finish index re-building, %s; mem usage: %s KB", strerror(errno),
                  FormatWithCommas(getValue()).c_str());
 
         // 3rd: value meta info
@@ -104,33 +99,42 @@ namespace polar_race {
         if (is_first) {
             log_info("first time init value meta");
             ftruncate(value_meta_fd_, META_VALUE_SIZE);
-            for (int i = 0; i < NUM_THREADS; i++) {
-                value_id_range_arr_[i].beg_idx_ = i * ID_SKIP;
-                value_id_range_arr_[i].end_idx_ = i * ID_SKIP;
+            for (
+                    int i = 0;
+                    i < NUM_THREADS; i++) {
+                value_id_range_arr_[i].
+                        beg_idx_ = i * ID_SKIP;
+                value_id_range_arr_[i].
+                        end_idx_ = i * ID_SKIP;
             }
         }
         mmap_value_id_range_arr_ = (ValueMetaEntry *) mmap(
                 nullptr, (size_t) sizeof(ValueMetaEntry) * NUM_THREADS,
                 PROT_READ | PROT_WRITE, MAP_SHARED | MAP_POPULATE, value_meta_fd_, 0);
         if (is_first) {
-            memcpy(mmap_value_id_range_arr_, value_id_range_arr_, sizeof(ValueMetaEntry) * NUM_THREADS);
+            memcpy(mmap_value_id_range_arr_, value_id_range_arr_,
+                   sizeof(ValueMetaEntry) * NUM_THREADS);
         } else {
-            memcpy(value_id_range_arr_, mmap_value_id_range_arr_, sizeof(ValueMetaEntry) * NUM_THREADS);
+            memcpy(value_id_range_arr_, mmap_value_id_range_arr_,
+                   sizeof(ValueMetaEntry) * NUM_THREADS);
         }
         log_info("(3) finish value meta, %s; mem usage: %s KB", strerror(errno), FormatWithCommas(getValue()).c_str());
 
-        // 4th: value file
+// 4th: value file
         string value_file_path = (dir + "/" + value_file_name);
         is_first = !file_exists(value_file_path.c_str());
         if (is_first) {
             value_write_only_fd_ = open(value_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
-            ftruncate(value_write_only_fd_, static_cast<int64_t >(ID_SKIP) * VALUE_SIZE * NUM_THREADS);
+            ftruncate(value_write_only_fd_,
+                      static_cast<int64_t>(ID_SKIP) * VALUE_SIZE * NUM_THREADS);
         } else {
             value_write_only_fd_ = open(value_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
         }
         value_read_only_fd_ = open(value_file_path.c_str(), O_RDONLY, FILE_PRIVILEGE);
 
-        for (int i = 0; i < NUM_THREADS; i++) {
+        for (
+                int i = 0;
+                i < NUM_THREADS; i++) {
             mmap_value_entry_arr_[i] = nullptr;
             if (value_id_range_arr_[i].end_idx_ > value_id_range_arr_[i].beg_idx_) {
                 int64_t chunk_id = (value_id_range_arr_[i].end_idx_ - value_id_range_arr_[i].beg_idx_)
@@ -178,7 +182,8 @@ namespace polar_race {
         delete[]mmap_value_entry_arr_;
         delete[]value_id_range_arr_;
         delete[]partition_cardinality_arr_;
-        log_info("close engine success...");
+        delete[]hash_map_arr_;
+        log_info("close engine success...\n");
     }
 
 // 3. Write a key-value pair into engine
@@ -233,18 +238,24 @@ namespace polar_race {
             memcpy(mmap_partition_cardinality_arr_ + partition_slot, partition_cardinality_arr_ + partition_slot,
                    sizeof(int32_t));
             // update the in-memory data structure
-            hash_map_arr_[partition_slot][key_int] = idx;
+//            hash_map_arr_[partition_slot][key_int] = idx;
         }
         return kSucc;
     }
 
 // 4. Read value of a key
     RetCode EngineRace::Read(const PolarString &key, std::string *value) {
+        static thread_local bool is_first = true;
         static thread_local int64_t cnt = 0;
         static thread_local int64_t tid = ++read_num_threads;
         auto key_int = polar_str_to_int64(key);
         auto partition_slot = static_cast<int32_t>(key_int % PARTITION_NUM);
-
+        if (is_first) {
+            unique_lock<mutex> lock(index_rebuilding_mutex_);
+            if (hash_map_arr_ == nullptr) {
+                LoadInMemoryIndex();
+            }
+        }
 //        assert(hash_map_arr_[partition_slot].contains(key_int));
         int64_t offset = hash_map_arr_[partition_slot][key_int] * static_cast<int64_t>(VALUE_SIZE);
         if (cnt % 100000 == 0) {
@@ -274,5 +285,40 @@ namespace polar_race {
     RetCode EngineRace::Range(const PolarString &lower, const PolarString &upper,
                               Visitor &visitor) {
         return kSucc;
+    }
+
+    void EngineRace::LoadInMemoryIndex() {
+        auto start = high_resolution_clock::now();
+        log_info("load in-memroy, index re-building, %s; mem usage: %s KB", strerror(errno),
+                 FormatWithCommas(getValue()).c_str());
+        int32_t total_cnt = 0;
+        hash_map_arr_ = new spp::sparse_hash_map<int64_t, int32_t>[PARTITION_NUM];
+        for (int i = 0; i < PARTITION_NUM; i++) {
+//            hash_map_arr_[i].set_resizing_parameters(0.1, 0.9);
+            string index_file_path = dir_ + std::string("/index-") + to_string(i) + std::string(".redis");
+            index_file_fd_arr_[i] = open(index_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
+            int32_t global_cnt = partition_cardinality_arr_[i];
+            log_info("cardinality of %d: %d, mem usage: %s KB", i, global_cnt, FormatWithCommas(getValue()).c_str());
+            int32_t process_cnt = 0;
+            mmap_index_entry_arr_[i] = nullptr;
+            // read pairs for index-rebuilding from the files
+            for (int j = 0; j < ((global_cnt + INDEX_ENTRY_GROUP_SIZE - 1) / INDEX_ENTRY_GROUP_SIZE); j++) {
+                if (mmap_index_entry_arr_[i] != nullptr) {
+                    munmap((IndexEntry **) mmap_index_entry_arr_[i], INDEX_CHUNK_MMAP_SIZE);
+                }
+                mmap_index_entry_arr_[i] = (IndexEntry *)
+                        mmap(nullptr, INDEX_CHUNK_MMAP_SIZE, PROT_READ | PROT_WRITE,
+                             MAP_SHARED | MAP_POPULATE, index_file_fd_arr_[i], j * INDEX_CHUNK_MMAP_SIZE);
+                for (int k = 0; k < INDEX_ENTRY_GROUP_SIZE && process_cnt < global_cnt; k++, process_cnt++) {
+                    hash_map_arr_[i][mmap_index_entry_arr_[i][k].key_int_] =
+                            static_cast<int32_t>(mmap_index_entry_arr_[i][k].val_idx_);
+                }
+            }
+            total_cnt += process_cnt;
+        }
+        auto end = high_resolution_clock::now();
+        log_info("load in-memroy, finish index re-building, %s; mem usage: %s KB, time: %.3lf s", strerror(errno),
+                 FormatWithCommas(getValue()).c_str(), duration_cast<milliseconds>(end - start).count() / 1000.0);
+
     }
 }  // namespace polar_race
