@@ -151,7 +151,8 @@ namespace polar_race {
     RetCode EngineRace::Open(const std::string &name, Engine **eptr) {
         *eptr = nullptr;
         if (!file_exists(name.c_str())) {
-            int ret = mkdir(name.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+//            int ret = mkdir(name.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
+            int ret = mkdir(name.c_str(), 0755);
             log_info("mkdir name:%s ret: %d， mem usage: %s KB", name.c_str(), ret,
                      FormatWithCommas(getValue()).c_str());
         }

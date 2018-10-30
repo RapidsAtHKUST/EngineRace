@@ -22,7 +22,8 @@
 #define VALUE_ENTRY_GROUP_SIZE (256)
 #define VALUE_CHUNK_MMAP_SIZE (VALUE_SIZE* VALUE_ENTRY_GROUP_SIZE)
 
-#define FILE_PRIVILEGE (S_IRUSR | S_IWUSR)
+//#define FILE_PRIVILEGE (S_IRUSR | S_IWUSR)
+#define FILE_PRIVILEGE (0644)
 
 namespace polar_race {
     using namespace std;
