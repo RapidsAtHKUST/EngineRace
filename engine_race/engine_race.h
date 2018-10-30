@@ -10,8 +10,8 @@
 #include "sparsepp/spp.h"
 //#include "google/sparse_hash_map"
 
-//#define PARTITION_NUM (1)
-#define PARTITION_NUM (64)
+#define PARTITION_NUM (1)
+//#define PARTITION_NUM (64)
 #define META_INDEX_SIZE (4 * PARTITION_NUM)
 #define INDEX_ENTRY_GROUP_SIZE (40*1024)
 //#define INDEX_ENTRY_GROUP_SIZE (1024)

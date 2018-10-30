@@ -111,8 +111,8 @@ public class EngineRacePlayground {
 
     public static void main(String[] args) throws EngineException {
         // 1st: write
-        long ITER_NUM = 3;
-        long EACH_ITER_SIZE = 200000;
+        long ITER_NUM = 4;
+        long EACH_ITER_SIZE = 25500;
         for (long iter = 0; iter < ITER_NUM; iter++)
             Write(iter * EACH_ITER_SIZE, (iter + 1) * EACH_ITER_SIZE);
         // 2nd: read
