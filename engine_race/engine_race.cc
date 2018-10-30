@@ -75,7 +75,7 @@ namespace polar_race {
             string index_file_path = dir + std::string("/index-") + to_string(i) + std::string(".redis");
             index_file_fd_arr_[i] = open(index_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
             int32_t global_cnt = partition_cardinality_arr_[i];
-            log_info("cardinality of %d: %d", i, global_cnt);
+            log_info("cardinality of %d: %d, mem usage: %s KB", i, global_cnt, FormatWithCommas(getValue()).c_str());
             int32_t process_cnt = 0;
             mmap_index_entry_arr_[i] = nullptr;
             // read pairs for index-rebuilding from the files
@@ -186,8 +186,9 @@ namespace polar_race {
         static thread_local int32_t tid = (++num_threads) % NUM_THREADS;
         if ((value_id_range_arr_[tid].end_idx_ -
              value_id_range_arr_[tid].beg_idx_) % 100000 == 0) {
-            log_info("write... cnt: %d, tid: %d", value_id_range_arr_[tid].end_idx_ -
-                                                  value_id_range_arr_[tid].beg_idx_, tid);
+            log_info("write... cnt: %d, tid: %d, mem usage: %s KB",
+                     value_id_range_arr_[tid].end_idx_ - value_id_range_arr_[tid].beg_idx_, tid,
+                     FormatWithCommas(getValue()).c_str());
         }
         // 1st: write the data file
         int32_t relative_offset = (value_id_range_arr_[tid].end_idx_ -
@@ -247,7 +248,7 @@ namespace polar_race {
 //        assert(hash_map_arr_[partition_slot].contains(key_int));
         int64_t offset = hash_map_arr_[partition_slot][key_int] * static_cast<int64_t>(VALUE_SIZE);
         if (cnt % 100000 == 0) {
-            log_info("read... cnt: %lld, tid: %d", cnt, tid);
+            log_info("read... cnt: %lld, tid: %d,  mem usage: %s KB", cnt, tid, FormatWithCommas(getValue()).c_str());
         }
         cnt++;
 

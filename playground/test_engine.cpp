@@ -49,7 +49,6 @@ private:
 
 int main() {
     int seed = 10;
-    Engine *engine = nullptr;
     int NUM_THREADS = 64;
 //    int NUM_THREADS = 1;
 //    exec("rm -r /home/yche/test_engine/*");
@@ -63,9 +62,10 @@ int main() {
     for (int64_t iter = 0; iter < iter_num; iter++) {
         // 1st: write
         log_info("iter: %d", iter);
+        Engine *engine = nullptr;
         Engine::Open(kEnginePath, &engine);
 
-#pragma omp parallel for num_threads(NUM_THREADS)
+#pragma omp parallel for num_threads(NUM_THREADS) schedule(dynamic, 5000)
         for (int64_t i = iter * round_size; i < (1 + iter) * round_size; i++) {
             static thread_local char polar_key_str[8];
             static thread_local char polar_value_str[4096];
@@ -76,11 +76,13 @@ int main() {
             }
             engine->Write(polar_key_str, polar_value_str);
         };
+        delete engine;
     }
 
     {
         log_info("read");
         // 2nd: read
+        Engine *engine = nullptr;
         Engine::Open(kEnginePath, &engine);
 #pragma omp parallel for num_threads(NUM_THREADS) schedule(dynamic, 48)
         for (int64_t i = 0; i < round_size * iter_num; i++) {
@@ -102,10 +104,10 @@ int main() {
                     log_info("%lld, %lld", verify_int, j + i + seed);
                 }
             }
-            // 2nd: read
+
         };
+        delete engine;
     }
-    delete engine;
 
     log_info("correct...");
     return 0;
