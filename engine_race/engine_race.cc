@@ -150,6 +150,8 @@ namespace polar_race {
 // 1. Open engine
     RetCode EngineRace::Open(const std::string &name, Engine **eptr) {
         *eptr = nullptr;
+        log_info("very begining... %.*s; mem usage: %s KB", name.length(), name.c_str(),
+                 FormatWithCommas(getValue()).c_str());
         if (!file_exists(name.c_str())) {
 //            int ret = mkdir(name.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
             int ret = mkdir(name.c_str(), 0755);
@@ -360,7 +362,10 @@ namespace polar_race {
         int32_t total_cnt = 0;
         hash_map_arr_ = new spp::sparse_hash_map<int64_t, int32_t>[PARTITION_NUM];
         for (int i = 0; i < PARTITION_NUM; i++) {
-            hash_map_arr_[i].set_resizing_parameters(0.1, 0.9);
+            hash_map_arr_[i].reserve(80000000 / PARTITION_NUM);
+            log_info("load in-memory, %s; mem usage: %s KB", strerror(errno),
+                     FormatWithCommas(getValue()).c_str());
+            hash_map_arr_[i].set_resizing_parameters(0, 0.9);
             string index_file_path = dir_ + std::string("/index-") + to_string(i) + std::string(".redis");
             index_file_fd_arr_[i] = open(index_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
             int32_t global_cnt = partition_cardinality_arr_[i];
