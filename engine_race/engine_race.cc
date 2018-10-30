@@ -378,6 +378,9 @@ namespace polar_race {
                     hash_map_arr_[i][mmap_index_entry_arr_[i][k].key_int_] =
                             static_cast<int32_t>(mmap_index_entry_arr_[i][k].val_idx_);
                 }
+                log_info("load in-memory, current j: %d, cardinality of %d: (%d / %d), mem usage: %s KB", j, i,
+                         hash_map_arr_[i].size(),
+                         global_cnt, FormatWithCommas(getValue()).c_str());
             }
             total_cnt += process_cnt;
             log_info("load in-memory, cardinality of %d: (%d / %d), mem usage: %s KB", i, hash_map_arr_[i].size(),
