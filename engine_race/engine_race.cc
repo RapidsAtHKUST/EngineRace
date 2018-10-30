@@ -39,7 +39,8 @@ namespace polar_race {
 
     RetCode Engine::Open(const std::string &name, Engine **eptr) {
         // recompute value id first
-        log_info("%.*s", name.length(), name.c_str());
+        log_info("%.*s; mem usage: %s KB", name.length(), name.c_str(),
+                 FormatWithCommas(getValue()).c_str());
         return EngineRace::Open(name, eptr);
     }
 
@@ -100,13 +101,9 @@ namespace polar_race {
         if (is_first) {
             log_info("first time init value meta");
             ftruncate(value_meta_fd_, META_VALUE_SIZE);
-            for (
-                    int i = 0;
-                    i < NUM_THREADS; i++) {
-                value_id_range_arr_[i].
-                        beg_idx_ = i * ID_SKIP;
-                value_id_range_arr_[i].
-                        end_idx_ = i * ID_SKIP;
+            for (int i = 0; i < NUM_THREADS; i++) {
+                value_id_range_arr_[i].beg_idx_ = i * ID_SKIP;
+                value_id_range_arr_[i].end_idx_ = i * ID_SKIP;
             }
         }
         mmap_value_id_range_arr_ = (ValueMetaEntry *) mmap(
@@ -155,7 +152,8 @@ namespace polar_race {
         *eptr = nullptr;
         if (!file_exists(name.c_str())) {
             int ret = mkdir(name.c_str(), S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
-            log_info("mkdir name:%s ret: %d", name.c_str(), ret);
+            log_info("mkdir name:%s ret: %d， mem usage: %s KB", name.c_str(), ret,
+                     FormatWithCommas(getValue()).c_str());
         }
         auto *engine_race = new EngineRace(name);
         *eptr = engine_race;
@@ -163,6 +161,7 @@ namespace polar_race {
         return kSucc;
     }
 
+// 2. Close engine
 // 2. Close engine
     EngineRace::~EngineRace() {
         log_info("close engine...");
@@ -180,26 +179,26 @@ namespace polar_race {
         munmap(mmap_partition_cardinality_arr_, META_INDEX_SIZE);
         munmap(mmap_value_id_range_arr_, META_VALUE_SIZE);
         delete[]partition_mutex_arr_;
-        log_info("(1) finish close... unmap things, last err: %s; mem usage: %s KB\n",
+        log_info("(1) finish close... unmap things, last err: %s; mem usage: %s KB",
                  strerror(errno), FormatWithCommas(getValue()).c_str());
 
         // 2nd: lose fds
         for (int i = 0; i < PARTITION_NUM; i++) {
             close(index_file_fd_arr_[i]);
-            log_info("(2) finish close... close index-fds %d, last err: %s; mem usage: %s KB\n", i,
+            log_info("(2) finish close... close index-fds %d, last err: %s; mem usage: %s KB", i,
                      strerror(errno), FormatWithCommas(getValue()).c_str());
         }
         close(index_meta_fd_);
-        log_info("(3) finish close... close index-meta, last err: %s; mem usage: %s KB\n",
+        log_info("(3) finish close... close index-meta, last err: %s; mem usage: %s KB",
                  strerror(errno), FormatWithCommas(getValue()).c_str());
         close(value_meta_fd_);
-        log_info("(4) finish close... close value-meta, value, last err: %s; mem usage: %s KB\n",
+        log_info("(4) finish close... close value-meta, value, last err: %s; mem usage: %s KB",
                  strerror(errno), FormatWithCommas(getValue()).c_str());
         close(value_read_only_fd_);
-        log_info("(5) finish close... close value, last err: %s; mem usage: %s KB\n",
+        log_info("(5) finish close... close value, last err: %s; mem usage: %s KB",
                  strerror(errno), FormatWithCommas(getValue()).c_str());
         close(value_write_only_fd_);
-        log_info("(6) finish close... close value (read-only), last err: %s; mem usage: %s KB\n",
+        log_info("(6) finish close... close value (read-only), last err: %s; mem usage: %s KB",
                  strerror(errno), FormatWithCommas(getValue()).c_str());
         delete[]index_file_fd_arr_;
         delete[]mmap_index_entry_arr_;
@@ -213,6 +212,11 @@ namespace polar_race {
 // 3. Write a key-value pair into engine
     RetCode EngineRace::Write(const PolarString &key, const PolarString &value) {
         static thread_local int32_t tid = (++num_threads) % NUM_THREADS;
+        static thread_local bool is_first = true;
+        if (is_first) {
+            log_info("first write... tid: %d, vid-range: [%d, %d)", tid, value_id_range_arr_[tid].beg_idx_,
+                     value_id_range_arr_[tid].end_idx_);
+        }
         if ((value_id_range_arr_[tid].end_idx_ -
              value_id_range_arr_[tid].beg_idx_) % 100000 == 0) {
             log_info("write... cnt: %d, tid: %d, mem usage: %s KB",
@@ -226,14 +230,30 @@ namespace polar_race {
             if (mmap_value_entry_arr_[tid] != nullptr) {
                 munmap(mmap_value_entry_arr_[tid], VALUE_CHUNK_MMAP_SIZE);
             }
+            if (is_first) {
+                log_info("first write tid: %d,...in the mmap last err: %s; mem usage: %s KB", tid,
+                         strerror(errno), FormatWithCommas(getValue()).c_str());
+            }
             int64_t offset = static_cast<int64_t>(value_id_range_arr_[tid].end_idx_) * VALUE_SIZE;
             mmap_value_entry_arr_[tid] = (char *) mmap(nullptr, (size_t) VALUE_CHUNK_MMAP_SIZE, PROT_READ | PROT_WRITE,
                                                        MAP_SHARED, value_write_only_fd_, offset);
+            if (is_first) {
+                log_info("first write tid: %d, ...after the mmap last err: %s; mem usage: %s KB", tid,
+                         strerror(errno), FormatWithCommas(getValue()).c_str());
+            }
         }
         memcpy(mmap_value_entry_arr_[tid] + relative_offset * VALUE_SIZE, value.data(), VALUE_SIZE);
+        if (is_first) {
+            log_info("first write tid: %d,...after value memcpy last err: %s; mem usage: %s KB", tid,
+                     strerror(errno), FormatWithCommas(getValue()).c_str());
+        }
         int32_t idx = value_id_range_arr_[tid].end_idx_;
         value_id_range_arr_[tid].end_idx_++;
         memcpy(mmap_value_id_range_arr_ + tid, value_id_range_arr_ + tid, sizeof(ValueMetaEntry));
+        if (is_first) {
+            log_info("first write tid: %d,...after value id copy last err: %s; mem usage: %s KB", tid,
+                     strerror(errno), FormatWithCommas(getValue()).c_str());
+        }
 
         // 2nd: write the index file
         auto key_int = polar_str_to_int64(key);
@@ -245,25 +265,46 @@ namespace polar_race {
                 if (mmap_index_entry_arr_[partition_slot] != nullptr) {
                     munmap(mmap_index_entry_arr_[partition_slot], INDEX_CHUNK_MMAP_SIZE);
                 }
+                if (is_first) {
+                    log_info("first write...tid: %d, after index unmap last err: %s; mem usage: %s KB", tid,
+                             strerror(errno), FormatWithCommas(getValue()).c_str());
+                }
                 int32_t file_size = partition_cardinality_count * INDEX_ENTRY_SIZE + INDEX_CHUNK_MMAP_SIZE;
                 ftruncate(index_file_fd_arr_[partition_slot], file_size);
+                if (is_first) {
+                    log_info("first write...tid: %d, after ftruncate last err: %s; mem usage: %s KB", tid,
+                             strerror(errno), FormatWithCommas(getValue()).c_str());
+                }
 //                log_info("truncated size: %d", file_size);
                 mmap_index_entry_arr_[partition_slot] = (IndexEntry *)
                         mmap(nullptr, INDEX_CHUNK_MMAP_SIZE, PROT_READ | PROT_WRITE,
                              MAP_SHARED, index_file_fd_arr_[partition_slot],
                              partition_cardinality_count * INDEX_ENTRY_SIZE);
+                if (is_first) {
+                    log_info("first write...tid: %d, after index mmap last err: %s; mem usage: %s KB", tid,
+                             strerror(errno), FormatWithCommas(getValue()).c_str());
+                }
             }
             relative_offset = partition_cardinality_count % INDEX_ENTRY_GROUP_SIZE;
             mmap_index_entry_arr_[partition_slot][relative_offset].key_int_ = key_int;
             mmap_index_entry_arr_[partition_slot][relative_offset].val_idx_ = idx;
-
+            if (is_first) {
+                log_info("first write...tid: %d, after index memcpy last err: %s; mem usage: %s KB", tid,
+                         strerror(errno), FormatWithCommas(getValue()).c_str());
+            }
 //            log_info("%d, %d", key_int, idx);
             partition_cardinality_count++;
             memcpy(mmap_partition_cardinality_arr_ + partition_slot, partition_cardinality_arr_ + partition_slot,
                    sizeof(int32_t));
+            if (is_first) {
+                log_info("first write...tid: %d, after index cardinality last err: %s; mem usage: %s KB", tid,
+                         strerror(errno), FormatWithCommas(getValue()).c_str());
+            }
             // update the in-memory data structure
 //            hash_map_arr_[partition_slot][key_int] = idx;
         }
+
+        is_first = false;
         return kSucc;
     }
 
