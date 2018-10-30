@@ -363,8 +363,8 @@ namespace polar_race {
         hash_map_arr_ = new spp::sparse_hash_map<int64_t, int32_t>[PARTITION_NUM];
         for (int i = 0; i < PARTITION_NUM; i++) {
             hash_map_arr_[i].reserve(80000000 / PARTITION_NUM);
-            log_info("load in-memory, %s; mem usage: %s KB", strerror(errno),
-                     FormatWithCommas(getValue()).c_str());
+            log_info("load in-memory, %s; mem usage: %s KB, bucket count: %d", strerror(errno),
+                     FormatWithCommas(getValue()).c_str(), hash_map_arr_[i].bucket_count());
             hash_map_arr_[i].set_resizing_parameters(0, 0.9);
             string index_file_path = dir_ + std::string("/index-") + to_string(i) + std::string(".redis");
             index_file_fd_arr_[i] = open(index_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
@@ -383,9 +383,10 @@ namespace polar_race {
                     hash_map_arr_[i][mmap_index_entry_arr_[i][k].key_int_] =
                             static_cast<int32_t>(mmap_index_entry_arr_[i][k].val_idx_);
                 }
-                log_info("load in-memory, current j: %d, cardinality of %d: (%d / %d), mem usage: %s KB", j, i,
+                log_info("load in-memory, current j: %d, cardinality of %d: (%d / %d), slot num: %d,  mem usage: %s KB",
+                         j, i,
                          hash_map_arr_[i].size(),
-                         global_cnt, FormatWithCommas(getValue()).c_str());
+                         global_cnt,  hash_map_arr_[i].bucket_count(), FormatWithCommas(getValue()).c_str());
             }
             total_cnt += process_cnt;
             log_info("load in-memory, cardinality of %d: (%d / %d), mem usage: %s KB", i, hash_map_arr_[i].size(),
