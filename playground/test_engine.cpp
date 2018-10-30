@@ -52,7 +52,8 @@ int main() {
     Engine *engine = nullptr;
     int NUM_THREADS = 64;
 //    int NUM_THREADS = 1;
-    exec("rm -r /home/yche/test_engine/*");
+//    exec("rm -r /home/yche/test_engine/*");
+    exec("rm -r /home/yche/test_engine");
 //    exec("rm -r /tmp/test_engine/*");
 
 //    int64_t round_size = 2000;

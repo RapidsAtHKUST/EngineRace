@@ -22,6 +22,7 @@ namespace polar_race {
 
     using namespace std;
     std::atomic_int num_threads(-1);
+    std::atomic_int read_num_threads(-1);
 
     const char *value_file_name = "value.redis";
     const char *index_meta_file_name = "index-meta.redis";
@@ -35,7 +36,7 @@ namespace polar_race {
 
     RetCode Engine::Open(const std::string &name, Engine **eptr) {
         // recompute value id first
-        log_info("\n\n%.*s", name.length(), name.c_str());
+        log_info("%.*s", name.length(), name.c_str());
         return EngineRace::Open(name, eptr);
     }
 
@@ -140,7 +141,7 @@ namespace polar_race {
                         value_write_only_fd_, chunk_id * VALUE_CHUNK_MMAP_SIZE + start_off);
             }
         }
-        log_info("(4) finish value, %s; mem usage: %s KB", strerror(errno), FormatWithCommas(getValue()).c_str());
+        log_info("(4) finish value, %s; mem usage: %s KB\n", strerror(errno), FormatWithCommas(getValue()).c_str());
     }
 
 // 1. Open engine
@@ -158,6 +159,7 @@ namespace polar_race {
 
 // 2. Close engine
     EngineRace::~EngineRace() {
+        log_info("close engine...");
         for (int i = 0; i < NUM_THREADS; i++) {
             if (mmap_value_entry_arr_[i] != nullptr) {
                 munmap(mmap_value_entry_arr_[i], VALUE_CHUNK_MMAP_SIZE);
@@ -176,11 +178,17 @@ namespace polar_race {
         delete[]mmap_value_entry_arr_;
         delete[]value_id_range_arr_;
         delete[]partition_cardinality_arr_;
+        log_info("close engine success...");
     }
 
 // 3. Write a key-value pair into engine
     RetCode EngineRace::Write(const PolarString &key, const PolarString &value) {
         static thread_local int32_t tid = (++num_threads) % NUM_THREADS;
+        if ((value_id_range_arr_[tid].end_idx_ -
+             value_id_range_arr_[tid].beg_idx_) % 100000 == 0) {
+            log_info("write... cnt: %d, tid: %d", value_id_range_arr_[tid].end_idx_ -
+                                                  value_id_range_arr_[tid].beg_idx_, tid);
+        }
         // 1st: write the data file
         int32_t relative_offset = (value_id_range_arr_[tid].end_idx_ -
                                    value_id_range_arr_[tid].beg_idx_) % VALUE_ENTRY_GROUP_SIZE;
@@ -231,12 +239,17 @@ namespace polar_race {
 
 // 4. Read value of a key
     RetCode EngineRace::Read(const PolarString &key, std::string *value) {
+        static thread_local int64_t cnt = 0;
+        static thread_local int64_t tid = ++read_num_threads;
         auto key_int = polar_str_to_int64(key);
         auto partition_slot = static_cast<int32_t>(key_int % PARTITION_NUM);
 
-        assert(hash_map_arr_[partition_slot].contains(key_int));
+//        assert(hash_map_arr_[partition_slot].contains(key_int));
         int64_t offset = hash_map_arr_[partition_slot][key_int] * static_cast<int64_t>(VALUE_SIZE);
-//        log_info("%lld", key_int);
+        if (cnt % 100000 == 0) {
+            log_info("read... cnt: %lld, tid: %d", cnt, tid);
+        }
+        cnt++;
 
         static thread_local char values[VALUE_SIZE];
         pread(value_read_only_fd_, values, VALUE_SIZE, offset);
