@@ -79,7 +79,7 @@ namespace polar_race {
             log_info("Truncate the value file, size: %zu bytes.", value_file_size);
 
             mmap_meta_file_ = (char *) mmap(nullptr, VALUE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, meta_file_handler_, 0);
-            mmap_key_file_ = (char *) mmap(nullptr, key_file_size, PROT_READ | PROT_WRITE, MAP_SHARED, key_file_handler_, 0);
+            mmap_key_file_ = (char *) mmap(nullptr, VALUE_SIZE * sizeof(KeyEntry), PROT_READ | PROT_WRITE, MAP_SHARED, key_file_handler_, 0);
             // mmap_value_file_ = (char *) mmap(nullptr, (size_t)VALUE_MMAP_BLOCK_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, value_file_handler_, 0);
 
             log_info("Create key-value files successfully. The size of the key file is %zu bytes, the size of the value file is %zu bytes", key_file_size, value_file_size);
@@ -90,9 +90,6 @@ namespace polar_race {
             value_file_handler_ = open(value_file_path.c_str(), O_RDWR, FILE_PRIVILEGE);
 
             mmap_meta_file_ = (char *) mmap(nullptr, VALUE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, meta_file_handler_, 0);
-
-            const size_t key_file_size = sizeof(KeyEntry) * NUM_THREADS * KEY_VALUE_MAX_COUNT_PER_THREAD;
-            mmap_key_file_ = (char *) mmap(nullptr, key_file_size, PROT_READ | PROT_WRITE, MAP_SHARED, key_file_handler_, 0);
 
             if (key_file_handler_ < 0 || value_file_handler_ < 0) {
                 log_info("Fail to load key-value files.");
@@ -127,8 +124,7 @@ namespace polar_race {
         }
 
         if (mmap_key_file_ != nullptr) {
-            const size_t key_file_size = sizeof(KeyEntry) * NUM_THREADS * KEY_VALUE_MAX_COUNT_PER_THREAD;
-            munmap(mmap_key_file_, key_file_size);
+            munmap(mmap_key_file_, VALUE_SIZE * sizeof(KeyEntry));
             log_info("Unmap the key file successfully.");
         }
 
@@ -159,16 +155,22 @@ namespace polar_race {
 
         // Write index to file.
         KeyEntry key_entry;
-        key_entry.key_ = polar_str_to_int64(key);
-        // memcpy(&(key_entry.key_), key.data(), sizeof(int64_t));
+        memcpy(&(key_entry.key_), key.data(), sizeof(int64_t));
         key_entry.value_offset_ = value_file_offset;
 
         {
             unique_lock<mutex> lock(mtx_update_key_file_);
-            int key_file_offset = global_key_block_count_ * sizeof(key_entry);
-            memcpy(mmap_key_file_ + key_file_offset, &key_entry, sizeof(key_entry));
+            int key_file_relative_block_offset = global_key_block_count_ % VALUE_SIZE;
+            int key_file_relative_offset = key_file_relative_block_offset * sizeof(KeyEntry);
+            memcpy(mmap_key_file_ + key_file_relative_offset, &key_entry, sizeof(KeyEntry));
             memcpy(mmap_meta_file_, &global_key_block_count_, sizeof(int32_t));
             global_key_block_count_ += 1;
+
+            if (global_key_block_count_ % VALUE_SIZE == 0) {
+                int key_file_offset = global_key_block_count_ * sizeof(KeyEntry);
+                munmap(mmap_key_file_, VALUE_SIZE * sizeof(KeyEntry));
+                mmap_key_file_ = (char *) mmap(nullptr, VALUE_SIZE * sizeof(KeyEntry), PROT_READ | PROT_WRITE, MAP_SHARED, key_file_handler_, key_file_offset);
+            }
         }
 
         return kSucc;
@@ -236,9 +238,10 @@ namespace polar_race {
                     greatest_value_file_offset = key_entries[i].value_offset_;
             }
         }
-
+        int32_t key_file_offset = (global_key_block_count_  / VALUE_SIZE) * VALUE_SIZE * sizeof(KeyEntry);
+        mmap_key_file_ = (char *) mmap(nullptr, VALUE_SIZE * sizeof(KeyEntry), PROT_READ | PROT_WRITE, MAP_SHARED, key_file_handler_, key_file_offset);
         int64_t value_file_block_offset = (greatest_value_file_offset / VALUE_SIZE);
         atomic_value_file_block_offset = (int32_t)value_file_block_offset;
-        log_info("Build the index successfully. Size: %d, Cardinality: %zu, Max Value File Block Offset: %lld.", global_key_block_count_, index_.size(), value_file_block_offset);
+        log_info("Build the index successfully. Size: %d, Cardinality: %zu, Max Value File Block Offset: %lld, Key File Offset %d.", global_key_block_count_, index_.size(), value_file_block_offset, key_file_offset);
     }
 }  // namespace polar_race
