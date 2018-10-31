@@ -5,72 +5,45 @@
 #include <string>
 #include <mutex>
 #include <vector>
-
+#include <atomic>
 #include "include/engine.h"
 #include "sparsepp/spp.h"
 //#include "google/sparse_hash_map"
 
-#define PARTITION_NUM (1)
-//#define PARTITION_NUM (64)
-#define META_INDEX_SIZE (4 * PARTITION_NUM)
-#define INDEX_ENTRY_GROUP_SIZE (40*1024)
-//#define INDEX_ENTRY_GROUP_SIZE (1024)
-
-#define ID_SKIP (1100000)
 #define NUM_THREADS (64)
 #define VALUE_SIZE (4096)
-#define VALUE_ENTRY_GROUP_SIZE (256)
-#define VALUE_CHUNK_MMAP_SIZE (VALUE_SIZE* VALUE_ENTRY_GROUP_SIZE)
-
-//#define FILE_PRIVILEGE (S_IRUSR | S_IWUSR)
 #define FILE_PRIVILEGE (0644)
+#define KEY_VALUE_MAX_COUNT_PER_THREAD (1000000)
+#define KEY_READ_BLOCK_COUNT (65536)
 
 namespace polar_race {
     using namespace std;
-    struct ValueMetaEntry {
-        int32_t beg_idx_;
-        int32_t end_idx_;
+    struct KeyEntry {
+        int64_t key_;
+        int64_t value_offset_;
     };
-#define META_VALUE_SIZE (sizeof(ValueMetaEntry) * NUM_THREADS)
-
-    struct IndexEntry {
-        int64_t key_int_;
-        int32_t val_idx_;
-    };
-#define INDEX_ENTRY_SIZE (sizeof(IndexEntry)) // attention with alignment
-#define INDEX_CHUNK_MMAP_SIZE (INDEX_ENTRY_SIZE* INDEX_ENTRY_GROUP_SIZE)
 
     class EngineRace : public Engine {
     public:
-        string dir_;
+        int meta_file_handler_;
+        int key_file_handler_;
+        int value_file_handler_;
+        char* mmap_meta_file_;
+        char* mmap_key_file_;
+        char* mmap_value_file_;
 
-        int index_meta_fd_;
-        int *index_file_fd_arr_;
+        atomic_int atomic_value_file_block_offset;
+        int32_t global_key_block_count_;
+        mutex mtx_update_key_file_;
 
-        int32_t *partition_cardinality_arr_;   // in-memory
-        int32_t *mmap_partition_cardinality_arr_;     // index-meta, volatile, write-only
-//        vector<spp::sparse_hash_map<int64_t, int32_t>> hash_map_arr_;    // in-memory
-        spp::sparse_hash_map<int64_t, int32_t> *hash_map_arr_;    // in-memory
-//        vector<google::sparse_hash_map < int64_t, int32_t>> hash_map_arr_;    // in-memory
-        mutex *partition_mutex_arr_;                                 // in-memory locks
-        mutex index_rebuilding_mutex_;
-        IndexEntry **mmap_index_entry_arr_;         // index-entry, volatile, write-only
-    public:
-        int value_meta_fd_;
-        int value_write_only_fd_;
-        int value_read_only_fd_;
+        spp::sparse_hash_map<int64_t, int64_t> index_;
 
-        ValueMetaEntry *value_id_range_arr_;       // in-memory
-        ValueMetaEntry *mmap_value_id_range_arr_;       // value-meta, volatile
-        char **mmap_value_entry_arr_;                 // value-entry, volatile
-    public:
+        public:
         static RetCode Open(const std::string &name, Engine **eptr);
 
         explicit EngineRace(const std::string &dir);
 
         ~EngineRace() override;
-
-        void LoadInMemoryIndex();
 
         RetCode Write(const PolarString &key,
                       const PolarString &value) override;
@@ -87,7 +60,7 @@ namespace polar_race {
                       Visitor &visitor) override;
 
     private:
-
+        void BuildIndex();
     };
 
 }  // namespace polar_race

@@ -13,7 +13,7 @@
 #include "include/engine.h"
 #include "../engine_race/log.h"
 
-static const char kEnginePath[] = "/home/yche/test_engine";
+static const char kEnginePath[] = "test_engine";
 //static const char kEnginePath[] = "/tmp/test_engine";
 static const char kDumpPath[] = "/home/yche/test_dump";
 
@@ -52,12 +52,12 @@ int main() {
     int NUM_THREADS = 64;
 //    int NUM_THREADS = 1;
 //    exec("rm -r /home/yche/test_engine/*");
-    exec("rm -r /home/yche/test_engine");
+    exec("rm -r test_engine");
 //    exec("rm -r /tmp/test_engine/*");
 
 //    int64_t round_size = 2000;
 //    int64_t round_size = 255000 * NUM_THREADS;
-    int64_t round_size = 25500 * NUM_THREADS;
+    int64_t round_size = 2550 * NUM_THREADS;
     int64_t iter_num = 4;   // switch this to test different settings
     for (int64_t iter = 0; iter < iter_num; iter++) {
         // 1st: write
