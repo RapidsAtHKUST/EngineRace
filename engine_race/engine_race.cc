@@ -108,6 +108,8 @@ namespace polar_race {
         for (int32_t i = 0; i < NUM_THREADS; ++i) {
             write_value_buffers_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, VALUE_SIZE);
             read_value_buffers_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, VALUE_SIZE);
+            // posix_memalign((void**)&(write_value_buffers_[i]), FILESYSTEM_BLOCK_SIZE, VALUE_SIZE);
+            // posix_memalign((void**)&(read_value_buffers_[i]), FILESYSTEM_BLOCK_SIZE, VALUE_SIZE);
         }
     }
 
@@ -151,13 +153,13 @@ namespace polar_race {
         close(value_file_handler_);
         log_info("Close the value file successfully.");
 
-        for (int32_t i = 0; i < NUM_THREADS; ++i) {
-            free(write_value_buffers_[i]);
-            free(read_value_buffers_[i]);
-        }
-
-        free(write_value_buffers_);
-        free(read_value_buffers_);
+//        for (int32_t i = 0; i < NUM_THREADS; ++i) {
+//            free(write_value_buffers_[i]);
+//            free(read_value_buffers_[i]);
+//        }
+//
+//        free(write_value_buffers_);
+//        free(read_value_buffers_);
 
         log_info("Close the engine successfully...");
     }
