@@ -12,6 +12,7 @@
 
 #define NUM_THREADS (64)
 #define VALUE_SIZE (4096)
+#define FILESYSTEM_BLOCK_SIZE (512)
 #define FILE_PRIVILEGE (0644)
 #define KEY_VALUE_MAX_COUNT_PER_THREAD (1000000)
 #define KEY_READ_BLOCK_COUNT (65536)
@@ -31,6 +32,8 @@ namespace polar_race {
         char* mmap_meta_file_;
         char* mmap_key_file_;
         char* mmap_value_file_;
+        char** write_value_buffers_;
+        char** read_value_buffers_;
 
         atomic_int atomic_value_file_block_offset;
         int32_t global_key_block_count_;

@@ -9,7 +9,7 @@
 #include <atomic>
 #include <iostream>
 #include <chrono>
-
+#include <malloc.h>
 #include "log.h"
 
 #include "util.h"
@@ -25,6 +25,8 @@ namespace polar_race {
 
     using namespace std;
 
+    atomic_int write_num_threads (-1);
+    atomic_int read_num_threads_count (-1);
     const string meta_file_name = "polar.meta";
     const string key_file_name = "polar.keys";
     const string value_file_name = "polar.values";
@@ -60,7 +62,7 @@ namespace polar_race {
         if (!file_exists(key_file_path.c_str())) {
             meta_file_handler_ = open(meta_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
             key_file_handler_ = open(key_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
-            value_file_handler_ = open(value_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
+            value_file_handler_ = open(value_file_path.c_str(), O_RDWR | O_CREAT | O_DIRECT | O_SYNC, FILE_PRIVILEGE);
 
             if (key_file_handler_ < 0 || value_file_handler_ < 0 || meta_file_handler_ < 0) {
                 log_info("Fail to create key-value files.");
@@ -87,7 +89,7 @@ namespace polar_race {
         else {
             meta_file_handler_ = open(meta_file_path.c_str(), O_RDWR);
             key_file_handler_ = open(key_file_path.c_str(), O_RDWR, FILE_PRIVILEGE);
-            value_file_handler_ = open(value_file_path.c_str(), O_RDWR, FILE_PRIVILEGE);
+            value_file_handler_ = open(value_file_path.c_str(), O_RDWR | O_DIRECT | O_SYNC, FILE_PRIVILEGE);
 
             mmap_meta_file_ = (char *) mmap(nullptr, VALUE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, meta_file_handler_, 0);
 
@@ -98,6 +100,14 @@ namespace polar_race {
             log_info("Load key-value files successfully.");
 
             BuildIndex();
+        }
+
+        // Create raw buffers.
+        write_value_buffers_ = new char*[NUM_THREADS];
+        read_value_buffers_ = new char*[NUM_THREADS];
+        for (int32_t i = 0; i < NUM_THREADS; ++i) {
+            write_value_buffers_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, VALUE_SIZE);
+            read_value_buffers_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, VALUE_SIZE);
         }
     }
 
@@ -141,17 +151,27 @@ namespace polar_race {
         close(value_file_handler_);
         log_info("Close the value file successfully.");
 
+        for (int32_t i = 0; i < NUM_THREADS; ++i) {
+            free(write_value_buffers_[i]);
+            free(read_value_buffers_[i]);
+        }
+
+        free(write_value_buffers_);
+        free(read_value_buffers_);
+
         log_info("Close the engine successfully...");
     }
 
 // 3. Write a key-value pair into engine
     RetCode EngineRace::Write(const PolarString &key, const PolarString &value) {
-        // static thread_local int32_t tid = (++num_threads) % NUM_THREADS;
+        static thread_local int32_t tid = (++write_num_threads) % NUM_THREADS;
+        static thread_local char* value_buffer = write_value_buffers_[tid];
 
         // Write value to file.
         int value_file_block_offset = ++atomic_value_file_block_offset;
         size_t value_file_offset = (size_t)value_file_block_offset * VALUE_SIZE;
-        pwrite(value_file_handler_, value.data(), VALUE_SIZE, value_file_offset);
+        memcpy(value_buffer, value.data(), VALUE_SIZE);
+        pwrite(value_file_handler_, value_buffer, VALUE_SIZE, value_file_offset);
 
         // Write index to file.
         KeyEntry key_entry;
@@ -178,15 +198,16 @@ namespace polar_race {
 
 // 4. Read value of a key
     RetCode EngineRace::Read(const PolarString &key, std::string *value) {
-        // static thread_local int64_t tid = ++read_num_threads;
-        static thread_local char values[VALUE_SIZE];
+        static thread_local int64_t tid = (++read_num_threads_count) % NUM_THREADS;
+        static thread_local char* value_buffer = read_value_buffers_[tid];
+
         int64_t key_int = polar_str_to_int64(key);
         int64_t value_file_offset = index_[key_int];
 
-        pread(value_file_handler_, values, VALUE_SIZE, value_file_offset);
+        pread(value_file_handler_, value_buffer, VALUE_SIZE, value_file_offset);
 
         value->clear();
-        *value = std::string(values, VALUE_SIZE);
+        *value = std::string(value_buffer, VALUE_SIZE);
         return kSucc;
     }
 
