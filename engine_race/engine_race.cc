@@ -62,7 +62,7 @@ namespace polar_race {
         if (!file_exists(key_file_path.c_str())) {
             meta_file_handler_ = open(meta_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
             key_file_handler_ = open(key_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
-            value_file_handler_ = open(value_file_path.c_str(), O_RDWR | O_CREAT | O_DIRECT | O_SYNC, FILE_PRIVILEGE);
+            value_file_handler_ = open(value_file_path.c_str(), O_RDWR | O_CREAT | O_DIRECT, FILE_PRIVILEGE);
 
             if (key_file_handler_ < 0 || value_file_handler_ < 0 || meta_file_handler_ < 0) {
                 log_info("Fail to create key-value files.");
@@ -89,7 +89,7 @@ namespace polar_race {
         else {
             meta_file_handler_ = open(meta_file_path.c_str(), O_RDWR);
             key_file_handler_ = open(key_file_path.c_str(), O_RDWR, FILE_PRIVILEGE);
-            value_file_handler_ = open(value_file_path.c_str(), O_RDWR | O_DIRECT | O_SYNC, FILE_PRIVILEGE);
+            value_file_handler_ = open(value_file_path.c_str(), O_RDWR | O_DIRECT, FILE_PRIVILEGE);
 
             mmap_meta_file_ = (char *) mmap(nullptr, VALUE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, meta_file_handler_, 0);
 
@@ -177,7 +177,8 @@ namespace polar_race {
 
         // Write index to file.
         KeyEntry key_entry;
-        memcpy(&(key_entry.key_), key.data(), sizeof(int64_t));
+        key_entry.key_ = polar_str_to_int64(key);
+
         key_entry.value_offset_ = value_file_offset;
 
         {
@@ -204,6 +205,9 @@ namespace polar_race {
         static thread_local char* value_buffer = read_value_buffers_[tid];
 
         int64_t key_int = polar_str_to_int64(key);
+        if (!index_.contains(key_int))
+            return kNotFound;
+
         int64_t value_file_offset = index_[key_int];
 
         pread(value_file_handler_, value_buffer, VALUE_SIZE, value_file_offset);
@@ -230,7 +234,9 @@ namespace polar_race {
     }
 
     void EngineRace::BuildIndex() {
-        index_.reserve(NUM_THREADS * KEY_VALUE_MAX_COUNT_PER_THREAD);
+        index_.reserve((NUM_THREADS + 16) * KEY_VALUE_MAX_COUNT_PER_THREAD);
+        index_.set_resizing_parameters(0, 0.9);
+
         pread(meta_file_handler_, &global_key_block_count_, sizeof(int32_t), 0);
         global_key_block_count_ += 1;
 
@@ -244,7 +250,7 @@ namespace polar_race {
 
         for (int32_t i = 0; i < passes; ++i) {
             pread(key_file_handler_, (void*)key_entries, KEY_READ_BLOCK_COUNT * sizeof(KeyEntry), read_offset);
-            read_offset += KEY_READ_BLOCK_COUNT * sizeof(KeyEntry);
+            read_offset += ((size_t)KEY_READ_BLOCK_COUNT) * sizeof(KeyEntry);
 
             for (int32_t j = 0; j < KEY_READ_BLOCK_COUNT; ++j) {
                 index_[key_entries[j].key_] = key_entries[j].value_offset_;
