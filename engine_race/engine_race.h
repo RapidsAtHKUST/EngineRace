@@ -12,36 +12,38 @@
 
 #define NUM_THREADS (64)
 #define VALUE_SIZE (4096)
-#define FILESYSTEM_BLOCK_SIZE (512)
+#define FILESYSTEM_BLOCK_SIZE (4096)
 #define FILE_PRIVILEGE (0644)
 #define KEY_VALUE_MAX_COUNT_PER_THREAD (1000000)
-#define KEY_READ_BLOCK_COUNT (65536)
+#define KEY_READ_BLOCK_COUNT (4096)
+#define TO_UINT64(buffer) (*(uint64_t*)(buffer))
 
 namespace polar_race {
     using namespace std;
+    struct ValueOffset {
+        uint32_t partition_;
+        uint32_t block_offset_;
+    };
     struct KeyEntry {
-        int64_t key_;
-        int64_t value_offset_;
+        uint64_t key_;
+        ValueOffset value_offset_;
     };
 
     class EngineRace : public Engine {
     public:
-        int meta_file_handler_;
-        int key_file_handler_;
-        int value_file_handler_;
-        char* mmap_meta_file_;
-        char* mmap_key_file_;
-        char* mmap_value_file_;
-        char** write_value_buffers_;
-        char** read_value_buffers_;
+        int* write_key_file_dp_;
+        int* write_value_file_dp_;
+        int write_meta_file_dp_;
+        char** write_mmap_meta_file_;
 
-        atomic_int atomic_value_file_block_offset;
-        int32_t global_key_block_count_;
-        mutex mtx_update_key_file_;
+//        int* read_key_file_dp_;
+//        int* read_value_file_dp_;
+//        int read_meta_file_dp_;
+//        char** read_mmap_meta_file_;
 
-        spp::sparse_hash_map<int64_t, int64_t> index_;
 
-        public:
+        spp::sparse_hash_map<int64_t, ValueOffset> index_;
+    public:
         static RetCode Open(const std::string &name, Engine **eptr);
 
         explicit EngineRace(const std::string &dir);
