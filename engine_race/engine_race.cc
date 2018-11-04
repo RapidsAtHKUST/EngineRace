@@ -30,7 +30,7 @@ namespace polar_race {
     using namespace std;
 
     atomic_int write_num_threads(-1);
-//    atomic_int read_num_threads_count (-1);
+    atomic_int read_num_threads_count(-1);
 //
 //    // Increase monotonically.
 //    atomic_uint time_stamp_(0);
@@ -57,7 +57,7 @@ namespace polar_race {
  */
     EngineRace::EngineRace(const std::string &dir) :
             write_key_file_dp_(nullptr), write_value_file_dp_(nullptr), write_meta_file_dp_(-1),
-            write_mmap_meta_file_(nullptr), index_(nullptr), total_cnt_(0) {
+            write_mmap_meta_file_(nullptr), aligned_buffer_(nullptr), index_(nullptr), total_cnt_(0) {
         const string meta_file_path = dir + "/" + meta_file_name;
         const string key_file_path = dir + "/" + key_file_name;
         const string value_file_path = dir + "/" + value_file_name;
@@ -106,18 +106,19 @@ namespace polar_race {
                 log_info("Fail to open the meta file.");
                 exit(-1);
             }
-
+            aligned_buffer_ = new char *[NUM_THREADS];
             for (int i = 0; i < NUM_THREADS; ++i) {
                 string temp_key = key_file_path + to_string(i);
                 string temp_value = value_file_path + to_string(i);
 
                 write_key_file_dp_[i] = open(temp_key.c_str(), O_RDONLY, FILE_PRIVILEGE);
-                write_value_file_dp_[i] = open(temp_value.c_str(), O_RDONLY, FILE_PRIVILEGE);
+                write_value_file_dp_[i] = open(temp_value.c_str(), O_RDONLY | O_DIRECT, FILE_PRIVILEGE);
 
                 if (write_key_file_dp_[i] < 0 || write_value_file_dp_[i] < 0) {
                     log_info("Fail to open key-value files.");
                     exit(-1);
                 }
+                aligned_buffer_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, VALUE_SIZE);
             }
             log_info("Open the files.");
 
@@ -152,11 +153,15 @@ namespace polar_race {
             if (write_mmap_meta_file_ != nullptr) {
                 munmap(write_mmap_meta_file_[i], VALUE_SIZE);
             }
+            if (aligned_buffer_ != nullptr) {
+                free(aligned_buffer_[i]);
+            }
         }
 
         delete[] write_key_file_dp_;
         delete[] write_value_file_dp_;
         delete[] write_mmap_meta_file_;
+        delete[] aligned_buffer_;
         if (index_ != nullptr) { free(index_); }
         log_info("Close the database successfully.");
     }
@@ -187,8 +192,8 @@ namespace polar_race {
 
 // 4. Read value of a key
     RetCode EngineRace::Read(const PolarString &key, std::string *value) {
-//        static thread_local int64_t tid = (++read_num_threads_count) % NUM_THREADS;
-        static thread_local char value_buffer[VALUE_SIZE];
+        static thread_local int64_t tid = (++read_num_threads_count) % NUM_THREADS;
+        static thread_local char *value_buffer = aligned_buffer_[tid];;
         uint64_t key_uint = TO_UINT64(key.data());
 
         KeyEntry tmp{};
