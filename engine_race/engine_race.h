@@ -36,12 +36,9 @@ namespace polar_race {
         int write_meta_file_dp_;
         char** write_mmap_meta_file_;
 
-//        int* read_key_file_dp_;
-//        int* read_value_file_dp_;
-//        int read_meta_file_dp_;
-//        char** read_mmap_meta_file_;
+        KeyEntry *index_;
+        int32_t total_cnt_;
 
-        spp::sparse_hash_map<int64_t, ValueOffset> index_;
     public:
         static RetCode Open(const std::string &name, Engine **eptr);
 
