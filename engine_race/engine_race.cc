@@ -244,14 +244,14 @@ namespace polar_race {
 
             for (uint32_t j = 0; j < passes; ++j) {
                 pread(write_key_file_dp_[i], index_ + cur_cnt, KEY_READ_BLOCK_COUNT * sizeof(KeyEntry), read_offset);
-                log_info("%s, cur_cnt: %d", strerror(errno), cur_cnt);
+//                log_info("%s, cur_cnt: %d", strerror(errno), cur_cnt);
                 read_offset += ((size_t) KEY_READ_BLOCK_COUNT) * sizeof(KeyEntry);
                 cur_cnt += KEY_READ_BLOCK_COUNT;
             }
 
             if (remain_entries_count != 0) {
                 pread(write_key_file_dp_[i], index_ + cur_cnt, remain_entries_count * sizeof(KeyEntry), read_offset);
-                log_info("%s", strerror(errno));
+//                log_info("%s", strerror(errno));
                 cur_cnt += remain_entries_count;
             }
         }
