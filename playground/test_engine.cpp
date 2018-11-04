@@ -49,7 +49,7 @@ private:
 
 int main() {
     int seed = 10;
-    int NUM_THREADS = 4;
+    int NUM_THREADS = 16;
 //    int NUM_THREADS = 1;
 //    exec("rm -r /home/yche/test_engine/*");
     exec("rm -r test_engine");
