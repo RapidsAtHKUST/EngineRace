@@ -10,10 +10,14 @@
 #include <iostream>
 #include <chrono>
 #include <malloc.h>
+#include <thread>
 #include "log.h"
 
 #include "util.h"
 #include "stat.h"
+
+//#include <tbb/parallel_sort.h>
+#include <parallel/algorithm>
 
 namespace polar_race {
     using namespace std::chrono;
@@ -232,32 +236,49 @@ namespace polar_race {
         }
         log_info("total cnt: %d", total_cnt_);
         index_ = (KeyEntry *) (malloc(sizeof(KeyEntry) * total_cnt_));
-        int32_t cur_cnt = 0;
 
         // Read each key file.
-        for (uint32_t i = 0; i < NUM_THREADS; ++i) {
-            uint32_t entry_count = entry_counts[i];
-
-            uint32_t passes = entry_count / KEY_READ_BLOCK_COUNT;
-            uint32_t remain_entries_count = entry_count - passes * KEY_READ_BLOCK_COUNT;
-            size_t read_offset = 0;
-
-            for (uint32_t j = 0; j < passes; ++j) {
-                pread(write_key_file_dp_[i], index_ + cur_cnt, KEY_READ_BLOCK_COUNT * sizeof(KeyEntry), read_offset);
-//                log_info("%s, cur_cnt: %d", strerror(errno), cur_cnt);
-                read_offset += ((size_t) KEY_READ_BLOCK_COUNT) * sizeof(KeyEntry);
-                cur_cnt += KEY_READ_BLOCK_COUNT;
-            }
-
-            if (remain_entries_count != 0) {
-                pread(write_key_file_dp_[i], index_ + cur_cnt, remain_entries_count * sizeof(KeyEntry), read_offset);
-//                log_info("%s", strerror(errno));
-                cur_cnt += remain_entries_count;
-            }
+        auto start = high_resolution_clock::now();
+        vector<int32_t> prefix_sum(NUM_THREADS + 1, 0);
+        for (int tid = 0; tid < NUM_THREADS; tid++) {
+            prefix_sum[tid + 1] = prefix_sum[tid] + entry_counts[tid];
         }
-        sort(index_, index_ + total_cnt_, [](KeyEntry l, KeyEntry r) {
+        vector<thread> workers(NUM_THREADS);
+        for (uint32_t i = 0; i < NUM_THREADS; ++i) {
+            workers[i] = move(thread([&prefix_sum, &entry_counts, i, this]() {
+                int32_t cur_cnt = prefix_sum[i];
+                uint32_t entry_count = entry_counts[i];
+
+                uint32_t passes = entry_count / KEY_READ_BLOCK_COUNT;
+                uint32_t remain_entries_count = entry_count - passes * KEY_READ_BLOCK_COUNT;
+                size_t read_offset = 0;
+
+                for (uint32_t j = 0; j < passes; ++j) {
+                    pread(write_key_file_dp_[i], index_ + cur_cnt, KEY_READ_BLOCK_COUNT * sizeof(KeyEntry),
+                          read_offset);
+                    read_offset += ((size_t) KEY_READ_BLOCK_COUNT) * sizeof(KeyEntry);
+                    cur_cnt += KEY_READ_BLOCK_COUNT;
+                }
+
+                if (remain_entries_count != 0) {
+                    pread(write_key_file_dp_[i], index_ + cur_cnt, remain_entries_count * sizeof(KeyEntry),
+                          read_offset);
+                }
+            }));
+        }
+        for (uint32_t i = 0; i < NUM_THREADS; ++i) {
+            workers[i].join();
+        }
+        auto end = high_resolution_clock::now();
+        log_info("load file, last err: %s; mem usage: %s KB, time: %.3lf s", strerror(errno),
+                 FormatWithCommas(getValue()).c_str(), duration_cast<milliseconds>(end - start).count() / 1000.0);
+        __gnu_parallel::sort(index_, index_ + total_cnt_, [](KeyEntry l, KeyEntry r) {
             if (l.key_ == r.key_) { return l.value_offset_.block_offset_ > r.value_offset_.block_offset_; }
             return l.key_ < r.key_;
         });
+        end = high_resolution_clock::now();
+
+        log_info("total, last err: %s; mem usage: %s KB, time: %.3lf s", strerror(errno),
+                 FormatWithCommas(getValue()).c_str(), duration_cast<milliseconds>(end - start).count() / 1000.0);
     }
 }  // namespace polar_race
