@@ -17,10 +17,16 @@
 #include "stat.h"
 
 //#include <tbb/parallel_sort.h>
-#include <parallel/algorithm>
+//#include <parallel/algorithm>
+#include "parasort.h"
 
 namespace polar_race {
     using namespace std::chrono;
+
+    bool operator<(KeyEntry l, KeyEntry r) {
+        if (l.key_ == r.key_) { return l.value_offset_.block_offset_ > r.value_offset_.block_offset_; }
+        return l.key_ < r.key_;
+    }
 
     inline bool file_exists(const char *file_name) {
         struct stat buffer;
@@ -113,6 +119,7 @@ namespace polar_race {
 
                 write_key_file_dp_[i] = open(temp_key.c_str(), O_RDONLY, FILE_PRIVILEGE);
                 write_value_file_dp_[i] = open(temp_value.c_str(), O_RDONLY | O_DIRECT, FILE_PRIVILEGE);
+//                write_value_file_dp_[i] = open(temp_value.c_str(), O_RDONLY, FILE_PRIVILEGE);
 
                 if (write_key_file_dp_[i] < 0 || write_value_file_dp_[i] < 0) {
                     log_info("Fail to open key-value files.");
@@ -277,10 +284,11 @@ namespace polar_race {
         auto end = high_resolution_clock::now();
         log_info("load file, last err: %s; mem usage: %s KB, time: %.3lf s", strerror(errno),
                  FormatWithCommas(getValue()).c_str(), duration_cast<milliseconds>(end - start).count() / 1000.0);
-        __gnu_parallel::sort(index_, index_ + total_cnt_, [](KeyEntry l, KeyEntry r) {
-            if (l.key_ == r.key_) { return l.value_offset_.block_offset_ > r.value_offset_.block_offset_; }
-            return l.key_ < r.key_;
-        });
+//        __gnu_parallel::sort(index_, index_ + total_cnt_, [](KeyEntry l, KeyEntry r) {
+//            if (l.key_ == r.key_) { return l.value_offset_.block_offset_ > r.value_offset_.block_offset_; }
+//            return l.key_ < r.key_;
+//        });
+        parasort(total_cnt_, index_, 64);
         end = high_resolution_clock::now();
 
         log_info("total, last err: %s; mem usage: %s KB, time: %.3lf s", strerror(errno),

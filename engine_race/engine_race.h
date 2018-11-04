@@ -24,18 +24,22 @@ namespace polar_race {
         uint32_t partition_;
         uint32_t block_offset_;
     };
+
     struct KeyEntry {
         uint64_t key_;
         ValueOffset value_offset_;
+
     };
+
+    bool operator<(KeyEntry l, KeyEntry r);
 
     class EngineRace : public Engine {
     public:
-        int* write_key_file_dp_;
-        int* write_value_file_dp_;
+        int *write_key_file_dp_;
+        int *write_value_file_dp_;
         int write_meta_file_dp_;
-        char** write_mmap_meta_file_;
-        char** aligned_buffer_;
+        char **write_mmap_meta_file_;
+        char **aligned_buffer_;
 
         KeyEntry *index_;
         int32_t total_cnt_;
