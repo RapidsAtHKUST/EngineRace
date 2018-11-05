@@ -351,43 +351,43 @@ namespace polar_race {
         log_info("Step one %s, %s, %.3lf", strerror(errno),
                  FormatWithCommas(getValue()).c_str(), duration_cast<milliseconds>(end - start).count() / 1000.0);
 
-//        for (uint32_t i = 0; i < thread_num; ++i) {
-//            fsync(write_value_file_dp_[i]);
-//            close(write_value_file_dp_[i]);
-//        }
-//
-//        for (uint32_t i = 0; i < thread_num; ++i) {
-//            string temp_value = value_file_path + to_string(i);
-//
-//            write_value_file_dp_[i] = open(temp_value.c_str(), open_read_file_flag, FILE_PRIVILEGE);
-//
-//            if (write_value_file_dp_[i] < 0) {
-//                log_info("Fail to open key-value files.");
-//                exit(-1);
-//            }
-//        }
-//
-//        start = high_resolution_clock::now();
-//
-//        for (uint32_t i = 0; i < thread_num; ++i) {
-//            workers[i] = move(thread([read_file_block_offset, block_size, read_block_num, i, this]() {
-//                int local_file_dp = write_value_file_dp_[i];
-//                char* value_buffer = aligned_buffer_[i];
-//
-//                for (uint32_t j = 0; j < read_block_num; ++j) {
-//                    size_t read_offset = (size_t)read_file_block_offset[j] * block_size;
-//                    pread(local_file_dp, value_buffer, block_size, read_offset);
-//                }
-//            }));
-//        }
-//
-//        for (uint32_t i = 0; i < thread_num; ++i) {
-//            workers[i].join();
-//        }
-//
-//        end = high_resolution_clock::now();
-//        log_info("Step two %s, %s, %.3lf", strerror(errno),
-//                 FormatWithCommas(getValue()).c_str(), duration_cast<milliseconds>(end - start).count() / 1000.0);
+        for (uint32_t i = 0; i < thread_num; ++i) {
+            fsync(write_value_file_dp_[i]);
+            close(write_value_file_dp_[i]);
+        }
+
+        for (uint32_t i = 0; i < thread_num; ++i) {
+            string temp_value = value_file_path + to_string(i);
+
+            write_value_file_dp_[i] = open(temp_value.c_str(), open_read_file_flag, FILE_PRIVILEGE);
+
+            if (write_value_file_dp_[i] < 0) {
+                log_info("Fail to open key-value files.");
+                exit(-1);
+            }
+        }
+
+        start = high_resolution_clock::now();
+
+        for (uint32_t i = 0; i < thread_num; ++i) {
+            workers[i] = move(thread([read_file_block_offset, block_size, read_block_num, i, this]() {
+                int local_file_dp = write_value_file_dp_[i];
+                char* value_buffer = aligned_buffer_[i];
+
+                for (uint32_t j = 0; j < read_block_num; ++j) {
+                    size_t read_offset = (size_t)read_file_block_offset[j] * block_size;
+                    pread(local_file_dp, value_buffer, block_size, read_offset);
+                }
+            }));
+        }
+
+        for (uint32_t i = 0; i < thread_num; ++i) {
+            workers[i].join();
+        }
+
+        end = high_resolution_clock::now();
+        log_info("Step two %s, %s, %.3lf", strerror(errno),
+                 FormatWithCommas(getValue()).c_str(), duration_cast<milliseconds>(end - start).count() / 1000.0);
 
         for (uint32_t i = 0; i < thread_num; ++i) {
             fsync(write_value_file_dp_[i]);
