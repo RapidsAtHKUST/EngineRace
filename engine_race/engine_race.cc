@@ -178,9 +178,9 @@ namespace polar_race {
         delete[] aligned_buffer_;
         if (index_ != nullptr) { free(index_); }
 
-//        if (start_test) {
-//            Benchmark();
-//        }
+        if (start_test) {
+            Benchmark();
+        }
 
         log_info("Close the database successfully.");
     }
