@@ -57,7 +57,7 @@ int main() {
 
 //    int64_t round_size = 2000;
 //    int64_t round_size = 255000 * NUM_THREADS;
-    int64_t round_size = 25500 * NUM_THREADS;
+    int64_t round_size = 2550 * NUM_THREADS;
     int64_t iter_num = 1;   // switch this to test different settings
     for (int64_t iter = 0; iter < iter_num; iter++) {
         // 1st: write

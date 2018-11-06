@@ -22,6 +22,8 @@
 
 namespace polar_race {
     using namespace std::chrono;
+    std::chrono::time_point<std::chrono::high_resolution_clock> clock_start;
+    std::chrono::time_point<std::chrono::high_resolution_clock> clock_end;
 
     bool operator<(KeyEntry l, KeyEntry r) {
         if (l.key_ == r.key_) { return l.value_offset_.block_offset_ > r.value_offset_.block_offset_; }
@@ -72,6 +74,7 @@ namespace polar_race {
         write_value_file_dp_ = new int[NUM_THREADS];
 
         if (!file_exists(meta_file_path.c_str())) {
+            clock_start = high_resolution_clock::now();
             log_info("Initialize the database...");
             const size_t key_file_size = sizeof(KeyEntry) * (size_t) KEY_VALUE_MAX_COUNT_PER_THREAD;
             const size_t value_file_size = VALUE_SIZE * (size_t) KEY_VALUE_MAX_COUNT_PER_THREAD;
@@ -133,6 +136,9 @@ namespace polar_race {
 
             log_info("Reload the database successfully.");
         }
+        clock_end = high_resolution_clock::now();
+        log_info("After init DB, mem usage: %s KB, time: %.3lf s", FormatWithCommas(getValue()).c_str(),
+                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0);
     }
 
 // 1. Open engine
@@ -151,8 +157,9 @@ namespace polar_race {
     }
 
     EngineRace::~EngineRace() {
-        log_info("Close the database.");
-
+        clock_end = high_resolution_clock::now();
+        log_info("Start ~EngineRace(), mem usage: %s KB, time: %.3lf s", FormatWithCommas(getValue()).c_str(),
+                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0);
         close(write_meta_file_dp_);
         for (uint32_t i = 0; i < NUM_THREADS; ++i) {
             close(write_key_file_dp_[i]);
@@ -170,7 +177,9 @@ namespace polar_race {
         delete[] write_mmap_meta_file_;
         delete[] aligned_buffer_;
         if (index_ != nullptr) { free(index_); }
-        log_info("Close the database successfully.");
+        clock_end = high_resolution_clock::now();
+        log_info("Finish ~EngineRace(), mem usage: %s KB, time: %.3lf s", FormatWithCommas(getValue()).c_str(),
+                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0);
     }
 
 // 3. Write a key-value pair into engine
@@ -237,6 +246,8 @@ namespace polar_race {
     }
 
     void EngineRace::BuildIndex() {
+        log_info("Begin BI, mem usage: %s KB, time: %.3lf s", FormatWithCommas(getValue()).c_str(),
+                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0);
         // Read meta data.
         uint32_t read_buffer[VALUE_SIZE / sizeof(uint32_t)];
         uint32_t entry_counts[NUM_THREADS];
@@ -282,16 +293,16 @@ namespace polar_race {
             workers[i].join();
         }
         auto end = high_resolution_clock::now();
-        log_info("load file, last err: %s; mem usage: %s KB, time: %.3lf s", strerror(errno),
+        log_info("Build-1, last err: %s; mem usage: %s KB, time: %.3lf s", strerror(errno),
                  FormatWithCommas(getValue()).c_str(), duration_cast<milliseconds>(end - start).count() / 1000.0);
-//        __gnu_parallel::sort(index_, index_ + total_cnt_, [](KeyEntry l, KeyEntry r) {
-//            if (l.key_ == r.key_) { return l.value_offset_.block_offset_ > r.value_offset_.block_offset_; }
-//            return l.key_ < r.key_;
-//        });
+
         parasort(total_cnt_, index_, 64);
         end = high_resolution_clock::now();
 
-        log_info("total, last err: %s; mem usage: %s KB, time: %.3lf s", strerror(errno),
+        log_info("Build-Total, last err: %s; mem usage: %s KB, time: %.3lf s", strerror(errno),
                  FormatWithCommas(getValue()).c_str(), duration_cast<milliseconds>(end - start).count() / 1000.0);
+
+        log_info("Finish BI, mem usage: %s KB, time: %.3lf s", FormatWithCommas(getValue()).c_str(),
+                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0);
     }
 }  // namespace polar_race
