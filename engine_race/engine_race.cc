@@ -194,6 +194,12 @@ namespace polar_race {
         static thread_local int local_key_file = write_key_file_dp_[tid];
         static thread_local int local_value_file = write_value_file_dp_[tid];
         static thread_local uint32_t local_block_offset = 0;
+        if (tid == 0 && local_block_offset == 0) {
+            log_info("First Write, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
+                     duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
+                     std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() /
+                     1000.0);
+        }
 
         // Write value to the value file.
         pwrite(local_value_file, value.data(), VALUE_SIZE, (uint64_t) local_block_offset * VALUE_SIZE);
@@ -214,7 +220,16 @@ namespace polar_race {
 // 4. Read value of a key
     RetCode EngineRace::Read(const PolarString &key, std::string *value) {
         static thread_local int64_t tid = (++read_num_threads_count) % NUM_THREADS;
-        static thread_local char *value_buffer = aligned_buffer_[tid];;
+        static thread_local char *value_buffer = aligned_buffer_[tid];
+        static thread_local bool is_first = true;
+        if (tid == 0 && is_first) {
+            log_info("First Read, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
+                     duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
+                     std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() /
+                     1000.0);
+            is_first = false;
+        }
+
         uint64_t key_uint = TO_UINT64(key.data());
 
         KeyEntry tmp{};
