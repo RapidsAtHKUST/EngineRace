@@ -53,7 +53,15 @@ namespace polar_race {
     }
 
     RetCode Engine::Open(const std::string &name, Engine **eptr) {
-        return EngineRace::Open(name, eptr);
+        clock_start = high_resolution_clock::now();
+        log_info("mem usage: %s KB,  ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
+                 std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
+        auto ret = EngineRace::Open(name, eptr);
+        clock_end = high_resolution_clock::now();
+        log_info("After open DB, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
+                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
+                 std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
+        return ret;
     }
 
     Engine::~Engine() {
@@ -66,7 +74,10 @@ namespace polar_race {
     EngineRace::EngineRace(const std::string &dir) :
             write_key_file_dp_(nullptr), write_value_file_dp_(nullptr), write_meta_file_dp_(-1),
             write_mmap_meta_file_(nullptr), aligned_buffer_(nullptr), index_(nullptr), total_cnt_(0) {
-        clock_start = high_resolution_clock::now();
+        clock_end = high_resolution_clock::now();
+        log_info("Start init DB, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
+                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
+                 std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
         const string meta_file_path = dir + "/" + meta_file_name;
         const string key_file_path = dir + "/" + key_file_name;
         const string value_file_path = dir + "/" + value_file_name;
