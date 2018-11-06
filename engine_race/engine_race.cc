@@ -65,7 +65,7 @@ namespace polar_race {
  */
     EngineRace::EngineRace(const std::string &dir) :
             write_key_file_dp_(nullptr), write_value_file_dp_(nullptr), write_meta_file_dp_(-1),
-            write_mmap_meta_file_(nullptr), aligned_buffer_(nullptr), index_(nullptr), total_cnt_(0), dir_(dir) {
+            write_mmap_meta_file_(nullptr), aligned_value_buffer_(nullptr), aligned_key_buffer_(nullptr), index_(nullptr), total_cnt_(0), dir_(dir) {
         const string meta_file_path = dir + "/" + meta_file_name;
         const string key_file_path = dir + "/" + key_file_name;
         const string value_file_path = dir + "/" + value_file_name;
@@ -87,12 +87,15 @@ namespace polar_race {
                 exit(-1);
             }
 
+            aligned_key_buffer_ = new char*[NUM_THREADS];
+            aligned_value_buffer_ = new char*[NUM_THREADS];
+
             for (int i = 0; i < NUM_THREADS; ++i) {
                 string temp_key = key_file_path + to_string(i);
                 string temp_value = value_file_path + to_string(i);
 
-                write_key_file_dp_[i] = open(temp_key.c_str(), O_RDWR | O_CREAT | O_DSYNC, FILE_PRIVILEGE);
-                write_value_file_dp_[i] = open(temp_value.c_str(), O_RDWR | O_CREAT | O_DSYNC, FILE_PRIVILEGE);
+                write_key_file_dp_[i] = open(temp_key.c_str(), O_RDWR | O_CREAT | O_DIRECT, FILE_PRIVILEGE);
+                write_value_file_dp_[i] = open(temp_value.c_str(), O_RDWR | O_CREAT | O_DIRECT, FILE_PRIVILEGE);
                 ftruncate(write_key_file_dp_[i], key_file_size);
                 ftruncate(write_value_file_dp_[i], value_file_size);
 
@@ -100,7 +103,8 @@ namespace polar_race {
                     log_info("Fail to create key-value files.");
                     exit(-1);
                 }
-
+                aligned_value_buffer_[i] = (char*) memalign(FILESYSTEM_BLOCK_SIZE, VALUE_SIZE);
+                aligned_key_buffer_[i] = (char*) memalign(FILESYSTEM_BLOCK_SIZE, VALUE_SIZE);
                 write_mmap_meta_file_[i] = (char *) mmap(nullptr, VALUE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED,
                                                          write_meta_file_dp_, i * VALUE_SIZE);
                 memset(write_mmap_meta_file_[i], 0, sizeof(uint32_t));
@@ -114,20 +118,19 @@ namespace polar_race {
                 log_info("Fail to open the meta file.");
                 exit(-1);
             }
-            aligned_buffer_ = new char *[NUM_THREADS];
+            aligned_value_buffer_ = new char *[NUM_THREADS];
             for (int i = 0; i < NUM_THREADS; ++i) {
                 string temp_key = key_file_path + to_string(i);
                 string temp_value = value_file_path + to_string(i);
 
                 write_key_file_dp_[i] = open(temp_key.c_str(), O_RDONLY, FILE_PRIVILEGE);
                 write_value_file_dp_[i] = open(temp_value.c_str(), O_RDONLY | O_DIRECT, FILE_PRIVILEGE);
-//                write_value_file_dp_[i] = open(temp_value.c_str(), O_RDONLY, FILE_PRIVILEGE);
 
                 if (write_key_file_dp_[i] < 0 || write_value_file_dp_[i] < 0) {
                     log_info("Fail to open key-value files.");
                     exit(-1);
                 }
-                aligned_buffer_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, VALUE_SIZE);
+                aligned_value_buffer_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, VALUE_SIZE);
             }
             log_info("Open the files.");
 
@@ -167,19 +170,25 @@ namespace polar_race {
             if (write_mmap_meta_file_ != nullptr) {
                 munmap(write_mmap_meta_file_[i], VALUE_SIZE);
             }
-            if (aligned_buffer_ != nullptr) {
-                free(aligned_buffer_[i]);
+            if (aligned_value_buffer_ != nullptr) {
+                free(aligned_value_buffer_[i]);
+            }
+
+            if (aligned_key_buffer_ != nullptr) {
+                free(aligned_key_buffer_[i]);
             }
         }
 
         delete[] write_key_file_dp_;
         delete[] write_value_file_dp_;
         delete[] write_mmap_meta_file_;
-        delete[] aligned_buffer_;
+        delete[] aligned_value_buffer_;
+        delete[] aligned_key_buffer_;
+
         if (index_ != nullptr) { free(index_); }
 
         if (start_test) {
-            Benchmark();
+            // Benchmark();
         }
 
         log_info("Close the database successfully.");
@@ -189,19 +198,26 @@ namespace polar_race {
     RetCode EngineRace::Write(const PolarString &key, const PolarString &value) {
         static thread_local uint32_t tid = (uint32_t) (++write_num_threads) % NUM_THREADS;
         static thread_local char *mmap_local_meta_file_ = write_mmap_meta_file_[tid];
+        static thread_local char *aligned_local_value_buffer = aligned_value_buffer_[tid];
+        static thread_local char *aligned_local_key_buffer = aligned_key_buffer_[tid];
+
         static thread_local int local_key_file = write_key_file_dp_[tid];
         static thread_local int local_value_file = write_value_file_dp_[tid];
         static thread_local uint32_t local_block_offset = 0;
 
+        memcpy(aligned_local_value_buffer, value.data(), VALUE_SIZE);
         // Write value to the value file.
-        pwrite(local_value_file, value.data(), VALUE_SIZE, (uint64_t) local_block_offset * VALUE_SIZE);
+        pwrite(local_value_file, aligned_local_value_buffer, VALUE_SIZE, (uint64_t) local_block_offset * VALUE_SIZE);
 
         // Write key to the key file.
         KeyEntry key_entry{};
         key_entry.key_ = TO_UINT64(key.data());
         key_entry.value_offset_.partition_ = tid;
         key_entry.value_offset_.block_offset_ = local_block_offset;
-        pwrite(local_key_file, &key_entry, sizeof(KeyEntry), local_block_offset * sizeof(KeyEntry));
+
+        memcpy(aligned_local_key_buffer + (local_block_offset % (FILESYSTEM_BLOCK_SIZE / sizeof(KeyEntry))) * sizeof(KeyEntry), &key_entry, sizeof(KeyEntry));
+
+        pwrite(local_key_file, aligned_local_key_buffer, FILESYSTEM_BLOCK_SIZE,  (local_block_offset / (FILESYSTEM_BLOCK_SIZE / sizeof(KeyEntry))) * FILESYSTEM_BLOCK_SIZE);
         local_block_offset += 1;
         // Update the meta data.
         (*(uint32_t *) mmap_local_meta_file_) = local_block_offset;
@@ -212,11 +228,12 @@ namespace polar_race {
 // 4. Read value of a key
     RetCode EngineRace::Read(const PolarString &key, std::string *value) {
         static thread_local int64_t tid = (++read_num_threads_count) % NUM_THREADS;
-        static thread_local char *value_buffer = aligned_buffer_[tid];;
+        static thread_local char *value_buffer = aligned_value_buffer_[tid];;
         uint64_t key_uint = TO_UINT64(key.data());
 
         KeyEntry tmp{};
         tmp.key_ = key_uint;
+
         auto it = lower_bound(index_, index_ + total_cnt_, tmp, [](KeyEntry l, KeyEntry r) {
             return l.key_ < r.key_;
         });
@@ -258,6 +275,8 @@ namespace polar_race {
             entry_counts[i] = read_buffer[0];
             total_cnt_ += entry_counts[i];
         }
+
+
         log_info("total cnt: %d", total_cnt_);
         index_ = (KeyEntry *) (malloc(sizeof(KeyEntry) * total_cnt_));
 
@@ -293,13 +312,10 @@ namespace polar_race {
         for (uint32_t i = 0; i < NUM_THREADS; ++i) {
             workers[i].join();
         }
+
         auto end = high_resolution_clock::now();
         log_info("load file, last err: %s; mem usage: %s KB, time: %.3lf s", strerror(errno),
                  FormatWithCommas(getValue()).c_str(), duration_cast<milliseconds>(end - start).count() / 1000.0);
-//        __gnu_parallel::sort(index_, index_ + total_cnt_, [](KeyEntry l, KeyEntry r) {
-//            if (l.key_ == r.key_) { return l.value_offset_.block_offset_ > r.value_offset_.block_offset_; }
-//            return l.key_ < r.key_;
-//        });
         parasort(total_cnt_, index_, 64);
         end = high_resolution_clock::now();
 
@@ -313,7 +329,7 @@ namespace polar_race {
         const string value_file_path = dir_ + "/" + value_file_name;
 
         write_value_file_dp_ = new int[thread_num];
-        aligned_buffer_ = new char*[thread_num];
+        aligned_value_buffer_ = new char*[thread_num];
 
         for (uint32_t i = 0; i < thread_num; ++i) {
             string temp_value = value_file_path + to_string(i);
@@ -325,7 +341,7 @@ namespace polar_race {
                 exit(-1);
             }
 
-            aligned_buffer_[i] = (char *) memalign(alignment_size, block_size);
+            aligned_value_buffer_[i] = (char *) memalign(alignment_size, block_size);
         }
 
         vector<thread> workers(thread_num);
@@ -334,7 +350,7 @@ namespace polar_race {
         for (uint32_t i = 0; i < thread_num; ++i) {
             workers[i] = move(thread([write_file_block_offset, block_size, write_block_num, i, this]() {
                 int local_file_dp = write_value_file_dp_[i];
-                char* value_buffer = aligned_buffer_[i];
+                char* value_buffer = aligned_value_buffer_[i];
 
                 for (uint32_t j = 0; j < write_block_num; ++j) {
                     size_t write_offset = (size_t)write_file_block_offset[j] * block_size;
@@ -375,7 +391,7 @@ namespace polar_race {
         for (uint32_t i = 0; i < thread_num; ++i) {
             workers[i] = move(thread([read_file_block_offset, block_size, read_block_num, i, this]() {
                 int local_file_dp = write_value_file_dp_[i];
-                char* value_buffer = aligned_buffer_[i];
+                char* value_buffer = aligned_value_buffer_[i];
 
                 for (uint32_t j = 0; j < read_block_num; ++j) {
                     size_t read_offset = (size_t)read_file_block_offset[j] * block_size;
@@ -395,10 +411,10 @@ namespace polar_race {
         for (uint32_t i = 0; i < thread_num; ++i) {
             fsync(write_value_file_dp_[i]);
             close(write_value_file_dp_[i]);
-            free(aligned_buffer_[i]);
+            free(aligned_value_buffer_[i]);
         }
 
-        delete[] aligned_buffer_;
+        delete[] aligned_value_buffer_;
         delete[] write_value_file_dp_;
     }
 

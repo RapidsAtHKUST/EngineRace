@@ -39,8 +39,8 @@ namespace polar_race {
         int *write_value_file_dp_;
         int write_meta_file_dp_;
         char **write_mmap_meta_file_;
-        char **aligned_buffer_;
-
+        char **aligned_value_buffer_;
+        char **aligned_key_buffer_;
         KeyEntry *index_;
         int32_t total_cnt_;
 
