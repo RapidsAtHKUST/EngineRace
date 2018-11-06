@@ -338,7 +338,7 @@ namespace polar_race {
 
                 for (uint32_t j = 0; j < write_block_num; ++j) {
                     size_t write_offset = (size_t)write_file_block_offset[j] * block_size;
-                    write(local_file_dp, value_buffer, block_size);
+                    pwrite(local_file_dp, value_buffer, block_size, write_offset);
                 }
             }));
         }
@@ -402,10 +402,10 @@ namespace polar_race {
     void EngineRace::Benchmark() {
         const size_t value_file_size = VALUE_SIZE * (size_t) KEY_VALUE_MAX_COUNT_PER_THREAD;
         vector<uint32_t> block_size_config = {4096, 4096 * 2, 4096 * 4, 4096 * 8, 4096 * 16};
-        vector<uint32_t> alignment_size_config = {4096 * 4};
+        vector<uint32_t> alignment_size_config = {4096};
         vector<uint32_t> thread_num_config = {64};
         uint32_t flag_config_num = 1;
-        vector<int> write_file_flags_config = {O_RDWR | O_APPEND | O_TRUNC | O_DIRECT};
+        vector<int> write_file_flags_config = {O_RDWR};
         vector<int> read_file_flags_config = {O_RDONLY | O_DIRECT};
 
         uint32_t count = 0;
