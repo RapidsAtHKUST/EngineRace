@@ -91,8 +91,8 @@ namespace polar_race {
                 string temp_key = key_file_path + to_string(i);
                 string temp_value = value_file_path + to_string(i);
 
-                write_key_file_dp_[i] = open(temp_key.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
-                write_value_file_dp_[i] = open(temp_value.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
+                write_key_file_dp_[i] = open(temp_key.c_str(), O_RDWR | O_CREAT | O_DSYNC, FILE_PRIVILEGE);
+                write_value_file_dp_[i] = open(temp_value.c_str(), O_RDWR | O_CREAT | O_DSYNC, FILE_PRIVILEGE);
                 ftruncate(write_key_file_dp_[i], key_file_size);
                 ftruncate(write_value_file_dp_[i], value_file_size);
 
