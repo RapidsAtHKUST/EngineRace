@@ -356,6 +356,9 @@ namespace polar_race {
             close(write_value_file_dp_[i]);
         }
 
+        end = high_resolution_clock::now();
+        log_info("Step one %s, %s, %.3lf end.", strerror(errno),
+                 FormatWithCommas(getValue()).c_str(), duration_cast<milliseconds>(end - start).count() / 1000.0);
         for (uint32_t i = 0; i < thread_num; ++i) {
             string temp_value = value_file_path + to_string(i);
 
