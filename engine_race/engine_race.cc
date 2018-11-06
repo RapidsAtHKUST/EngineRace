@@ -229,8 +229,8 @@ namespace polar_race {
             if (tid == 0) {
                 log_info("Invoke it.");
             }
-            fsync(local_value_file);
-            fsync(local_key_file);
+            syncfs(local_value_file);
+            syncfs(local_key_file);
         }
         return kSucc;
     }
