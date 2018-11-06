@@ -188,7 +188,7 @@ namespace polar_race {
         if (index_ != nullptr) { free(index_); }
 
         if (start_test) {
-            // Benchmark();
+            Benchmark();
         }
 
         log_info("Close the database successfully.");
@@ -424,7 +424,7 @@ namespace polar_race {
         vector<uint32_t> alignment_size_config = {4096};
         vector<uint32_t> thread_num_config = {64};
         uint32_t flag_config_num = 1;
-        vector<int> write_file_flags_config = {O_RDWR};
+        vector<int> write_file_flags_config = {O_RDWR | O_DIRECT};
         vector<int> read_file_flags_config = {O_RDONLY | O_DIRECT};
 
         uint32_t count = 0;
