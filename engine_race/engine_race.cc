@@ -402,7 +402,7 @@ namespace polar_race {
     void EngineRace::Benchmark() {
         const size_t value_file_size = VALUE_SIZE * (size_t) KEY_VALUE_MAX_COUNT_PER_THREAD;
         vector<uint32_t> block_size_config = {4096 * 32, 4096 * 64, 4096 * 128, 4096 * 256, 4096 * 512};
-        vector<uint32_t> alignment_size_config = {4096};
+        vector<uint32_t> alignment_size_config = {4096 * 4};
         vector<uint32_t> thread_num_config = {64};
         uint32_t flag_config_num = 1;
         vector<int> write_file_flags_config = {O_RDWR | O_APPEND | O_TRUNC | O_DIRECT};
