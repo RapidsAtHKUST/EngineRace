@@ -225,6 +225,13 @@ namespace polar_race {
         // Update the meta data.
         (*(uint32_t *) mmap_local_meta_file_) = local_block_offset;
 
+        if (local_block_offset == 1000000) {
+            if (tid == 0) {
+                log_info("Invoke it.");
+            }
+            fsync(local_value_file);
+            fsync(local_key_file);
+        }
         return kSucc;
     }
 
