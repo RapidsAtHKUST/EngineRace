@@ -327,16 +327,20 @@ namespace polar_race {
                                 int open_read_file_flag, uint32_t *read_file_block_offset, uint32_t read_block_num,
                                 uint32_t thread_num, uint32_t block_size, uint32_t alignment_size) {
         const string value_file_path = dir_ + "/" + value_file_name;
+        const string key_file_path = dir_ + "/" + key_file_name;
 
         write_value_file_dp_ = new int[thread_num];
+        write_key_file_dp_ = new int[thread_num];
         aligned_value_buffer_ = new char*[thread_num];
 
         for (uint32_t i = 0; i < thread_num; ++i) {
-            string temp_value = value_file_path + to_string(i);
+            string temp_value_file = value_file_path + to_string(i);
+            string temp_key_file = key_file_path + to_string(i);
 
-            write_value_file_dp_[i] = open(temp_value.c_str(), open_write_file_flag, FILE_PRIVILEGE);
+            write_value_file_dp_[i] = open(temp_value_file.c_str(), open_write_file_flag, FILE_PRIVILEGE);
+            write_key_file_dp_[i] = open(temp_key_file.c_str(), O_RDWR, FILE_PRIVILEGE);
 
-            if (write_value_file_dp_[i] < 0) {
+            if (write_value_file_dp_[i] < 0 || write_key_file_dp_[i] < 0) {
                 log_info("Fail to open key-value files.");
                 exit(-1);
             }
@@ -349,12 +353,29 @@ namespace polar_race {
 
         for (uint32_t i = 0; i < thread_num; ++i) {
             workers[i] = move(thread([write_file_block_offset, block_size, write_block_num, i, this]() {
-                int local_file_dp = write_value_file_dp_[i];
+                int local_value_file_dp = write_value_file_dp_[i];
+                int local_key_file_dp = write_key_file_dp_[i];
+
                 char* value_buffer = aligned_value_buffer_[i];
+                char local_value[VALUE_SIZE];
 
                 for (uint32_t j = 0; j < write_block_num; ++j) {
-                    size_t write_offset = (size_t)write_file_block_offset[j] * block_size;
-                    pwrite(local_file_dp, value_buffer, block_size, write_offset);
+                    size_t write_value_offset = (size_t)write_file_block_offset[j] * block_size;
+                    size_t write_key_offset = (size_t)write_file_block_offset[j] * sizeof(KeyEntry);
+                    local_value[0] = 10;
+                    memcpy(value_buffer, local_value, VALUE_SIZE);
+                    local_value[8] = 20;
+                    memcpy(value_buffer, local_value, VALUE_SIZE);
+                    local_value[16] = 30;
+                    memcpy(value_buffer, local_value, VALUE_SIZE);
+                    pwrite(local_value_file_dp, value_buffer, block_size, write_value_offset);
+
+                    KeyEntry key_entry;
+                    key_entry.key_ = j;
+                    key_entry.value_offset_.block_offset_ = i;
+                    key_entry.value_offset_.block_offset_ = write_file_block_offset[j];
+
+                    pwrite(local_key_file_dp, &key_entry, sizeof(KeyEntry), write_key_offset);
                 }
             }));
         }
@@ -370,7 +391,10 @@ namespace polar_race {
         for (uint32_t i = 0; i < thread_num; ++i) {
             fsync(write_value_file_dp_[i]);
             close(write_value_file_dp_[i]);
+            fsync(write_key_file_dp_[i]);
+            close(write_key_file_dp_[i]);
         }
+        delete[] write_key_file_dp_;
 
         end = high_resolution_clock::now();
         log_info("Step one %s, %s, %.3lf end.", strerror(errno),
