@@ -284,6 +284,8 @@ namespace polar_race {
         static thread_local int64_t tid = (++read_num_threads_count) % NUM_THREADS;
         static thread_local char *value_buffer = aligned_buffer_[tid];
         static thread_local bool is_first = true;
+        static thread_local bool is_first_not_found = true;
+        static thread_local int64_t cnt = 0;
         if (tid == 0 && is_first) {
             log_info("First Read, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
                      duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
@@ -301,8 +303,13 @@ namespace polar_race {
                               tmp, [](KeyEntry l, KeyEntry r) {
                     return l.key_ < r.key_;
                 });
-        if (it != index_[partition_id] + total_cnt_[partition_id] && it->key_ != key_uint)
+        if (it != index_[partition_id] + total_cnt_[partition_id] && it->key_ != key_uint) {
+            if (is_first_not_found) {
+                is_first_not_found = false;
+                log_info("not found in tid: %d", tid);
+            }
             return kNotFound;
+        }
 
         ValueOffset value_offset = it->value_offset_;
         pread(write_value_file_dp_[value_offset.partition_], value_buffer, VALUE_SIZE,
@@ -310,6 +317,10 @@ namespace polar_race {
 
         value->clear();
         *value = std::string(value_buffer, VALUE_SIZE);
+        if (cnt % 100000 == 0) {
+            log_info("Read in tid: %d, cnt: %d", tid, cnt);
+        }
+        cnt++;
         return kSucc;
     }
 
@@ -425,7 +436,7 @@ namespace polar_race {
                 // check
                 if (total_sum > 20000000 && total_cnt_[tid] > 0) {
 //                if (total_sum > 2000 && total_cnt_[tid] > 0) {
-                    log_info("check in tid: %d..., total cnt: %d", tid, total_sum);
+                    log_info("check in tid: %d..., total cnt: %d, local cnt: %d", tid, total_sum, total_cnt_[tid]);
                     auto tmp = index_[tid][0];
                     for (uint32_t i = 1; i < total_cnt_[tid]; i++) {
                         auto &cur_entry = index_[tid][i];
