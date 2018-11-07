@@ -209,7 +209,7 @@ namespace polar_race {
         if (index_ != nullptr) { free(index_); }
 
         if (start_test) {
-            // Benchmark();
+            Benchmark();
         }
 
         log_info("Close the database successfully.");
