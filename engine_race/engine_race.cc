@@ -91,7 +91,6 @@ namespace polar_race {
             log_info("Initialize the database...");
             const size_t key_file_size = sizeof(KeyEntry) * (size_t) KEY_VALUE_MAX_COUNT_PER_THREAD;
             const size_t value_file_size = VALUE_SIZE * (size_t) KEY_VALUE_MAX_COUNT_PER_THREAD;
-            const size_t last_page_offset = ((size_t)(KEY_VALUE_MAX_COUNT_PER_THREAD - 1)) * VALUE_SIZE;
 
             write_meta_file_dp_ = open(meta_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
             ftruncate(write_meta_file_dp_, VALUE_SIZE * NUM_THREADS);
@@ -117,15 +116,13 @@ namespace polar_race {
                     exit(-1);
                 }
 
-                ftruncate(write_key_file_dp_[i], key_file_size);
-                ftruncate(write_value_file_dp_[i], value_file_size);
-
                 aligned_value_buffer_[i] = (char*) memalign(FILESYSTEM_BLOCK_SIZE, VALUE_SIZE);
                 aligned_key_buffer_[i] = (char*) memalign(FILESYSTEM_BLOCK_SIZE, VALUE_SIZE);
                 write_mmap_meta_file_[i] = (char *) mmap(nullptr, VALUE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED,
                                                          write_meta_file_dp_, i * VALUE_SIZE);
 
-                pwrite(write_value_file_dp_[i], aligned_value_buffer_[i], VALUE_SIZE, last_page_offset);
+                fallocate(write_value_file_dp_[i], 0, 0, value_file_size);
+                fallocate(write_key_file_dp_[i], 0, 0, key_file_size);
 
                 memset(write_mmap_meta_file_[i], 0, sizeof(uint32_t));
             }
@@ -209,7 +206,7 @@ namespace polar_race {
         if (index_ != nullptr) { free(index_); }
 
         if (start_test) {
-            Benchmark();
+            // Benchmark();
         }
 
         log_info("Close the database successfully.");
