@@ -86,9 +86,12 @@ namespace polar_race {
         write_value_file_dp_ = new int[NUM_THREADS];
 
         if (!file_exists(meta_file_path.c_str())) {
+            log_info("Host Name %s", exec("hostname").c_str());
+
             log_info("Initialize the database...");
             const size_t key_file_size = sizeof(KeyEntry) * (size_t) KEY_VALUE_MAX_COUNT_PER_THREAD;
             const size_t value_file_size = VALUE_SIZE * (size_t) KEY_VALUE_MAX_COUNT_PER_THREAD;
+            const size_t last_page_offset = ((size_t)(KEY_VALUE_MAX_COUNT_PER_THREAD - 1)) * VALUE_SIZE;
 
             write_meta_file_dp_ = open(meta_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
             ftruncate(write_meta_file_dp_, VALUE_SIZE * NUM_THREADS);
@@ -108,17 +111,22 @@ namespace polar_race {
 
                 write_key_file_dp_[i] = open(temp_key.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
                 write_value_file_dp_[i] = open(temp_value.c_str(), O_RDWR | O_CREAT | O_DIRECT, FILE_PRIVILEGE);
-                ftruncate(write_key_file_dp_[i], key_file_size);
-                ftruncate(write_value_file_dp_[i], value_file_size);
 
                 if (write_key_file_dp_[i] < 0 || write_value_file_dp_[i] < 0) {
                     log_info("Fail to create key-value files.");
                     exit(-1);
                 }
+
+                ftruncate(write_key_file_dp_[i], key_file_size);
+                ftruncate(write_value_file_dp_[i], value_file_size);
+
                 aligned_value_buffer_[i] = (char*) memalign(FILESYSTEM_BLOCK_SIZE, VALUE_SIZE);
                 aligned_key_buffer_[i] = (char*) memalign(FILESYSTEM_BLOCK_SIZE, VALUE_SIZE);
                 write_mmap_meta_file_[i] = (char *) mmap(nullptr, VALUE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED,
                                                          write_meta_file_dp_, i * VALUE_SIZE);
+
+                pwrite(write_value_file_dp_[i], aligned_value_buffer_[i], VALUE_SIZE, last_page_offset);
+
                 memset(write_mmap_meta_file_[i], 0, sizeof(uint32_t));
             }
 
@@ -142,6 +150,7 @@ namespace polar_race {
                     log_info("Fail to open key-value files.");
                     exit(-1);
                 }
+
                 aligned_value_buffer_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, VALUE_SIZE);
             }
             log_info("Open the files.");
@@ -200,7 +209,7 @@ namespace polar_race {
         if (index_ != nullptr) { free(index_); }
 
         if (start_test) {
-            Benchmark();
+            // Benchmark();
         }
 
         log_info("Close the database successfully.");
