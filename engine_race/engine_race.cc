@@ -60,6 +60,7 @@ namespace polar_race {
 
     RetCode Engine::Open(const std::string &name, Engine **eptr) {
         clock_start = high_resolution_clock::now();
+        log_info("sizeof %d, %d", sizeof(off_t), sizeof(off64_t));
         log_info("mem usage: %s KB,  ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
         auto ret = EngineRace::Open(name, eptr);
@@ -322,6 +323,7 @@ namespace polar_race {
         for (uint32_t tid = 0; tid < NUM_THREADS; ++tid) {
             workers[tid] = move(thread([&par_prefix_sum_arr, &entry_counts, tid, this]() {
                 auto *buffer = (KeyEntry *) malloc(sizeof(KeyEntry) * KEY_READ_BLOCK_COUNT);
+                posix_fadvise(write_key_file_dp_[tid], 0, entry_counts[tid] * sizeof(KeyEntry), POSIX_FADV_SEQUENTIAL);
                 vector<uint32_t> par_off(NUM_THREADS);
                 for (size_t j = 0; j < par_off.size(); j++) {
                     par_off[j] = par_prefix_sum_arr[tid][j];
@@ -359,9 +361,38 @@ namespace polar_race {
                  FormatWithCommas(getValue()).c_str(), duration_cast<milliseconds>(clock_end - start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
 
+        uint32_t total_sum = 0;
+        for (auto val: total_cnt_) {
+            total_sum += val;
+        }
         for (uint32_t tid = 0; tid < NUM_THREADS; ++tid) {
-            workers[tid] = move(thread([tid, this]() {
+            workers[tid] = move(thread([total_sum, tid, this]() {
                 sort(index_[tid], index_[tid] + total_cnt_[tid]);
+
+                // check
+                if (total_sum > 20000000 && total_cnt_[tid] > 0) {
+//                if (total_sum > 2000 && total_cnt_[tid] > 0) {
+                    log_info("check in tid: %d..., total cnt: %d", tid, total_sum);
+                    auto tmp = index_[tid][0];
+                    for (uint32_t i = 1; i < total_cnt_[tid]; i++) {
+                        auto &cur_entry = index_[tid][i];
+                        if (get_partition_id(cur_entry.key_) != tid || tmp.key_ == cur_entry.key_) {
+                            log_error("small - err %zu, %d, %d", tmp.key_, tmp.value_offset_.block_offset_,
+                                      tmp.value_offset_.partition_);
+                            log_error("large - err %zu, %d, %d", cur_entry.key_,
+                                      cur_entry.value_offset_.block_offset_,
+                                      cur_entry.value_offset_.partition_);
+                        }
+                        if (!(tmp < cur_entry)) {
+                            log_error("small - err %zu, %d, %d", tmp.key_, tmp.value_offset_.block_offset_,
+                                      tmp.value_offset_.partition_);
+                            log_error("large - err %zu, %d, %d", cur_entry.key_,
+                                      cur_entry.value_offset_.block_offset_,
+                                      cur_entry.value_offset_.partition_);
+                        }
+                        tmp = cur_entry;
+                    }
+                }
             }));
         }
         for (uint32_t i = 0; i < NUM_THREADS; ++i) {
