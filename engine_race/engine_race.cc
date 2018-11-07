@@ -11,6 +11,8 @@
 #include <chrono>
 #include <malloc.h>
 #include <thread>
+#include <cassert>
+#include <algorithm>
 #include "log.h"
 
 #include "util.h"
@@ -18,7 +20,7 @@
 
 //#include <tbb/parallel_sort.h>
 //#include <parallel/algorithm>
-#include "parasort.h"
+//#include "parasort.h"
 
 namespace polar_race {
     using namespace std::chrono;
@@ -33,6 +35,10 @@ namespace polar_race {
     inline bool file_exists(const char *file_name) {
         struct stat buffer;
         return (stat(file_name, &buffer) == 0);
+    }
+
+    inline uint32_t get_partition_id(uint64_t key) {
+        return static_cast<uint32_t>(key % NUM_THREADS);
     }
 
     using namespace std;
@@ -73,7 +79,7 @@ namespace polar_race {
  */
     EngineRace::EngineRace(const std::string &dir) :
             write_key_file_dp_(nullptr), write_value_file_dp_(nullptr), write_meta_file_dp_(-1),
-            write_mmap_meta_file_(nullptr), aligned_buffer_(nullptr), index_(nullptr), total_cnt_(0) {
+            write_mmap_meta_file_(nullptr), aligned_buffer_(nullptr) {
         clock_end = high_resolution_clock::now();
         log_info("Start init DB, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
@@ -92,7 +98,7 @@ namespace polar_race {
 
             write_meta_file_dp_ = open(meta_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
             ftruncate(write_meta_file_dp_, VALUE_SIZE * NUM_THREADS);
-            write_mmap_meta_file_ = new char *[NUM_THREADS];
+            write_mmap_meta_file_ = new uint32_t *[NUM_THREADS];
 
             if (write_meta_file_dp_ < 0) {
                 log_info("Fail to create the meta file.");
@@ -113,9 +119,9 @@ namespace polar_race {
                     exit(-1);
                 }
 
-                write_mmap_meta_file_[i] = (char *) mmap(nullptr, VALUE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED,
-                                                         write_meta_file_dp_, i * VALUE_SIZE);
-                memset(write_mmap_meta_file_[i], 0, sizeof(uint32_t));
+                write_mmap_meta_file_[i] = (uint32_t *) mmap(nullptr, VALUE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED,
+                                                             write_meta_file_dp_, i * VALUE_SIZE);
+                memset(write_mmap_meta_file_[i], 0, sizeof(uint32_t) * (NUM_THREADS + 1));
             }
 
             log_info("Create the database successfully.");
@@ -190,7 +196,9 @@ namespace polar_race {
         delete[] write_value_file_dp_;
         delete[] write_mmap_meta_file_;
         delete[] aligned_buffer_;
-        if (index_ != nullptr) { free(index_); }
+        for (KeyEntry *index_partition: index_) {
+            free(index_partition);
+        }
         clock_end = high_resolution_clock::now();
         log_info("Finish ~EngineRace(), mem usage: %s KB, time: %.3lf s, ts: %.3lf s",
                  FormatWithCommas(getValue()).c_str(),
@@ -201,7 +209,7 @@ namespace polar_race {
 // 3. Write a key-value pair into engine
     RetCode EngineRace::Write(const PolarString &key, const PolarString &value) {
         static thread_local uint32_t tid = (uint32_t) (++write_num_threads) % NUM_THREADS;
-        static thread_local char *mmap_local_meta_file_ = write_mmap_meta_file_[tid];
+        static thread_local uint32_t *mmap_local_meta_file_ = write_mmap_meta_file_[tid];
         static thread_local int local_key_file = write_key_file_dp_[tid];
         static thread_local int local_value_file = write_value_file_dp_[tid];
         static thread_local uint32_t local_block_offset = 0;
@@ -223,7 +231,8 @@ namespace polar_race {
         pwrite(local_key_file, &key_entry, sizeof(KeyEntry), local_block_offset * sizeof(KeyEntry));
         local_block_offset += 1;
         // Update the meta data.
-        (*(uint32_t *) mmap_local_meta_file_) = local_block_offset;
+        mmap_local_meta_file_[0] = local_block_offset;
+        mmap_local_meta_file_[get_partition_id(key_entry.key_) + 1]++;
 
         if (local_block_offset % 128 == 0) {
             posix_fadvise(local_value_file, ((size_t) (local_block_offset - 128)) * VALUE_SIZE, 128 * VALUE_SIZE,
@@ -249,10 +258,12 @@ namespace polar_race {
 
         KeyEntry tmp{};
         tmp.key_ = key_uint;
-        auto it = lower_bound(index_, index_ + total_cnt_, tmp, [](KeyEntry l, KeyEntry r) {
-            return l.key_ < r.key_;
-        });
-        if (it != index_ + total_cnt_ && it->key_ != key_uint)
+        auto partition_id = get_partition_id(key_uint);
+        auto it = lower_bound(index_[partition_id], index_[partition_id] + total_cnt_[partition_id],
+                              tmp, [](KeyEntry l, KeyEntry r) {
+                    return l.key_ < r.key_;
+                });
+        if (it != index_[partition_id] + total_cnt_[partition_id] && it->key_ != key_uint)
             return kNotFound;
 
         ValueOffset value_offset = it->value_offset_;
@@ -284,45 +295,60 @@ namespace polar_race {
         log_info("Begin BI, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
+
         // Read meta data.
         uint32_t read_buffer[VALUE_SIZE / sizeof(uint32_t)];
-        uint32_t entry_counts[NUM_THREADS];
-
-        for (int i = 0; i < NUM_THREADS; ++i) {
-            pread(write_meta_file_dp_, read_buffer, VALUE_SIZE, i * VALUE_SIZE);
-            entry_counts[i] = read_buffer[0];
-            total_cnt_ += entry_counts[i];
+        vector<uint32_t> entry_counts(NUM_THREADS);
+        vector<vector<uint32_t >> par_prefix_sum_arr(NUM_THREADS + 1, vector<uint32_t>(NUM_THREADS, 0));
+        total_cnt_ = vector<uint32_t>(NUM_THREADS, 0);
+        for (int tid = 0; tid < NUM_THREADS; ++tid) {
+            pread(write_meta_file_dp_, read_buffer, VALUE_SIZE, tid * VALUE_SIZE);
+            entry_counts[tid] = read_buffer[0];
+            for (int par_id = 0; par_id < NUM_THREADS; ++par_id) {
+                par_prefix_sum_arr[tid + 1][par_id] = par_prefix_sum_arr[tid][par_id] + read_buffer[par_id + 1];
+                log_info("prefix (%d, %d): %d", tid, par_id, par_prefix_sum_arr[tid][par_id]);
+            }
         }
-        log_info("total cnt: %d", total_cnt_);
-        index_ = (KeyEntry *) (malloc(sizeof(KeyEntry) * total_cnt_));
+        index_ = vector<KeyEntry *>(NUM_THREADS, nullptr);
+
+        for (int par_id = 0; par_id < NUM_THREADS; par_id++) {
+            total_cnt_[par_id] = par_prefix_sum_arr[NUM_THREADS][par_id];
+            index_[par_id] = static_cast<KeyEntry *>(malloc(total_cnt_[par_id] * sizeof(KeyEntry)));
+        }
 
         // Read each key file.
         auto start = high_resolution_clock::now();
-        vector<int32_t> prefix_sum(NUM_THREADS + 1, 0);
-        for (int tid = 0; tid < NUM_THREADS; tid++) {
-            prefix_sum[tid + 1] = prefix_sum[tid] + entry_counts[tid];
-        }
         vector<thread> workers(NUM_THREADS);
-        for (uint32_t i = 0; i < NUM_THREADS; ++i) {
-            workers[i] = move(thread([&prefix_sum, &entry_counts, i, this]() {
-                int32_t cur_cnt = prefix_sum[i];
-                uint32_t entry_count = entry_counts[i];
-
+        for (uint32_t tid = 0; tid < NUM_THREADS; ++tid) {
+            workers[tid] = move(thread([&par_prefix_sum_arr, &entry_counts, tid, this]() {
+                auto *buffer = (KeyEntry *) malloc(sizeof(KeyEntry) * KEY_READ_BLOCK_COUNT);
+                vector<uint32_t> par_off(NUM_THREADS);
+                for (size_t j = 0; j < par_off.size(); j++) {
+                    par_off[j] = par_prefix_sum_arr[tid][j];
+                }
+                uint32_t entry_count = entry_counts[tid];
                 uint32_t passes = entry_count / KEY_READ_BLOCK_COUNT;
                 uint32_t remain_entries_count = entry_count - passes * KEY_READ_BLOCK_COUNT;
                 size_t read_offset = 0;
-
                 for (uint32_t j = 0; j < passes; ++j) {
-                    pread(write_key_file_dp_[i], index_ + cur_cnt, KEY_READ_BLOCK_COUNT * sizeof(KeyEntry),
-                          read_offset);
-                    read_offset += ((size_t) KEY_READ_BLOCK_COUNT) * sizeof(KeyEntry);
-                    cur_cnt += KEY_READ_BLOCK_COUNT;
+                    pread(write_key_file_dp_[tid], buffer, KEY_READ_BLOCK_COUNT * sizeof(KeyEntry), read_offset);
+                    for (int k = 0; k < KEY_READ_BLOCK_COUNT; k++) {
+                        auto par_id = get_partition_id(buffer[k].key_);
+                        index_[par_id][par_off[par_id]] = buffer[k];
+                        par_off[par_id]++;
+                    }
+                    read_offset += KEY_READ_BLOCK_COUNT * sizeof(KeyEntry);
                 }
 
                 if (remain_entries_count != 0) {
-                    pread(write_key_file_dp_[i], index_ + cur_cnt, remain_entries_count * sizeof(KeyEntry),
-                          read_offset);
+                    pread(write_key_file_dp_[tid], buffer, remain_entries_count * sizeof(KeyEntry), read_offset);
+                    for (uint32_t k = 0; k < remain_entries_count; k++) {
+                        auto par_id = get_partition_id(buffer[k].key_);
+                        index_[par_id][par_off[par_id]] = buffer[k];
+                        par_off[par_id]++;
+                    }
                 }
+                free(buffer);
             }));
         }
         for (uint32_t i = 0; i < NUM_THREADS; ++i) {
@@ -333,7 +359,14 @@ namespace polar_race {
                  FormatWithCommas(getValue()).c_str(), duration_cast<milliseconds>(clock_end - start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
 
-        parasort(total_cnt_, index_, 64);
+        for (uint32_t tid = 0; tid < NUM_THREADS; ++tid) {
+            workers[tid] = move(thread([tid, this]() {
+                sort(index_[tid], index_[tid] + total_cnt_[tid]);
+            }));
+        }
+        for (uint32_t i = 0; i < NUM_THREADS; ++i) {
+            workers[i].join();
+        }
         clock_end = high_resolution_clock::now();
 
         log_info("Build-Total, last err: %s; mem usage: %s KB, time: %.3lf s, ts: %.3lf s", strerror(errno),

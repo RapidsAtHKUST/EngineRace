@@ -38,11 +38,11 @@ namespace polar_race {
         int *write_key_file_dp_;
         int *write_value_file_dp_;
         int write_meta_file_dp_;
-        char **write_mmap_meta_file_;
+        uint32_t **write_mmap_meta_file_;
         char **aligned_buffer_;
 
-        KeyEntry *index_;
-        int32_t total_cnt_;
+        vector<KeyEntry*> index_;
+        vector<uint32_t> total_cnt_;
 
     public:
         static RetCode Open(const std::string &name, Engine **eptr);
