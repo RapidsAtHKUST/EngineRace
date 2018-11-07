@@ -57,7 +57,7 @@ int main() {
 
 //    int64_t round_size = 2000;
 //    int64_t round_size = 255000 * NUM_THREADS;
-    int64_t round_size = 25500 * NUM_THREADS;
+    int64_t round_size = 551 * NUM_THREADS;
 //    int64_t round_size = 85 * NUM_THREADS;
     int64_t iter_num = 1;   // switch this to test different settings
     for (int64_t iter = 0; iter < iter_num; iter++) {
@@ -66,7 +66,7 @@ int main() {
         Engine *engine = nullptr;
         Engine::Open(kEnginePath, &engine);
 
-#pragma omp parallel for num_threads(NUM_THREADS) schedule(dynamic, 5000)
+#pragma omp parallel for num_threads(NUM_THREADS) schedule(dynamic, 551)
         for (int64_t i = iter * round_size; i < (1 + iter) * round_size; i++) {
             static thread_local char polar_key_str[8];
             static thread_local char polar_value_str[4096];
