@@ -37,6 +37,18 @@ namespace polar_race {
 
     using namespace std;
 
+    std::string exec(const char *cmd) {
+        std::array<char, 128> buffer;
+        std::string result;
+        std::shared_ptr<FILE> pipe(popen(cmd, "r"), pclose);
+        if (!pipe) throw std::runtime_error("popen() failed!");
+        while (!feof(pipe.get())) {
+            if (fgets(buffer.data(), 128, pipe.get()) != nullptr)
+                result += buffer.data();
+        }
+        return result;
+    }
+
     atomic_int write_num_threads(-1);
     atomic_int read_num_threads_count(-1);
 //
@@ -330,13 +342,16 @@ namespace polar_race {
         write_value_file_dp_ = new int[thread_num];
         write_key_file_dp_ = new int[thread_num];
         aligned_value_buffer_ = new char*[thread_num];
+        string temp_dir = "rm -r " + dir_ +  "/*";
+        log_info("%s", temp_dir.c_str());
+        exec(temp_dir.c_str());
 
         for (uint32_t i = 0; i < thread_num; ++i) {
             string temp_value_file = value_file_path + to_string(i);
             string temp_key_file = key_file_path + to_string(i);
 
             write_value_file_dp_[i] = open(temp_value_file.c_str(), open_write_file_flag, FILE_PRIVILEGE);
-            write_key_file_dp_[i] = open(temp_key_file.c_str(), O_RDWR, FILE_PRIVILEGE);
+            write_key_file_dp_[i] = open(temp_key_file.c_str(), O_CREAT | O_RDWR, FILE_PRIVILEGE);
 
             if (write_value_file_dp_[i] < 0 || write_key_file_dp_[i] < 0) {
                 log_info("Fail to open key-value files.");
@@ -446,8 +461,8 @@ namespace polar_race {
         vector<uint32_t> alignment_size_config = {4096};
         vector<uint32_t> thread_num_config = {64};
         uint32_t flag_config_num = 1;
-        vector<int> write_file_flags_config = {O_RDWR | O_DIRECT};
-        vector<int> read_file_flags_config = {O_RDONLY | O_DIRECT};
+        vector<int> write_file_flags_config = {O_CREAT | O_RDWR | O_DIRECT};
+        vector<int> read_file_flags_config = {O_CREAT | O_RDONLY | O_DIRECT};
 
         uint32_t count = 0;
         log_info("Close file..");
