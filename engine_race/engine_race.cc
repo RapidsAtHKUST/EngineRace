@@ -94,7 +94,7 @@ namespace polar_race {
                 string temp_key = key_file_path + to_string(i);
                 string temp_value = value_file_path + to_string(i);
 
-                write_key_file_dp_[i] = open(temp_key.c_str(), O_RDWR | O_CREAT | O_DIRECT, FILE_PRIVILEGE);
+                write_key_file_dp_[i] = open(temp_key.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
                 write_value_file_dp_[i] = open(temp_value.c_str(), O_RDWR | O_CREAT | O_DIRECT, FILE_PRIVILEGE);
                 ftruncate(write_key_file_dp_[i], key_file_size);
                 ftruncate(write_value_file_dp_[i], value_file_size);
@@ -215,9 +215,7 @@ namespace polar_race {
         key_entry.value_offset_.partition_ = tid;
         key_entry.value_offset_.block_offset_ = local_block_offset;
 
-        memcpy(aligned_local_key_buffer + (local_block_offset % (FILESYSTEM_BLOCK_SIZE / sizeof(KeyEntry))) * sizeof(KeyEntry), &key_entry, sizeof(KeyEntry));
-
-        pwrite(local_key_file, aligned_local_key_buffer, FILESYSTEM_BLOCK_SIZE,  (local_block_offset / (FILESYSTEM_BLOCK_SIZE / sizeof(KeyEntry))) * FILESYSTEM_BLOCK_SIZE);
+        pwrite(local_key_file, &key_entry, sizeof(KeyEntry), local_block_offset * sizeof(KeyEntry));
         local_block_offset += 1;
         // Update the meta data.
         (*(uint32_t *) mmap_local_meta_file_) = local_block_offset;
