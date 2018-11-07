@@ -492,35 +492,35 @@ namespace polar_race {
             delete[] file_block_offset;
         }
 
-        log_info("Close file end..");
-        count = 0;
-        for (uint32_t block_size : block_size_config) {
-            uint32_t block_num = (uint32_t)(value_file_size / block_size);
-            uint32_t* file_block_offset = new uint32_t[block_num];
-            for (uint32_t i = 0; i < block_num; ++i) {
-                file_block_offset[i] = i;
-            }
-
-            for (uint32_t shuffle_count = 0; shuffle_count < 3; ++shuffle_count) {
-                auto seed = std::chrono::system_clock::now().time_since_epoch().count();
-
-                shuffle(file_block_offset, file_block_offset + block_num, std::default_random_engine(seed));
-            }
-
-            for (uint32_t alignment_size : alignment_size_config) {
-                for (uint32_t thread_num : thread_num_config) {
-                    for (uint32_t flag_config = 0; flag_config < flag_config_num; ++flag_config) {
-                        int write_file_flags = write_file_flags_config[flag_config];
-                        int read_file_flags = read_file_flags_config[flag_config];
-
-                        log_info("%d", count++);
-
-                        TestDevice(write_file_flags, file_block_offset, block_num,
-                                   read_file_flags, file_block_offset, block_num, thread_num, block_size, alignment_size);
-                    }
-                }
-            }
-            delete[] file_block_offset;
-        }
+//        log_info("Close file end..");
+//        count = 0;
+//        for (uint32_t block_size : block_size_config) {
+//            uint32_t block_num = (uint32_t)(value_file_size / block_size);
+//            uint32_t* file_block_offset = new uint32_t[block_num];
+//            for (uint32_t i = 0; i < block_num; ++i) {
+//                file_block_offset[i] = i;
+//            }
+//
+//            for (uint32_t shuffle_count = 0; shuffle_count < 3; ++shuffle_count) {
+//                auto seed = std::chrono::system_clock::now().time_since_epoch().count();
+//
+//                shuffle(file_block_offset, file_block_offset + block_num, std::default_random_engine(seed));
+//            }
+//
+//            for (uint32_t alignment_size : alignment_size_config) {
+//                for (uint32_t thread_num : thread_num_config) {
+//                    for (uint32_t flag_config = 0; flag_config < flag_config_num; ++flag_config) {
+//                        int write_file_flags = write_file_flags_config[flag_config];
+//                        int read_file_flags = read_file_flags_config[flag_config];
+//
+//                        log_info("%d", count++);
+//
+//                        TestDevice(write_file_flags, file_block_offset, block_num,
+//                                   read_file_flags, file_block_offset, block_num, thread_num, block_size, alignment_size);
+//                    }
+//                }
+//            }
+//            delete[] file_block_offset;
+//        }
     }
 }  // namespace polar_race
