@@ -353,7 +353,7 @@ namespace polar_race {
                 log_info("tid: %d, flush length: %zu", tid, write_length);
                 size_t write_offset = static_cast<uint64_t>(entry_counts[tid] / TMP_VALUE_BUFFER_SIZE *
                                                             TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
-                auto tmp_fd = open(temp_value.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
+                auto tmp_fd = open(temp_value.c_str(), O_RDWR, FILE_PRIVILEGE);
                 pwrite(tmp_fd, mmap_aligned_buffer_[tid], write_length, write_offset);
                 close(tmp_fd);
             }
