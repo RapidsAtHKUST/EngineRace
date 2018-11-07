@@ -32,6 +32,18 @@ namespace polar_race {
         return l.key_ < r.key_;
     }
 
+    std::string exec(const char *cmd) {
+        std::array<char, 128> buffer;
+        std::string result;
+        std::shared_ptr<FILE> pipe(popen(cmd, "r"), pclose);
+        if (!pipe) throw std::runtime_error("popen() failed!");
+        while (!feof(pipe.get())) {
+            if (fgets(buffer.data(), 128, pipe.get()) != nullptr)
+                result += buffer.data();
+        }
+        return result;
+    }
+
     inline bool file_exists(const char *file_name) {
         struct stat buffer;
         return (stat(file_name, &buffer) == 0);
@@ -162,6 +174,7 @@ namespace polar_race {
 
 // 1. Open engine
     RetCode EngineRace::Open(const std::string &name, Engine **eptr) {
+        log_info("hostname: %s", exec("hostname").c_str());
         if (!file_exists(name.c_str())) {
             int ret = mkdir(name.c_str(), 0755);
             if (ret != 0) {
