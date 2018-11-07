@@ -131,8 +131,10 @@ namespace polar_race {
                 write_value_file_dp_[i] = open(temp_value.c_str(), O_RDWR | O_CREAT | O_DIRECT, FILE_PRIVILEGE);
                 write_value_buffer_file_dp_[i] = open(temp_buffer_value.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
                 ftruncate(write_key_file_dp_[i], key_file_size);
-                ftruncate(write_value_file_dp_[i], value_file_size);
+//                ftruncate(write_value_file_dp_[i], value_file_size);
+                fallocate(write_value_file_dp_[i], 0, 0, value_file_size);
                 ftruncate(write_value_buffer_file_dp_[i], tmp_buffer_value_file_size);
+
                 mmap_aligned_buffer_[i] = (char *) mmap(nullptr, tmp_buffer_value_file_size,
                                                         PROT_READ | PROT_WRITE, MAP_SHARED,
                                                         write_value_buffer_file_dp_[i], 0);
