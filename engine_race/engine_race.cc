@@ -358,7 +358,10 @@ namespace polar_race {
                 exit(-1);
             }
 
+            ftruncate(write_value_file_dp_[i], ((size_t)FILESYSTEM_BLOCK_SIZE) * KEY_VALUE_MAX_COUNT_PER_THREAD);
+            size_t offset = ((size_t)FILESYSTEM_BLOCK_SIZE) * (KEY_VALUE_MAX_COUNT_PER_THREAD - 1);
             aligned_value_buffer_[i] = (char *) memalign(alignment_size, block_size);
+            pwrite(write_value_file_dp_[i], aligned_value_buffer_[i], FILESYSTEM_BLOCK_SIZE, offset);
         }
 
         vector<thread> workers(thread_num);

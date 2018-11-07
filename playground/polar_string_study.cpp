@@ -19,6 +19,7 @@ int main() {
     auto ps = PolarString(reinterpret_cast<char *>(&int1), sizeof(int64_t));
     auto ps2 = PolarString(reinterpret_cast<char *>(&int2), sizeof(int64_t));
 
+    log_info("%d", sizeof(__off_t));
     log_info("match status: %d", ps.compare(ps2));
 
     log_info("%lld", polar_str_to_int64(ps));
