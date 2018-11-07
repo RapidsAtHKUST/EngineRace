@@ -306,7 +306,7 @@ namespace polar_race {
             entry_counts[tid] = read_buffer[0];
             for (int par_id = 0; par_id < NUM_THREADS; ++par_id) {
                 par_prefix_sum_arr[tid + 1][par_id] = par_prefix_sum_arr[tid][par_id] + read_buffer[par_id + 1];
-                log_info("prefix (%d, %d): %d", tid, par_id, par_prefix_sum_arr[tid][par_id]);
+//                log_info("prefix (%d, %d): %d", tid, par_id, par_prefix_sum_arr[tid][par_id]);
             }
         }
         index_ = vector<KeyEntry *>(NUM_THREADS, nullptr);
