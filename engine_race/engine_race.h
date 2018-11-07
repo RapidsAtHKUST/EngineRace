@@ -15,7 +15,7 @@
 #define FILESYSTEM_BLOCK_SIZE (4096)
 #define FILE_PRIVILEGE (0644)
 #define KEY_VALUE_MAX_COUNT_PER_THREAD (1000000)
-#define TMP_VALUE_BUFFER_SIZE (8)
+#define TMP_VALUE_BUFFER_SIZE (4)
 #define KEY_READ_BLOCK_COUNT (4096)
 #define TO_UINT64(buffer) (*(uint64_t*)(buffer))
 

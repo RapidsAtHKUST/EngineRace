@@ -19,7 +19,7 @@
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
  * IN THE SOFTWARE.
  */
-//#ifdef USE_LOG
+#ifdef USE_LOG
 
 #include <cstdio>
 #include <cstdlib>
@@ -135,4 +135,4 @@ void log_log(int level, const char *file, int line, const char *fmt, ...) {
     unlock();
 }
 
-//#endif
+#endif
