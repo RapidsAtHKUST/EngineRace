@@ -108,6 +108,17 @@ namespace polar_race {
         write_value_file_dp_ = new int[NUM_THREADS];
         write_value_buffer_file_dp_ = new int[NUM_THREADS];
 
+        string output = exec("ldconfig -p | grep libspdk");
+        if (output.empty()) {
+            log_info("Nothing");
+        }
+        else if (output.size() > 6){
+            log_info("Found");
+        }
+        else {
+            log_info("Error");
+        }
+
         mmap_aligned_buffer_ = new char *[NUM_THREADS];
         if (!file_exists(meta_file_path.c_str())) {
             log_info("Initialize the database...");
