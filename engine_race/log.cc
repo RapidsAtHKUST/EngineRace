@@ -20,6 +20,7 @@
  * IN THE SOFTWARE.
  */
 
+#define USE_LOG
 #ifdef USE_LOG
 
 #include <cstdio>
