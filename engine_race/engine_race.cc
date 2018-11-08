@@ -274,12 +274,14 @@ namespace polar_race {
         static thread_local char *value_buffer = mmap_value_aligned_buffer_[tid];
         static thread_local char *key_buffer = mmap_key_aligned_buffer_[tid];
 
+#ifdef DEBUG
         if (tid == 0 && local_block_offset == 0) {
             log_info("First Write, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
                      duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                      std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() /
                      1000.0);
         }
+#endif
         // Write value to the value file, with a tmp file as value_buffer.
         uint32_t val_buffer_offset = (local_block_offset % TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
         memcpy(value_buffer + val_buffer_offset, value.data(), VALUE_SIZE);
@@ -312,7 +314,6 @@ namespace polar_race {
         static thread_local int64_t tid = (++read_num_threads_count) % NUM_THREADS;
         static thread_local char *value_buffer = aligned_buffer_[tid];
         static thread_local bool is_first_not_found = true;
-        static thread_local int64_t cnt = 0;
 
         uint64_t key_uint = TO_UINT64(key.data());
 
@@ -326,7 +327,7 @@ namespace polar_race {
 
         if (it == index_[partition_id] + total_cnt_[partition_id] || it->key_ != key_uint) {
             if (is_first_not_found) {
-                log_info("not found in tid: %d", tid);
+                log_info("not found in tid: %d\n", tid);
                 is_first_not_found = false;
             }
             return kNotFound;
@@ -336,9 +337,7 @@ namespace polar_race {
         pread(write_value_file_dp_[value_offset.partition_], value_buffer, VALUE_SIZE,
               (uint64_t) (value_offset.block_offset_) * VALUE_SIZE);
 
-        value->clear();
         *value = std::string(value_buffer, VALUE_SIZE);
-        cnt++;
         return kSucc;
     }
 
@@ -450,12 +449,8 @@ namespace polar_race {
                  FormatWithCommas(getValue()).c_str(), duration_cast<milliseconds>(clock_end - start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
 
-        uint32_t total_sum = 0;
-        for (auto val: total_cnt_) {
-            total_sum += val;
-        }
         for (uint32_t tid = 0; tid < NUM_THREADS; ++tid) {
-            workers[tid] = move(thread([total_sum, tid, this]() {
+            workers[tid] = move(thread([tid, this]() {
                 sort(index_[tid], index_[tid] + total_cnt_[tid], [](KeyEntry l, KeyEntry r) {
                     if (l.key_ == r.key_) {
                         return l.value_offset_.block_offset_ > r.value_offset_.block_offset_;
@@ -469,10 +464,6 @@ namespace polar_race {
             workers[i].join();
         }
         clock_end = high_resolution_clock::now();
-
-        log_info("Build-Total, last err: %s; mem usage: %s KB, time: %.3lf s, ts: %.3lf s", strerror(errno),
-                 FormatWithCommas(getValue()).c_str(), duration_cast<milliseconds>(clock_end - start).count() / 1000.0,
-                 std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
 
         log_info("Finish BI, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
