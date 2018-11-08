@@ -288,9 +288,6 @@ namespace polar_race {
         static thread_local char *value_buffer = aligned_buffer_[tid];
         static thread_local bool is_first_not_found = true;
         static thread_local int64_t cnt = 0;
-        if (cnt == 10 || cnt == 100 || cnt == 1000 || cnt == 10000) {
-            log_info("%d, Test %d", tid, cnt);
-        }
 
         uint64_t key_uint = TO_UINT64(key.data());
 
@@ -301,10 +298,11 @@ namespace polar_race {
                               tmp, [](KeyEntry l, KeyEntry r) {
                     return l.key_ < r.key_;
                 });
-        if (it != index_[partition_id] + total_cnt_[partition_id] && it->key_ != key_uint) {
+
+        if (it == index_[partition_id] + total_cnt_[partition_id] || it->key_ != key_uint) {
             if (is_first_not_found) {
-                is_first_not_found = false;
                 log_info("not found in tid: %d", tid);
+                is_first_not_found = false;
             }
             return kNotFound;
         }
@@ -315,9 +313,6 @@ namespace polar_race {
 
         value->clear();
         *value = std::string(value_buffer, VALUE_SIZE);
-        if (cnt % 100000 == 0) {
-            log_info("Read in tid: %d, cnt: %d", tid, cnt);
-        }
         cnt++;
         return kSucc;
     }
