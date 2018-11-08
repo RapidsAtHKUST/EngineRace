@@ -22,6 +22,7 @@
 //#include <parallel/algorithm>
 //#include "parasort.h"
 
+
 namespace polar_race {
     using namespace std::chrono;
     std::chrono::time_point<std::chrono::high_resolution_clock> clock_start;
