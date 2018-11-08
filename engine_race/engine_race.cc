@@ -40,6 +40,21 @@ namespace polar_race {
         return result;
     }
 
+    inline void setThreadSelfAffinity(int core_id) {
+        long num_cores = sysconf(_SC_NPROCESSORS_ONLN);
+//        assert(core_id >= 0 && core_id < num_cores);
+        if (core_id == 0) {
+            printf("affinity relevant logical cores: %ld\n", num_cores);
+        }
+        core_id = core_id % num_cores;
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        CPU_SET(core_id, &cpuset);
+
+        pthread_t current_thread = pthread_self();
+        pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset);
+    }
+
     inline bool file_exists(const char *file_name) {
         struct stat buffer;
         return (stat(file_name, &buffer) == 0);
@@ -274,6 +289,9 @@ namespace polar_race {
         static thread_local char *value_buffer = mmap_value_aligned_buffer_[tid];
         static thread_local char *key_buffer = mmap_key_aligned_buffer_[tid];
 
+        if (local_block_offset == 0) {
+            setThreadSelfAffinity(tid);
+        }
 #ifdef DEBUG
         if (tid == 0 && local_block_offset == 0) {
             log_info("First Write, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
