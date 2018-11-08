@@ -16,6 +16,7 @@
 #define FILE_PRIVILEGE (0644)
 #define KEY_VALUE_MAX_COUNT_PER_THREAD (1000000)
 #define TMP_VALUE_BUFFER_SIZE (4)
+#define TMP_KEY_BUFFER_SIZE (1024)
 #define KEY_READ_BLOCK_COUNT (4096)
 #define TO_UINT64(buffer) (*(uint64_t*)(buffer))
 
@@ -39,11 +40,14 @@ namespace polar_race {
         int *write_key_file_dp_;
         int *write_value_file_dp_;
         int *write_value_buffer_file_dp_;
-
+        int *write_key_buffer_file_dp_;
         int write_meta_file_dp_;
+
         uint32_t **write_mmap_meta_file_;
+        char **mmap_value_aligned_buffer_;
+        char **mmap_key_aligned_buffer_;
+
         char **aligned_buffer_;
-        char **mmap_aligned_buffer_;
 
         vector<KeyEntry *> index_;
         vector<uint32_t> total_cnt_;
