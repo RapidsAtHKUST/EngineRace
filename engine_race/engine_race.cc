@@ -289,8 +289,8 @@ namespace polar_race {
         static thread_local bool is_first = true;
         static thread_local bool is_first_not_found = true;
         static thread_local int64_t cnt = 0;
-        if (tid == 0 && is_first) {
-            log_info("First Read, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
+        if (cnt == 10 || cnt == 100 || cnt == 1000 || cnt == 10000) {
+            log_info("%d, First Read, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", tid, FormatWithCommas(getValue()).c_str(),
                      duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                      std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() /
                      1000.0);
@@ -347,7 +347,6 @@ namespace polar_race {
         log_info("Begin BI, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
-        sleep(5);
         // Read meta data.
         uint32_t read_buffer[VALUE_SIZE / sizeof(uint32_t)];
         vector<uint32_t> entry_counts(NUM_THREADS);
