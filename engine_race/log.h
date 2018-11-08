@@ -6,7 +6,6 @@
  */
 #pragma once
 
-#define USE_LOG
 #ifdef USE_LOG
 
 #include <stdio.h>
