@@ -28,11 +28,6 @@ namespace polar_race {
     std::chrono::time_point<std::chrono::high_resolution_clock> clock_start;
     std::chrono::time_point<std::chrono::high_resolution_clock> clock_end;
 
-    bool operator<(KeyEntry l, KeyEntry r) {
-        if (l.key_ == r.key_) { return l.value_offset_.block_offset_ > r.value_offset_.block_offset_; }
-        return l.key_ < r.key_;
-    }
-
     std::string exec(const char *cmd) {
         std::array<char, 128> buffer;
         std::string result;
@@ -439,32 +434,14 @@ namespace polar_race {
         }
         for (uint32_t tid = 0; tid < NUM_THREADS; ++tid) {
             workers[tid] = move(thread([total_sum, tid, this]() {
-                sort(index_[tid], index_[tid] + total_cnt_[tid]);
-
-                // check
-                if (total_sum > 20000000 && total_cnt_[tid] > 0) {
-//                if (total_sum > 2000 && total_cnt_[tid] > 0) {
-                    log_info("check in tid: %d..., total cnt: %d, local cnt: %d", tid, total_sum, total_cnt_[tid]);
-                    auto tmp = index_[tid][0];
-                    for (uint32_t i = 1; i < total_cnt_[tid]; i++) {
-                        auto &cur_entry = index_[tid][i];
-                        if (get_partition_id(cur_entry.key_) != tid || tmp.key_ == cur_entry.key_) {
-                            log_error("small - err %zu, %d, %d", tmp.key_, tmp.value_offset_.block_offset_,
-                                      tmp.value_offset_.partition_);
-                            log_error("large - err %zu, %d, %d", cur_entry.key_,
-                                      cur_entry.value_offset_.block_offset_,
-                                      cur_entry.value_offset_.partition_);
-                        }
-                        if (!(tmp < cur_entry)) {
-                            log_error("small - err %zu, %d, %d", tmp.key_, tmp.value_offset_.block_offset_,
-                                      tmp.value_offset_.partition_);
-                            log_error("large - err %zu, %d, %d", cur_entry.key_,
-                                      cur_entry.value_offset_.block_offset_,
-                                      cur_entry.value_offset_.partition_);
-                        }
-                        tmp = cur_entry;
+                sort(index_[tid], index_[tid] + total_cnt_[tid], [](KeyEntry l, KeyEntry r) {
+                    if (l.key_ == r.key_) {
+                        return l.value_offset_.block_offset_ > r.value_offset_.block_offset_;
                     }
-                }
+                    else {
+                        return l.key_ < r.key_;
+                    }
+                });
             }));
         }
         for (uint32_t i = 0; i < NUM_THREADS; ++i) {
