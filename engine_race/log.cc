@@ -20,7 +20,8 @@
  * IN THE SOFTWARE.
  */
 
-#define USE_LOG
+#include "log.h"
+
 #ifdef USE_LOG
 
 #include <cstdio>
@@ -28,7 +29,6 @@
 #include <cstdarg>
 #include <ctime>
 
-#include "log.h"
 
 static struct {
     void *udata;
