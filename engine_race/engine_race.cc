@@ -286,15 +286,10 @@ namespace polar_race {
     RetCode EngineRace::Read(const PolarString &key, std::string *value) {
         static thread_local int64_t tid = (++read_num_threads_count) % NUM_THREADS;
         static thread_local char *value_buffer = aligned_buffer_[tid];
-        static thread_local bool is_first = true;
         static thread_local bool is_first_not_found = true;
         static thread_local int64_t cnt = 0;
         if (cnt == 10 || cnt == 100 || cnt == 1000 || cnt == 10000) {
-            log_info("%d, First Read, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", tid, FormatWithCommas(getValue()).c_str(),
-                     duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
-                     std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() /
-                     1000.0);
-            is_first = false;
+            log_info("%d, Test %d", tid, cnt);
         }
 
         uint64_t key_uint = TO_UINT64(key.data());
