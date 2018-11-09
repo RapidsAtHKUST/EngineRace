@@ -107,7 +107,7 @@ namespace polar_race {
             write_key_file_dp_(nullptr), write_value_file_dp_(nullptr), write_value_buffer_file_dp_(nullptr),
             write_key_buffer_file_dp_(nullptr), write_meta_file_dp_(-1), write_mmap_meta_file_(nullptr),
             mmap_value_aligned_buffer_(nullptr), mmap_key_aligned_buffer_(nullptr), aligned_buffer_(nullptr),
-            tmp_value_buf_size_(NUM_THREADS, 5) {
+            tmp_value_buf_size_(NUM_THREADS, 4) {
         clock_end = high_resolution_clock::now();
         log_info("Start init DB, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
@@ -123,8 +123,12 @@ namespace polar_race {
 
 
         for (int i = 0; i < NUM_THREADS; i++) {
-            if (i % 2 == 0) {
+            if (i % 4 == 0) {
                 tmp_value_buf_size_[i] = 7;
+            } else if (i % 4 == 1) {
+                tmp_value_buf_size_[i] = 13;
+            } else if (i % 4 == 2) {
+                tmp_value_buf_size_[i] = 19;
             }
         }
 //        const size_t tmp_buffer_value_file_size = VALUE_SIZE * (size_t) TMP_VALUE_BUFFER_SIZE;
