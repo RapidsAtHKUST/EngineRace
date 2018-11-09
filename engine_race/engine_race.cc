@@ -144,37 +144,46 @@ namespace polar_race {
             write_mmap_meta_file_ = new uint32_t *[NUM_THREADS];
             aligned_buffer_ = new char *[NUM_THREADS];
 
+            vector<thread> workers(NUM_THREADS);
             for (int i = 0; i < NUM_THREADS; ++i) {
-                string temp_key = key_file_path + to_string(i);
-                string temp_value = value_file_path + to_string(i);
-                string temp_buffer_value = tmp_value_file_path + to_string(i);
-                string temp_buffer_key = tmp_key_file_path + to_string(i);
+                workers[i] = move(thread([&key_file_path, &value_file_path, &tmp_value_file_path, & tmp_key_file_path,
+                                                 i, this]() {
+                    string temp_key = key_file_path + to_string(i);
+                    string temp_value = value_file_path + to_string(i);
+                    string temp_buffer_value = tmp_value_file_path + to_string(i);
+                    string temp_buffer_key = tmp_key_file_path + to_string(i);
 
-                write_key_file_dp_[i] = open(temp_key.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
-                write_value_file_dp_[i] = open(temp_value.c_str(), O_RDWR | O_CREAT | O_DIRECT, FILE_PRIVILEGE);
-                write_value_buffer_file_dp_[i] = open(temp_buffer_value.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
-                write_key_buffer_file_dp_[i] = open(temp_buffer_key.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
+                    write_key_file_dp_[i] = open(temp_key.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
+                    write_value_file_dp_[i] = open(temp_value.c_str(), O_RDWR | O_CREAT | O_DIRECT, FILE_PRIVILEGE);
+                    write_value_buffer_file_dp_[i] = open(temp_buffer_value.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
+                    write_key_buffer_file_dp_[i] = open(temp_buffer_key.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
 
-                if (write_key_file_dp_[i] < 0 || write_value_file_dp_[i] < 0 || write_value_buffer_file_dp_[i] < 0) {
-                    log_info("Fail to create key-value files.");
-                    exit(-1);
-                }
-                // Pre-allocate on the SSD.
-                fallocate(write_key_file_dp_[i], 0, 0, key_file_size);
-                fallocate(write_value_file_dp_[i], 0, 0, value_file_size);
-                fallocate(write_value_buffer_file_dp_[i], 0, 0, tmp_buffer_value_file_size);
-                fallocate(write_key_buffer_file_dp_[i], 0, 0, tmp_buffer_key_file_size);
+                    if (write_key_file_dp_[i] < 0 || write_value_file_dp_[i] < 0 ||
+                        write_value_buffer_file_dp_[i] < 0) {
+                        log_info("Fail to create key-value files.");
+                        exit(-1);
+                    }
+                    // Pre-allocate on the SSD.
+                    fallocate(write_key_file_dp_[i], 0, 0, key_file_size);
+                    fallocate(write_value_file_dp_[i], 0, 0, value_file_size);
+                    fallocate(write_value_buffer_file_dp_[i], 0, 0, tmp_buffer_value_file_size);
+                    fallocate(write_key_buffer_file_dp_[i], 0, 0, tmp_buffer_key_file_size);
 
-                mmap_value_aligned_buffer_[i] = (char *) mmap(nullptr, tmp_buffer_value_file_size, \
+                    mmap_value_aligned_buffer_[i] = (char *) mmap(nullptr, tmp_buffer_value_file_size, \
                         PROT_READ | PROT_WRITE, MAP_SHARED, write_value_buffer_file_dp_[i], 0);
-                mmap_key_aligned_buffer_[i] = (char *) mmap(nullptr, tmp_buffer_key_file_size, \
+                    mmap_key_aligned_buffer_[i] = (char *) mmap(nullptr, tmp_buffer_key_file_size, \
                         PROT_READ | PROT_WRITE, MAP_SHARED, write_key_buffer_file_dp_[i], 0);
 
-                write_mmap_meta_file_[i] = (uint32_t *) mmap(nullptr, VALUE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED,
-                                                             write_meta_file_dp_, i * VALUE_SIZE);
+                    write_mmap_meta_file_[i] = (uint32_t *) mmap(nullptr, VALUE_SIZE, PROT_READ | PROT_WRITE,
+                                                                 MAP_SHARED,
+                                                                 write_meta_file_dp_, i * VALUE_SIZE);
 
-                memset(write_mmap_meta_file_[i], 0, sizeof(uint32_t) * (NUM_THREADS + 1));
-                aligned_buffer_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, VALUE_SIZE);
+                    memset(write_mmap_meta_file_[i], 0, sizeof(uint32_t) * (NUM_THREADS + 1));
+                    aligned_buffer_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, VALUE_SIZE);
+                }));
+            }
+            for (int i = 0; i < NUM_THREADS; i++) {
+                workers[i].join();
             }
             log_info("Create the database successfully.");
         } else {
