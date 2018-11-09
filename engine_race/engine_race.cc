@@ -164,10 +164,14 @@ namespace polar_race {
                         exit(-1);
                     }
                     // Pre-allocate on the SSD.
-                    fallocate(write_key_file_dp_[i], 0, 0, key_file_size);
-                    fallocate(write_value_file_dp_[i], 0, 0, value_file_size);
-                    fallocate(write_value_buffer_file_dp_[i], 0, 0, tmp_buffer_value_file_size);
-                    fallocate(write_key_buffer_file_dp_[i], 0, 0, tmp_buffer_key_file_size);
+//                    fallocate(write_key_file_dp_[i], 0, 0, key_file_size);
+//                    fallocate(write_value_file_dp_[i], 0, 0, value_file_size);
+//                    fallocate(write_value_buffer_file_dp_[i], 0, 0, tmp_buffer_value_file_size);
+//                    fallocate(write_key_buffer_file_dp_[i], 0, 0, tmp_buffer_key_file_size);
+                    ftruncate(write_key_file_dp_[i], key_file_size);
+                    ftruncate(write_value_file_dp_[i], value_file_size);
+                    ftruncate(write_value_buffer_file_dp_[i], tmp_buffer_value_file_size);
+                    ftruncate(write_key_buffer_file_dp_[i], tmp_buffer_key_file_size);
 
                     mmap_value_aligned_buffer_[i] = (char *) mmap(nullptr, tmp_buffer_value_file_size, \
                         PROT_READ | PROT_WRITE, MAP_SHARED, write_value_buffer_file_dp_[i], 0);
