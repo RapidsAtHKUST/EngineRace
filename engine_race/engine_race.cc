@@ -106,7 +106,8 @@ namespace polar_race {
     EngineRace::EngineRace(const std::string &dir) :
             write_key_file_dp_(nullptr), write_value_file_dp_(nullptr), write_value_buffer_file_dp_(nullptr),
             write_key_buffer_file_dp_(nullptr), write_meta_file_dp_(-1), write_mmap_meta_file_(nullptr),
-            mmap_value_aligned_buffer_(nullptr), mmap_key_aligned_buffer_(nullptr), aligned_buffer_(nullptr) {
+            mmap_value_aligned_buffer_(nullptr), mmap_key_aligned_buffer_(nullptr), aligned_buffer_(nullptr),
+            tmp_value_buf_size_(NUM_THREADS, 5) {
         clock_end = high_resolution_clock::now();
         log_info("Start init DB, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
@@ -119,7 +120,14 @@ namespace polar_race {
 
         const size_t key_file_size = sizeof(KeyEntry) * (size_t) KEY_VALUE_MAX_COUNT_PER_THREAD;
         const size_t value_file_size = VALUE_SIZE * (size_t) KEY_VALUE_MAX_COUNT_PER_THREAD;
-        const size_t tmp_buffer_value_file_size = VALUE_SIZE * (size_t) TMP_VALUE_BUFFER_SIZE;
+
+
+        for (int i = 0; i < NUM_THREADS; i++) {
+            if (i % 2 == 0) {
+                tmp_value_buf_size_[i] = 7;
+            }
+        }
+//        const size_t tmp_buffer_value_file_size = VALUE_SIZE * (size_t) TMP_VALUE_BUFFER_SIZE;
         const size_t tmp_buffer_key_file_size = sizeof(KeyEntry) * (size_t) TMP_KEY_BUFFER_SIZE;
 
         write_key_file_dp_ = new int[NUM_THREADS];
@@ -170,6 +178,7 @@ namespace polar_race {
 //                    fallocate(write_key_buffer_file_dp_[i], 0, 0, tmp_buffer_key_file_size);
                     ftruncate(write_key_file_dp_[i], key_file_size);
                     ftruncate(write_value_file_dp_[i], value_file_size);
+                    size_t tmp_buffer_value_file_size = VALUE_SIZE * tmp_value_buf_size_[i];
                     ftruncate(write_value_buffer_file_dp_[i], tmp_buffer_value_file_size);
                     ftruncate(write_key_buffer_file_dp_[i], tmp_buffer_key_file_size);
 
@@ -213,6 +222,7 @@ namespace polar_race {
                     log_info("Fail to open key-value files.");
                     exit(-1);
                 }
+                size_t tmp_buffer_value_file_size = VALUE_SIZE * tmp_value_buf_size_[i];
 
                 mmap_value_aligned_buffer_[i] = (char *) mmap(nullptr, tmp_buffer_value_file_size,
                                                               PROT_READ | PROT_WRITE, MAP_SHARED,
@@ -262,6 +272,7 @@ namespace polar_race {
                 munmap(write_mmap_meta_file_[i], VALUE_SIZE);
             }
             if (mmap_value_aligned_buffer_[i] != nullptr) {
+                size_t TMP_VALUE_BUFFER_SIZE = tmp_value_buf_size_[i];
                 munmap(mmap_value_aligned_buffer_[i], VALUE_SIZE * (size_t) TMP_VALUE_BUFFER_SIZE);
             }
             if (mmap_key_aligned_buffer_[i] != nullptr) {
@@ -301,6 +312,7 @@ namespace polar_race {
         static thread_local uint32_t local_block_offset = 0;
         static thread_local char *value_buffer = mmap_value_aligned_buffer_[tid];
         static thread_local char *key_buffer = mmap_key_aligned_buffer_[tid];
+        static thread_local uint32_t TMP_VALUE_BUFFER_SIZE = tmp_value_buf_size_[tid];
 
 #ifdef AFFINITY
         if (local_block_offset == 0) {
@@ -409,6 +421,7 @@ namespace polar_race {
             // Flush tmp files.
             const string value_file_path = dir + "/" + value_file_name;
             string temp_value = value_file_path + to_string(tid);
+            size_t TMP_VALUE_BUFFER_SIZE = tmp_value_buf_size_[tid];
             if ((entry_counts[tid] % TMP_VALUE_BUFFER_SIZE) != 0) {
                 size_t write_length = (entry_counts[tid] % TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
                 size_t write_offset = static_cast<uint64_t>(entry_counts[tid] / TMP_VALUE_BUFFER_SIZE *
