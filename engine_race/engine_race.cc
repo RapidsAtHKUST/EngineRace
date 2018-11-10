@@ -135,7 +135,7 @@ namespace polar_race {
         const string tmp_value_file_path = dir + "/" + value_buffer_file_name;
         const string tmp_key_file_path = dir + "/" + key_buffer_file_name;
 
-        const size_t key_file_size = sizeof(KeyEntry) * (size_t) KEY_VALUE_MAX_COUNT_PER_THREAD;
+        const size_t key_file_size = sizeof(uint64_t) * (size_t) KEY_VALUE_MAX_COUNT_PER_THREAD;
         const size_t value_file_size = VALUE_SIZE * (size_t) KEY_VALUE_MAX_COUNT_PER_THREAD;
 
 
@@ -149,7 +149,7 @@ namespace polar_race {
 //            }
 //        }
 //        const size_t tmp_buffer_value_file_size = VALUE_SIZE * (size_t) TMP_VALUE_BUFFER_SIZE;
-        const size_t tmp_buffer_key_file_size = sizeof(KeyEntry) * (size_t) TMP_KEY_BUFFER_SIZE;
+        const size_t tmp_buffer_key_file_size = sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE;
 
         write_key_file_dp_ = new int[NUM_THREADS];
         write_value_file_dp_ = new int[NUM_THREADS];
@@ -157,7 +157,7 @@ namespace polar_race {
         write_key_buffer_file_dp_ = new int[NUM_THREADS];
 
         mmap_value_aligned_buffer_ = new char *[NUM_THREADS];
-        mmap_key_aligned_buffer_ = new char *[NUM_THREADS];
+        mmap_key_aligned_buffer_ = new uint64_t *[NUM_THREADS];
 
         if (!file_exists(meta_file_path.c_str())) {
             log_info("Initialize the database...");
@@ -205,7 +205,7 @@ namespace polar_race {
 
                     mmap_value_aligned_buffer_[i] = (char *) mmap(nullptr, tmp_buffer_value_file_size, \
                         PROT_READ | PROT_WRITE, MAP_SHARED, write_value_buffer_file_dp_[i], 0);
-                    mmap_key_aligned_buffer_[i] = (char *) mmap(nullptr, tmp_buffer_key_file_size, \
+                    mmap_key_aligned_buffer_[i] = (uint64_t *) mmap(nullptr, tmp_buffer_key_file_size, \
                         PROT_READ | PROT_WRITE, MAP_SHARED, write_key_buffer_file_dp_[i], 0);
 
                     write_mmap_meta_file_[i] = (uint32_t *) mmap(nullptr, VALUE_SIZE, PROT_READ | PROT_WRITE,
@@ -248,7 +248,7 @@ namespace polar_race {
                 mmap_value_aligned_buffer_[i] = (char *) mmap(nullptr, tmp_buffer_value_file_size,
                                                               PROT_READ | PROT_WRITE, MAP_SHARED,
                                                               write_value_buffer_file_dp_[i], 0);
-                mmap_key_aligned_buffer_[i] = (char *) mmap(nullptr, tmp_buffer_key_file_size, \
+                mmap_key_aligned_buffer_[i] = (uint64_t *) mmap(nullptr, tmp_buffer_key_file_size, \
                         PROT_READ | PROT_WRITE, MAP_SHARED, write_key_buffer_file_dp_[i], 0);
 
                 aligned_buffer_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, VALUE_SIZE);
@@ -297,7 +297,7 @@ namespace polar_race {
                 munmap(mmap_value_aligned_buffer_[i], VALUE_SIZE * (size_t) TMP_VALUE_BUFFER_SIZE);
             }
             if (mmap_key_aligned_buffer_[i] != nullptr) {
-                munmap(mmap_key_aligned_buffer_[i], sizeof(KeyEntry) * (size_t) TMP_KEY_BUFFER_SIZE);
+                munmap(mmap_key_aligned_buffer_[i], sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE);
             }
             if (aligned_buffer_ != nullptr) {
                 free(aligned_buffer_[i]);
@@ -338,7 +338,7 @@ namespace polar_race {
         static thread_local int local_value_file = write_value_file_dp_[tid];
         static thread_local uint32_t local_block_offset = 0;
         static thread_local char *value_buffer = mmap_value_aligned_buffer_[tid];
-        static thread_local char *key_buffer = mmap_key_aligned_buffer_[tid];
+        static thread_local uint64_t *key_buffer = mmap_key_aligned_buffer_[tid];
         static thread_local uint32_t TMP_VALUE_BUFFER_SIZE = tmp_value_buf_size_[tid];
 
 #ifdef AFFINITY
@@ -363,21 +363,18 @@ namespace polar_race {
         }
 
         // Write key to the key file.
-        KeyEntry key_entry{};
-        key_entry.key_ = TO_UINT64(key.data());
-        key_entry.value_offset_.partition_ = tid;
-        key_entry.value_offset_.block_offset_ = local_block_offset;
-        uint32_t key_buffer_offset = (local_block_offset % TMP_KEY_BUFFER_SIZE) * sizeof(KeyEntry);
-        memcpy(key_buffer + key_buffer_offset, &key_entry, sizeof(KeyEntry));
+        uint64_t key_int = TO_UINT64(key.data());
+        uint32_t key_buffer_offset = (local_block_offset % TMP_KEY_BUFFER_SIZE);
+        key_buffer[key_buffer_offset] = key_int;
         if (((local_block_offset + 1) % TMP_KEY_BUFFER_SIZE) == 0) {
-            pwrite(local_key_file, key_buffer, sizeof(KeyEntry) * TMP_KEY_BUFFER_SIZE,
-                   ((uint64_t) local_block_offset - (TMP_KEY_BUFFER_SIZE - 1)) * sizeof(KeyEntry));
+            pwrite(local_key_file, key_buffer, sizeof(uint64_t) * TMP_KEY_BUFFER_SIZE,
+                   ((uint64_t) local_block_offset - (TMP_KEY_BUFFER_SIZE - 1)) * sizeof(uint64_t));
         }
 
         // Update the meta data.
         local_block_offset += 1;
         mmap_local_meta_file_[0] = local_block_offset;
-        mmap_local_meta_file_[get_partition_id(key_entry.key_) + 1]++;
+        mmap_local_meta_file_[get_partition_id(key_int) + 1]++;
         return kSucc;
     }
 
@@ -462,9 +459,9 @@ namespace polar_race {
             const string key_file_path = dir + "/" + key_file_name;
             string temp_key = key_file_path + to_string(tid);
             if ((entry_counts[tid] % TMP_KEY_BUFFER_SIZE) != 0) {
-                size_t write_length = (entry_counts[tid] % TMP_KEY_BUFFER_SIZE) * sizeof(KeyEntry);
+                size_t write_length = (entry_counts[tid] % TMP_KEY_BUFFER_SIZE) * sizeof(uint64_t);
                 size_t write_offset = static_cast<uint64_t>(entry_counts[tid] / TMP_KEY_BUFFER_SIZE *
-                                                            TMP_KEY_BUFFER_SIZE) * sizeof(KeyEntry);
+                                                            TMP_KEY_BUFFER_SIZE) * sizeof(uint64_t);
                 auto tmp_fd = open(temp_key.c_str(), O_RDWR, FILE_PRIVILEGE);
                 pwrite(tmp_fd, mmap_key_aligned_buffer_[tid], write_length, write_offset);
                 close(tmp_fd);
@@ -485,8 +482,8 @@ namespace polar_race {
         vector<thread> workers(NUM_THREADS);
         for (uint32_t tid = 0; tid < NUM_THREADS; ++tid) {
             workers[tid] = move(thread([&par_prefix_sum_arr, &entry_counts, tid, this]() {
-                auto *buffer = (KeyEntry *) malloc(sizeof(KeyEntry) * KEY_READ_BLOCK_COUNT);
-                posix_fadvise(write_key_file_dp_[tid], 0, entry_counts[tid] * sizeof(KeyEntry), POSIX_FADV_SEQUENTIAL);
+                auto *buffer = (uint64_t *) malloc(sizeof(uint64_t) * KEY_READ_BLOCK_COUNT);
+                posix_fadvise(write_key_file_dp_[tid], 0, entry_counts[tid] * sizeof(uint64_t), POSIX_FADV_SEQUENTIAL);
                 vector<uint32_t> par_off(NUM_THREADS);
                 for (size_t j = 0; j < par_off.size(); j++) {
                     par_off[j] = par_prefix_sum_arr[tid][j];
@@ -495,21 +492,28 @@ namespace polar_race {
                 uint32_t passes = entry_count / KEY_READ_BLOCK_COUNT;
                 uint32_t remain_entries_count = entry_count - passes * KEY_READ_BLOCK_COUNT;
                 size_t read_offset = 0;
+                uint32_t file_offset = 0;
                 for (uint32_t j = 0; j < passes; ++j) {
-                    pread(write_key_file_dp_[tid], buffer, KEY_READ_BLOCK_COUNT * sizeof(KeyEntry), read_offset);
+                    pread(write_key_file_dp_[tid], buffer, KEY_READ_BLOCK_COUNT * sizeof(uint64_t), read_offset);
                     for (int k = 0; k < KEY_READ_BLOCK_COUNT; k++) {
-                        auto par_id = get_partition_id(buffer[k].key_);
-                        index_[par_id][par_off[par_id]] = buffer[k];
+                        auto par_id = get_partition_id(buffer[k]);
+                        index_[par_id][par_off[par_id]].key_ = buffer[k];
+                        index_[par_id][par_off[par_id]].value_offset_.block_offset_ = file_offset;
+                        index_[par_id][par_off[par_id]].value_offset_.partition_ = tid;
+                        file_offset++;
                         par_off[par_id]++;
                     }
-                    read_offset += KEY_READ_BLOCK_COUNT * sizeof(KeyEntry);
+                    read_offset += KEY_READ_BLOCK_COUNT * sizeof(uint64_t);
                 }
 
                 if (remain_entries_count != 0) {
-                    pread(write_key_file_dp_[tid], buffer, remain_entries_count * sizeof(KeyEntry), read_offset);
+                    pread(write_key_file_dp_[tid], buffer, remain_entries_count * sizeof(uint64_t), read_offset);
                     for (uint32_t k = 0; k < remain_entries_count; k++) {
-                        auto par_id = get_partition_id(buffer[k].key_);
-                        index_[par_id][par_off[par_id]] = buffer[k];
+                        auto par_id = get_partition_id(buffer[k]);
+                        index_[par_id][par_off[par_id]].key_ = buffer[k];
+                        index_[par_id][par_off[par_id]].value_offset_.block_offset_ = file_offset;
+                        index_[par_id][par_off[par_id]].value_offset_.partition_ = tid;
+                        file_offset++;
                         par_off[par_id]++;
                     }
                 }

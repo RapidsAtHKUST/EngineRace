@@ -18,7 +18,7 @@
 #define FILE_PRIVILEGE (0644)
 #define KEY_VALUE_MAX_COUNT_PER_THREAD (1000000)
 //#define TMP_VALUE_BUFFER_SIZE (4)
-#define TMP_KEY_BUFFER_SIZE (1024)
+#define TMP_KEY_BUFFER_SIZE (2048)
 #define KEY_READ_BLOCK_COUNT (4096)
 #define TO_UINT64(buffer) (*(uint64_t*)(buffer))
 
@@ -47,7 +47,7 @@ namespace polar_race {
 
         uint32_t **write_mmap_meta_file_;
         char **mmap_value_aligned_buffer_;
-        char **mmap_key_aligned_buffer_;
+        uint64_t **mmap_key_aligned_buffer_;
 
         char **aligned_buffer_;
 
