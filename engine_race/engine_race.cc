@@ -40,6 +40,23 @@ namespace polar_race {
         return result;
     }
 
+    bool operator<(KeyEntry l, KeyEntry r) {
+        return l.key_ < r.key_;
+    }
+
+    uint32_t __attribute__ ((noinline)) branchfree_search(KeyEntry *a, uint32_t n, KeyEntry x) {
+        using I = uint32_t;
+        const KeyEntry *base = a;
+        while (n > 1) {
+            I half = n / 2;
+            __builtin_prefetch(base + half / 2, 0, 0);
+            __builtin_prefetch(base + half + half / 2, 0, 0);
+            base = (base[half] < x) ? base + half : base;
+            n -= half;
+        }
+        return (*base < x) + base - a;
+    }
+
     inline void setThreadSelfAffinity(int core_id) {
 //        long num_cores = sysconf(_SC_NPROCESSORS_ONLN);
 //        assert(core_id >= 0 && core_id < num_cores);
@@ -377,10 +394,8 @@ namespace polar_race {
         auto partition_id = get_partition_id(key_uint);
 
         auto clk_beg = high_resolution_clock::now();
-        auto it = lower_bound(index_[partition_id], index_[partition_id] + total_cnt_[partition_id],
-                              tmp, [](KeyEntry l, KeyEntry r) {
-                    return l.key_ < r.key_;
-                });
+
+        auto it = index_[partition_id] + branchfree_search(index_[partition_id], total_cnt_[partition_id], tmp);
         auto clk_end = high_resolution_clock::now();
         lower_bound_cost_[tid] += duration_cast<nanoseconds>(clk_end - clk_beg).count();
 
