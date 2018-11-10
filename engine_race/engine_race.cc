@@ -317,11 +317,11 @@ namespace polar_race {
         for (KeyEntry *index_partition: index_) {
             free(index_partition);
         }
-        if (total_cnt_.size() > 0) {
-            for (auto i = 0; i < NUM_THREADS; i++) {
-                log_info("time for bs: %lld ns", lower_bound_cost_[i]);
-            }
-        }
+//        if (total_cnt_.size() > 0) {
+//            for (auto i = 0; i < NUM_THREADS; i++) {
+//                log_info("time for bs: %lld ns", lower_bound_cost_[i]);
+//            }
+//        }
 
         clock_end = high_resolution_clock::now();
         log_info("Finish ~EngineRace(), mem usage: %s KB, time: %.3lf s, ts: %.3lf s",
@@ -393,11 +393,11 @@ namespace polar_race {
         tmp.key_ = key_uint;
         auto partition_id = get_partition_id(key_uint);
 
-        auto clk_beg = high_resolution_clock::now();
+//        auto clk_beg = high_resolution_clock::now();
 
         auto it = index_[partition_id] + branchfree_search(index_[partition_id], total_cnt_[partition_id], tmp);
-        auto clk_end = high_resolution_clock::now();
-        lower_bound_cost_[tid] += duration_cast<nanoseconds>(clk_end - clk_beg).count();
+//        auto clk_end = high_resolution_clock::now();
+//        lower_bound_cost_[tid] += duration_cast<nanoseconds>(clk_end - clk_beg).count();
 
         if (it == index_[partition_id] + total_cnt_[partition_id] || it->key_ != key_uint) {
             if (is_first_not_found) {
