@@ -107,7 +107,7 @@ namespace polar_race {
             write_key_file_dp_(nullptr), write_value_file_dp_(nullptr), write_value_buffer_file_dp_(nullptr),
             write_key_buffer_file_dp_(nullptr), write_meta_file_dp_(-1), write_mmap_meta_file_(nullptr),
             mmap_value_aligned_buffer_(nullptr), mmap_key_aligned_buffer_(nullptr), aligned_buffer_(nullptr),
-            tmp_value_buf_size_(NUM_THREADS, 3) {
+            tmp_value_buf_size_(NUM_THREADS, 4), lower_bound_cost_(NUM_THREADS, 0) {
         clock_end = high_resolution_clock::now();
         log_info("Start init DB, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
@@ -122,15 +122,15 @@ namespace polar_race {
         const size_t value_file_size = VALUE_SIZE * (size_t) KEY_VALUE_MAX_COUNT_PER_THREAD;
 
 
-        for (int i = 0; i < NUM_THREADS; i++) {
-            if (i % 4 == 0) {
-                tmp_value_buf_size_[i] = 4;
-            } else if (i % 4 == 1) {
-                tmp_value_buf_size_[i] = 5;
-            } else if (i % 4 == 2) {
-                tmp_value_buf_size_[i] = 7;
-            }
-        }
+//        for (int i = 0; i < NUM_THREADS; i++) {
+//            if (i % 4 == 0) {
+//                tmp_value_buf_size_[i] = 4;
+//            } else if (i % 4 == 1) {
+//                tmp_value_buf_size_[i] = 4;
+//            } else if (i % 4 == 2) {
+//                tmp_value_buf_size_[i] = 4;
+//            }
+//        }
 //        const size_t tmp_buffer_value_file_size = VALUE_SIZE * (size_t) TMP_VALUE_BUFFER_SIZE;
         const size_t tmp_buffer_key_file_size = sizeof(KeyEntry) * (size_t) TMP_KEY_BUFFER_SIZE;
 
@@ -300,6 +300,12 @@ namespace polar_race {
         for (KeyEntry *index_partition: index_) {
             free(index_partition);
         }
+        if (total_cnt_.size() > 0) {
+            for (auto i = 0; i < NUM_THREADS; i++) {
+                log_info("time for bs: %lld ns", lower_bound_cost_[i]);
+            }
+        }
+
         clock_end = high_resolution_clock::now();
         log_info("Finish ~EngineRace(), mem usage: %s KB, time: %.3lf s, ts: %.3lf s",
                  FormatWithCommas(getValue()).c_str(),
@@ -369,10 +375,14 @@ namespace polar_race {
         KeyEntry tmp{};
         tmp.key_ = key_uint;
         auto partition_id = get_partition_id(key_uint);
+
+        auto clk_beg = high_resolution_clock::now();
         auto it = lower_bound(index_[partition_id], index_[partition_id] + total_cnt_[partition_id],
                               tmp, [](KeyEntry l, KeyEntry r) {
                     return l.key_ < r.key_;
                 });
+        auto clk_end = high_resolution_clock::now();
+        lower_bound_cost_[tid] += duration_cast<nanoseconds>(clk_end - clk_beg).count();
 
         if (it == index_[partition_id] + total_cnt_[partition_id] || it->key_ != key_uint) {
             if (is_first_not_found) {

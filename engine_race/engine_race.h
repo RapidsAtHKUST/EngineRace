@@ -52,6 +52,7 @@ namespace polar_race {
         vector<KeyEntry *> index_;
         vector<uint32_t> total_cnt_;
         vector<uint32_t> tmp_value_buf_size_;
+        vector<int64_t> lower_bound_cost_;
     public:
         static RetCode Open(const std::string &name, Engine **eptr);
 
