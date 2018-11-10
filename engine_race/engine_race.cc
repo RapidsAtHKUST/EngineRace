@@ -44,7 +44,7 @@ namespace polar_race {
         return l.key_ < r.key_;
     }
 
-    uint32_t __attribute__ ((noinline)) branchfree_search(KeyEntry *a, uint32_t n, KeyEntry x) {
+    uint32_t branchfree_search(KeyEntry *a, uint32_t n, KeyEntry x) {
         using I = uint32_t;
         const KeyEntry *base = a;
         while (n > 1) {
