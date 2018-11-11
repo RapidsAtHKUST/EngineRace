@@ -1,4 +1,4 @@
-add_executable(skip_list_study skip_list_study.cpp)
+add_executable(skip_list_study legacy/skip_list_study.cpp)
 
 add_executable(polar_string_study polar_string_study.cpp log.cpp stat.cpp)
 
@@ -15,15 +15,15 @@ add_executable(test_engine_nonoff test_engine.cpp ../engine_race/engine_race.cc 
 message(${CMAKE_SOURCE_DIR})
 target_link_libraries(test_engine_nonoff PRIVATE rt)
 
-add_executable(test_sparsepp test_sparsepp.cpp stat.cpp log.cpp)
+add_executable(test_sparsepp legacy/test_sparsepp.cpp stat.cpp log.cpp)
 
 add_executable(test_aio_linux test_aio_linux.cpp)
 target_link_libraries(test_aio_linux PRIVATE rt)
 
-add_executable(test_aio_linux_wrapper test_aio_linux_wrapper.cpp)
+add_executable(test_aio_linux_wrapper legacy/test_aio_posix_wrapper.cpp)
 target_link_libraries(test_aio_linux_wrapper PRIVATE rt)
 
-add_executable(test_aio_linux_simple test_aio_linux_simple.cpp)
+add_executable(test_aio_linux_simple test_aio_linux_simple.cpp log.cpp)
 target_link_libraries(test_aio_linux_simple PRIVATE rt)
 
 #target_link_libraries(test_engine_nonoff PRIVATE ${CMAKE_SOURCE_DIR}/engine_race/lib/libengine.a)
