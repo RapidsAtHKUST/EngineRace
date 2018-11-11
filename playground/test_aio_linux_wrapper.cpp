@@ -28,12 +28,13 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <string.h>
+#include <malloc.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <aio.h>
 #include <cassert>
 #include <linux/aio_abi.h>
-
+#include <chrono>
 #define TNAME "aio_write/1-1.c"
 #define BUF_SIZE 512
 #define RING_SIZE 16
@@ -45,7 +46,7 @@ void TestWrite() {
 
     snprintf(tmpfname, sizeof(tmpfname), "pts_aio_write_1_1_%d", 0);
 //    unlink(tmpfname);
-    fd = open(tmpfname, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
+    fd = open(tmpfname, O_CREAT | O_WRONLY | O_NONBLOCK | O_DIRECT, S_IRUSR | S_IWUSR);
     if (fd == -1) {
         printf(TNAME " Error at open(): %s\n", strerror(errno));
         exit(1);
@@ -56,11 +57,15 @@ void TestWrite() {
     int next_id_ = 0;
     auto ring_aiocb = (struct aiocb *) malloc(sizeof(aiocb) * RING_SIZE);
     memset(ring_aiocb, 0, sizeof(aiocb) * RING_SIZE);
-    auto ring_buffer = (char *) malloc(sizeof(char) * BUF_SIZE * RING_SIZE);
-    memset(ring_aiocb, 0, sizeof(struct aiocb) * RING_SIZE);
+    auto ring_buffer = (char*)memalign(512, sizeof(char) * BUF_SIZE * RING_SIZE);
 
-    for (int i = 0; i < 4096 * 16; i++) {
+    memset(ring_aiocb, 0, sizeof(struct aiocb) * RING_SIZE);
+    auto test = std::chrono::high_resolution_clock::now();
+    printf("start %ld\n", std::chrono::duration_cast<std::chrono::nanoseconds>(test.time_since_epoch()).count());
+    for (int i = 0; i < 3000; i++) {
         if (pending_cnt_ >= RING_SIZE) {
+            test = std::chrono::high_resolution_clock::now();
+            printf("%d %ld\n", i, std::chrono::duration_cast<std::chrono::nanoseconds>(test.time_since_epoch()).count());
             while (aio_error(&ring_aiocb[next_id_]) == EINPROGRESS);
             pending_cnt_--;
             int err = aio_error(&ring_aiocb[next_id_]);
@@ -84,9 +89,6 @@ void TestWrite() {
         char *buffer = ring_buffer + BUF_SIZE * next_id_;
         ring_aiocb[next_id_].aio_buf = buffer;
 
-        for (auto j = 0; j < BUF_SIZE; j++) {
-            buffer[j] = static_cast<char>(j * j + i * i);
-        }
         if (aio_write(&ring_aiocb[next_id_]) == -1) {
             printf(TNAME " Error at aio_write(): %s\n", strerror(errno));
             close(fd);

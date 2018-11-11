@@ -821,6 +821,7 @@ namespace polar_race {
                         }
                         if (ret != block_size) {
                             log_info("Return %zu", ret);
+                            return;
                         }
                     }
 
