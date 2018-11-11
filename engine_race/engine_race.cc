@@ -124,7 +124,7 @@ namespace polar_race {
             write_key_file_dp_(nullptr), write_value_file_dp_(nullptr), write_value_buffer_file_dp_(nullptr),
             write_key_buffer_file_dp_(nullptr), write_meta_file_dp_(-1), write_mmap_meta_file_(nullptr),
             mmap_value_aligned_buffer_(nullptr), mmap_key_aligned_buffer_(nullptr), aligned_buffer_(nullptr),
-            tmp_value_buf_size_(NUM_THREADS, 4), lower_bound_cost_(NUM_THREADS, 0) {
+            tmp_value_buf_size_(NUM_THREADS, 4), lower_bound_cost_(NUM_THREADS, 0), dir_(dir) {
         clock_end = high_resolution_clock::now();
         log_info("Start init DB, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
@@ -547,5 +547,199 @@ namespace polar_race {
         log_info("Finish BI, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
+    }
+
+    void EngineRace::TestDevice(int open_write_file_flag, uint32_t *write_file_block_offset, uint32_t write_block_num,
+                                int open_read_file_flag, uint32_t *read_file_block_offset, uint32_t read_block_num,
+                                uint32_t thread_num, uint32_t block_size, uint32_t alignment_size) {
+        const string value_file_path = dir_ + "/" + value_file_name;
+        const string key_file_path = dir_ + "/" + key_file_name;
+
+        write_value_file_dp_ = new int[thread_num];
+        write_key_file_dp_ = new int[thread_num];
+        aligned_buffer_ = new char*[thread_num];
+        string temp_dir = "rm -r " + dir_ +  "/*";
+        log_info("%s", temp_dir.c_str());
+        exec(temp_dir.c_str());
+
+        auto start = high_resolution_clock::now();
+        for (uint32_t i = 0; i < thread_num; ++i) {
+            string temp_value_file = value_file_path + to_string(i);
+            string temp_key_file = key_file_path + to_string(i);
+
+            write_value_file_dp_[i] = open(temp_value_file.c_str(), open_write_file_flag, FILE_PRIVILEGE);
+            write_key_file_dp_[i] = open(temp_key_file.c_str(), O_CREAT | O_RDWR, FILE_PRIVILEGE);
+
+            if (write_value_file_dp_[i] < 0 || write_key_file_dp_[i] < 0) {
+                log_info("Fail to open key-value files.");
+                exit(-1);
+            }
+
+            fallocate(write_value_file_dp_[i], 0, 0, ((size_t)FILESYSTEM_BLOCK_SIZE) * KEY_VALUE_MAX_COUNT_PER_THREAD * NUM_THREADS);
+            aligned_buffer_[i] = (char *) memalign(alignment_size, block_size);
+        }
+
+        auto end = high_resolution_clock::now();
+        log_info("Release %s, %s, %.3lf", strerror(errno),
+                 FormatWithCommas(getValue()).c_str(), duration_cast<milliseconds>(end - start).count() / 1000.0);
+        vector<thread> workers(thread_num);
+
+        start = high_resolution_clock::now();
+
+        for (uint32_t i = 0; i < thread_num; ++i) {
+            workers[i] = move(thread([write_file_block_offset, block_size, write_block_num, i, this]() {
+                int local_value_file_dp = write_value_file_dp_[i];
+                int local_key_file_dp = write_key_file_dp_[i];
+
+                char* value_buffer = aligned_buffer_[i];
+                char local_value[VALUE_SIZE];
+
+                for (uint32_t j = 0; j < write_block_num; ++j) {
+                    size_t write_value_offset = (size_t)write_file_block_offset[j] * block_size;
+//                    size_t write_key_offset = (size_t)write_file_block_offset[j] * sizeof(KeyEntry);
+//                    local_value[0] = 10;
+//                    memcpy(value_buffer, local_value, VALUE_SIZE);
+//                    local_value[8] = 20;
+//                    memcpy(value_buffer, local_value, VALUE_SIZE);
+//                    local_value[16] = 30;
+                    memcpy(value_buffer, local_value, VALUE_SIZE);
+                    pwrite(local_value_file_dp, value_buffer, block_size, write_value_offset);
+
+//                    KeyEntry key_entry;
+//                    key_entry.key_ = j;
+//                    key_entry.value_offset_.block_offset_ = i;
+//                    key_entry.value_offset_.block_offset_ = write_file_block_offset[j];
+//
+//                    pwrite(local_key_file_dp, &key_entry, sizeof(KeyEntry), write_key_offset);
+                }
+            }));
+        }
+
+        for (uint32_t i = 0; i < thread_num; ++i) {
+            workers[i].join();
+        }
+
+        end = high_resolution_clock::now();
+        log_info("Step one %s, %s, %.3lf", strerror(errno),
+                 FormatWithCommas(getValue()).c_str(), duration_cast<milliseconds>(end - start).count() / 1000.0);
+
+        for (uint32_t i = 0; i < thread_num; ++i) {
+            fsync(write_value_file_dp_[i]);
+            close(write_value_file_dp_[i]);
+            fsync(write_key_file_dp_[i]);
+            close(write_key_file_dp_[i]);
+        }
+        delete[] write_key_file_dp_;
+
+        end = high_resolution_clock::now();
+        log_info("Step one %s, %s, %.3lf end.", strerror(errno),
+                 FormatWithCommas(getValue()).c_str(), duration_cast<milliseconds>(end - start).count() / 1000.0);
+        for (uint32_t i = 0; i < thread_num; ++i) {
+            string temp_value = value_file_path + to_string(i);
+
+            write_value_file_dp_[i] = open(temp_value.c_str(), open_read_file_flag, FILE_PRIVILEGE);
+
+            if (write_value_file_dp_[i] < 0) {
+                log_info("Fail to open key-value files.");
+                exit(-1);
+            }
+        }
+
+        start = high_resolution_clock::now();
+
+        for (uint32_t i = 0; i < thread_num; ++i) {
+            workers[i] = move(thread([read_file_block_offset, block_size, read_block_num, i, this]() {
+                int local_file_dp = write_value_file_dp_[i];
+                char* value_buffer = aligned_buffer_[i];
+
+                for (uint32_t j = 0; j < read_block_num; ++j) {
+                    size_t read_offset = (size_t)read_file_block_offset[j] * block_size;
+                    pread(local_file_dp, value_buffer, block_size, read_offset);
+                }
+            }));
+        }
+
+        for (uint32_t i = 0; i < thread_num; ++i) {
+            workers[i].join();
+        }
+
+        end = high_resolution_clock::now();
+        log_info("Step two %s, %s, %.3lf", strerror(errno),
+                 FormatWithCommas(getValue()).c_str(), duration_cast<milliseconds>(end - start).count() / 1000.0);
+
+        for (uint32_t i = 0; i < thread_num; ++i) {
+            fsync(write_value_file_dp_[i]);
+            close(write_value_file_dp_[i]);
+            free(aligned_buffer_[i]);
+        }
+
+        delete[] aligned_buffer_;
+        delete[] write_value_file_dp_;
+    }
+
+    void EngineRace::Benchmark() {
+        const size_t value_file_size = (size_t) VALUE_SIZE * KEY_VALUE_MAX_COUNT_PER_THREAD * NUM_THREADS;
+        vector<uint32_t> block_size_config = {4096, 4096 * 2, 4096 * 4, 4096 * 8, 4096 * 16};
+        vector<uint32_t> alignment_size_config = {4096};
+        vector<uint32_t> thread_num_config = {1};
+        uint32_t flag_config_num = 1;
+        vector<int> write_file_flags_config = {O_CREAT | O_RDWR | O_DIRECT};
+        vector<int> read_file_flags_config = {O_CREAT | O_RDONLY | O_DIRECT};
+
+        uint32_t count = 0;
+        log_info("Close file..");
+        for (uint32_t block_size : block_size_config) {
+            uint32_t block_num = (uint32_t)(value_file_size / block_size);
+            uint32_t* file_block_offset = new uint32_t[block_num];
+            for (uint32_t i = 0; i < block_num; ++i) {
+                file_block_offset[i] = i;
+            }
+
+            for (uint32_t alignment_size : alignment_size_config) {
+                for (uint32_t thread_num : thread_num_config) {
+                    for (uint32_t flag_config = 0; flag_config < flag_config_num; ++flag_config) {
+                        int write_file_flags = write_file_flags_config[flag_config];
+                        int read_file_flags = read_file_flags_config[flag_config];
+
+                        log_info("%d", count++);
+
+                        TestDevice(write_file_flags, file_block_offset, block_num,
+                                   read_file_flags, file_block_offset, block_num, thread_num, block_size, alignment_size);
+                    }
+                }
+            }
+            delete[] file_block_offset;
+        }
+
+        log_info("Close file end..");
+        count = 0;
+        for (uint32_t block_size : block_size_config) {
+            uint32_t block_num = (uint32_t)(value_file_size / block_size);
+            uint32_t* file_block_offset = new uint32_t[block_num];
+            for (uint32_t i = 0; i < block_num; ++i) {
+                file_block_offset[i] = i;
+            }
+
+            for (uint32_t shuffle_count = 0; shuffle_count < 3; ++shuffle_count) {
+                auto seed = std::chrono::system_clock::now().time_since_epoch().count();
+
+                shuffle(file_block_offset, file_block_offset + block_num, std::default_random_engine(seed));
+            }
+
+            for (uint32_t alignment_size : alignment_size_config) {
+                for (uint32_t thread_num : thread_num_config) {
+                    for (uint32_t flag_config = 0; flag_config < flag_config_num; ++flag_config) {
+                        int write_file_flags = write_file_flags_config[flag_config];
+                        int read_file_flags = read_file_flags_config[flag_config];
+
+                        log_info("%d", count++);
+
+                        TestDevice(write_file_flags, file_block_offset, block_num,
+                                   read_file_flags, file_block_offset, block_num, thread_num, block_size, alignment_size);
+                    }
+                }
+            }
+            delete[] file_block_offset;
+        }
     }
 }  // namespace polar_race

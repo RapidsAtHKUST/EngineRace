@@ -55,6 +55,8 @@ namespace polar_race {
         vector<uint32_t> total_cnt_;
         vector<uint32_t> tmp_value_buf_size_;
         vector<int64_t> lower_bound_cost_;
+
+        string dir_;
     public:
         static RetCode Open(const std::string &name, Engine **eptr);
 
@@ -78,6 +80,10 @@ namespace polar_race {
 
     private:
         void BuildIndex(string dir);
+        void TestDevice(int open_write_file_flag, uint32_t *write_file_block_offset, uint32_t write_block_num,
+                        int open_read_file_flag, uint32_t *read_file_block_offset, uint32_t read_block_num,
+                        uint32_t thread_num, uint32_t block_size, uint32_t alignment_size);
+        void Benchmark();
     };
 
 }  // namespace polar_race
