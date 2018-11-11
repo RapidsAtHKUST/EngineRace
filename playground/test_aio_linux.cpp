@@ -262,7 +262,7 @@ static long test_read(aio_context_t ctx, int fd, long range, int afd) {
                              events, &tmo);
             if (r > 0) {
                 for (j = 0; j < r; j++) {
-
+                    fprintf(stdout, "data: %zu\n", events[j].data);
                 }
                 i += r;
                 eval -= r;
@@ -308,7 +308,7 @@ static long test_write(aio_context_t ctx, int fd, long range, int afd) {
     fprintf(stdout, "submitted %ld requests\n", r);
     for (i = 0; i < n;) {
         fprintf(stdout, "waiting ... "), fflush(stdout);
-        waitasync(afd, -1);
+        while (!waitasync(afd, -1));
         eval = 0;
         if (read(afd, &eval, sizeof(eval)) != sizeof(eval))
             perror("read");
@@ -320,7 +320,7 @@ static long test_write(aio_context_t ctx, int fd, long range, int afd) {
                              events, &tmo);
             if (r > 0) {
                 for (j = 0; j < r; j++) {
-
+                    printf("%zu\n", events[j].data);
                 }
                 i += r;
                 eval -= r;
