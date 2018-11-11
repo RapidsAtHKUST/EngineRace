@@ -580,7 +580,7 @@ namespace polar_race {
                 exit(-1);
             }
 
-            fallocate(write_value_file_dp_[i], 0, 0, ((size_t)FILESYSTEM_BLOCK_SIZE) * KEY_VALUE_MAX_COUNT_PER_THREAD * NUM_THREADS);
+            fallocate(write_value_file_dp_[i], 0, 0, ((size_t)FILESYSTEM_BLOCK_SIZE) * KEY_VALUE_MAX_COUNT_PER_THREAD * 2);
             aligned_buffer_[i] = (char *) memalign(alignment_size, block_size);
         }
 
@@ -683,10 +683,10 @@ namespace polar_race {
     }
 
     void EngineRace::Benchmark() {
-        const size_t value_file_size = (size_t) VALUE_SIZE * KEY_VALUE_MAX_COUNT_PER_THREAD * NUM_THREADS;
+        const size_t value_file_size = (size_t) VALUE_SIZE * KEY_VALUE_MAX_COUNT_PER_THREAD * 2;
         vector<uint32_t> block_size_config = {4096, 4096 * 2, 4096 * 4, 4096 * 8, 4096 * 16};
         vector<uint32_t> alignment_size_config = {4096};
-        vector<uint32_t> thread_num_config = {1};
+        vector<uint32_t> thread_num_config = {32};
         uint32_t flag_config_num = 1;
         vector<int> write_file_flags_config = {O_CREAT | O_RDWR | O_DIRECT};
         vector<int> read_file_flags_config = {O_CREAT | O_RDONLY | O_DIRECT};
