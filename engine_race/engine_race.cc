@@ -686,7 +686,7 @@ namespace polar_race {
         const size_t value_file_size = (size_t) VALUE_SIZE * KEY_VALUE_MAX_COUNT_PER_THREAD;
         vector<uint32_t> block_size_config = {4096, 4096 * 2, 4096 * 4, 4096 * 8, 4096 * 16};
         vector<uint32_t> alignment_size_config = {4096};
-        vector<uint32_t> thread_num_config = {32};
+        vector<uint32_t> thread_num_config = {64};
         uint32_t flag_config_num = 1;
         vector<int> write_file_flags_config = {O_CREAT | O_RDWR | O_DIRECT};
         vector<int> read_file_flags_config = {O_CREAT | O_RDONLY | O_DIRECT};
