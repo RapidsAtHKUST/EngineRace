@@ -308,7 +308,8 @@ static long test_write(aio_context_t ctx, int fd, long range, int afd) {
     fprintf(stdout, "submitted %ld requests\n", r);
     for (i = 0; i < n;) {
         fprintf(stdout, "waiting ... "), fflush(stdout);
-        while (!waitasync(afd, -1));
+//        while (!waitasync(afd, -1));
+        waitasync(afd, -1);
         eval = 0;
         if (read(afd, &eval, sizeof(eval)) != sizeof(eval))
             perror("read");

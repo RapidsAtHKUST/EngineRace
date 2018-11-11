@@ -4,11 +4,11 @@
 
 #include <chrono>
 
-#include "../engine_race/sparsepp/spp.h"
+#include "sparsepp/spp.h"
 
-#include "util.h"
-#include "stat.h"
-#include "log.h"
+#include "../util.h"
+#include "../stat.h"
+#include "../log.h"
 
 using namespace std;
 using namespace std::chrono;
