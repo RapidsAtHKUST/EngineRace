@@ -12,6 +12,8 @@
 
 //#include "sorted_array.h"
 
+#include "barrier.h"
+
 #define NUM_THREADS (64)
 #define VALUE_SIZE (4096)
 #define FILESYSTEM_BLOCK_SIZE (4096)
@@ -21,6 +23,7 @@
 #define TMP_KEY_BUFFER_SIZE (2048)
 #define KEY_READ_BLOCK_COUNT (8192)
 #define TO_UINT64(buffer) (*(uint64_t*)(buffer))
+#define BARRIER_NUM (32)
 
 namespace polar_race {
     using namespace std;
@@ -55,6 +58,7 @@ namespace polar_race {
         vector<uint32_t> total_cnt_;
         vector<uint32_t> tmp_value_buf_size_;
         vector<int64_t> lower_bound_cost_;
+        Barrier barrier_;
     public:
         static RetCode Open(const std::string &name, Engine **eptr);
 

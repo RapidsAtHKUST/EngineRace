@@ -124,7 +124,7 @@ namespace polar_race {
             write_key_file_dp_(nullptr), write_value_file_dp_(nullptr), write_value_buffer_file_dp_(nullptr),
             write_key_buffer_file_dp_(nullptr), write_meta_file_dp_(-1), write_mmap_meta_file_(nullptr),
             mmap_value_aligned_buffer_(nullptr), mmap_key_aligned_buffer_(nullptr), aligned_buffer_(nullptr),
-            tmp_value_buf_size_(NUM_THREADS, 4), lower_bound_cost_(NUM_THREADS, 0) {
+            tmp_value_buf_size_(NUM_THREADS, 4), lower_bound_cost_(NUM_THREADS, 0), barrier_(BARRIER_NUM) {
         clock_end = high_resolution_clock::now();
         log_info("Start init DB, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
@@ -344,6 +344,9 @@ namespace polar_race {
         static thread_local std::chrono::time_point<std::chrono::high_resolution_clock> last_write_clk;
         if (local_block_offset == 0) {
             first_write_clk = high_resolution_clock::now();
+        }
+        if (local_block_offset == 800000 && tid < BARRIER_NUM) {
+            barrier_.Wait();
         }
 #ifdef AFFINITY
         if (local_block_offset == 0) {

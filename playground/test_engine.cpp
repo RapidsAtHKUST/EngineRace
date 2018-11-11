@@ -66,7 +66,7 @@ int main() {
         Engine *engine = nullptr;
         Engine::Open(kEnginePath, &engine);
 
-#pragma omp parallel for num_threads(NUM_THREADS) schedule(dynamic, 551)
+#pragma omp parallel for num_threads(NUM_THREADS) schedule(dynamic, 2)
         for (int64_t i = iter * round_size; i < (1 + iter) * round_size; i++) {
             static thread_local char polar_key_str[8];
             static thread_local char polar_value_str[4096];
