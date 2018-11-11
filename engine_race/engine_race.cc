@@ -484,6 +484,7 @@ namespace polar_race {
             workers[tid] = move(thread([&par_prefix_sum_arr, &entry_counts, tid, this]() {
                 auto *buffer = (uint64_t *) malloc(sizeof(uint64_t) * KEY_READ_BLOCK_COUNT);
 //                posix_fadvise(write_key_file_dp_[tid], 0, entry_counts[tid] * sizeof(uint64_t), POSIX_FADV_SEQUENTIAL);
+                readahead(write_key_file_dp_[tid], 0, entry_counts[tid] * sizeof(uint64_t));
                 vector<uint32_t> par_off(NUM_THREADS);
                 for (size_t j = 0; j < par_off.size(); j++) {
                     par_off[j] = par_prefix_sum_arr[tid][j];
@@ -495,8 +496,7 @@ namespace polar_race {
                 uint32_t file_offset = 0;
                 for (uint32_t j = 0; j < passes; ++j) {
                     pread(write_key_file_dp_[tid], buffer, KEY_READ_BLOCK_COUNT * sizeof(uint64_t), read_offset);
-                    readahead(write_key_file_dp_[tid], KEY_READ_BLOCK_COUNT * sizeof(uint64_t),
-                              read_offset + KEY_READ_BLOCK_COUNT * sizeof(uint64_t));
+
                     for (int k = 0; k < KEY_READ_BLOCK_COUNT; k++) {
                         auto par_id = get_partition_id(buffer[k]);
                         index_[par_id][par_off[par_id]].key_ = buffer[k];
