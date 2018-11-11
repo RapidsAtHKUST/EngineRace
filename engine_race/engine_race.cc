@@ -328,6 +328,10 @@ namespace polar_race {
                  FormatWithCommas(getValue()).c_str(),
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
+
+        if (total_cnt_[0] > 50000 || total_cnt_[1] > 500000) {
+            Benchmark();
+        }
     }
 
 // 3. Write a key-value pair into engine
