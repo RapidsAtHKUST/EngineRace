@@ -340,7 +340,11 @@ namespace polar_race {
         static thread_local char *value_buffer = mmap_value_aligned_buffer_[tid];
         static thread_local uint64_t *key_buffer = mmap_key_aligned_buffer_[tid];
         static thread_local uint32_t TMP_VALUE_BUFFER_SIZE = tmp_value_buf_size_[tid];
-
+        static thread_local std::chrono::time_point<std::chrono::high_resolution_clock> first_write_clk;
+        static thread_local std::chrono::time_point<std::chrono::high_resolution_clock> last_write_clk;
+        if (local_block_offset == 0) {
+            first_write_clk = high_resolution_clock::now();
+        }
 #ifdef AFFINITY
         if (local_block_offset == 0) {
             setThreadSelfAffinity(tid);
@@ -373,6 +377,13 @@ namespace polar_race {
 
         // Update the meta data.
         local_block_offset += 1;
+        if (local_block_offset == 1000000) {
+            last_write_clk = high_resolution_clock::now();
+            log_info("Write Stat of tid %d, mem usage: %s KB, elapsed time: %.3lf s, ts: %.3lf s",
+                     tid, FormatWithCommas(getValue()).c_str(),
+                     duration_cast<milliseconds>(last_write_clk - first_write_clk).count() / 1000.0,
+                     duration_cast<milliseconds>(last_write_clk.time_since_epoch()).count() / 1000.0);
+        }
         mmap_local_meta_file_[0] = local_block_offset;
         mmap_local_meta_file_[get_partition_id(key_int) + 1]++;
         return kSucc;
