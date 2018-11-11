@@ -345,7 +345,11 @@ namespace polar_race {
         static thread_local char *value_buffer = mmap_value_aligned_buffer_[tid];
         static thread_local uint64_t *key_buffer = mmap_key_aligned_buffer_[tid];
         static thread_local uint32_t TMP_VALUE_BUFFER_SIZE = tmp_value_buf_size_[tid];
-
+        static thread_local std::chrono::time_point<std::chrono::high_resolution_clock> first_write_clk;
+        static thread_local std::chrono::time_point<std::chrono::high_resolution_clock> last_write_clk;
+        if (local_block_offset == 0) {
+            first_write_clk = high_resolution_clock::now();
+        }
 #ifdef AFFINITY
         if (local_block_offset == 0) {
             setThreadSelfAffinity(tid);
@@ -378,6 +382,13 @@ namespace polar_race {
 
         // Update the meta data.
         local_block_offset += 1;
+        if (local_block_offset == 1000000) {
+            last_write_clk = high_resolution_clock::now();
+            log_info("Write Stat of tid %d, mem usage: %s KB, elapsed time: %.3lf s, ts: %.3lf s",
+                     tid, FormatWithCommas(getValue()).c_str(),
+                     duration_cast<milliseconds>(last_write_clk - first_write_clk).count() / 1000.0,
+                     duration_cast<milliseconds>(last_write_clk.time_since_epoch()).count() / 1000.0);
+        }
         mmap_local_meta_file_[0] = local_block_offset;
         mmap_local_meta_file_[get_partition_id(key_int) + 1]++;
         return kSucc;
@@ -488,7 +499,8 @@ namespace polar_race {
         for (uint32_t tid = 0; tid < NUM_THREADS; ++tid) {
             workers[tid] = move(thread([&par_prefix_sum_arr, &entry_counts, tid, this]() {
                 auto *buffer = (uint64_t *) malloc(sizeof(uint64_t) * KEY_READ_BLOCK_COUNT);
-                posix_fadvise(write_key_file_dp_[tid], 0, entry_counts[tid] * sizeof(uint64_t), POSIX_FADV_SEQUENTIAL);
+//                posix_fadvise(write_key_file_dp_[tid], 0, entry_counts[tid] * sizeof(uint64_t), POSIX_FADV_SEQUENTIAL);
+                readahead(write_key_file_dp_[tid], 0, entry_counts[tid] * sizeof(uint64_t));
                 vector<uint32_t> par_off(NUM_THREADS);
                 for (size_t j = 0; j < par_off.size(); j++) {
                     par_off[j] = par_prefix_sum_arr[tid][j];
@@ -500,6 +512,7 @@ namespace polar_race {
                 uint32_t file_offset = 0;
                 for (uint32_t j = 0; j < passes; ++j) {
                     pread(write_key_file_dp_[tid], buffer, KEY_READ_BLOCK_COUNT * sizeof(uint64_t), read_offset);
+
                     for (int k = 0; k < KEY_READ_BLOCK_COUNT; k++) {
                         auto par_id = get_partition_id(buffer[k]);
                         index_[par_id][par_off[par_id]].key_ = buffer[k];
