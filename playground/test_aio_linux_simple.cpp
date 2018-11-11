@@ -1,4 +1,4 @@
-#define _GNU_SOURCE        /* syscall() is not POSIX */
+// #define _GNU_SOURCE        /* syscall() is not POSIX */
 
 #include <unistd.h>        /* for syscall() */
 #include <fcntl.h>
@@ -20,7 +20,7 @@
 #include <ctime>
 #include <cerrno>
 #include <cassert>
-
+#include <chrono>
 #include "log.h"
 
 #define RING_SIZE (16)
@@ -131,23 +131,22 @@ void TestWrite() {
     }
 
     // 2nd: ctx, io_setup
-    aio_context_t ctx;
+    aio_context_t ctx = 0;
 
     // set io control block
     auto ring_iocb = (iocb *) malloc(sizeof(iocb) * RING_SIZE);
     auto ring_piocb = (struct iocb **) malloc(RING_SIZE * sizeof(struct iocb *));
-
     memset(ring_iocb, 0, sizeof(iocb) * RING_SIZE);
 
     auto events = (io_event *) malloc(sizeof(io_event) * RING_SIZE);
-
     auto ring_buffer = (char *) memalign(4096, sizeof(char) * BUF_SIZE * RING_SIZE);
-    memset(ring_iocb, 0, sizeof(iocb) * RING_SIZE);
+
 
     // io-setup
     auto ret = io_setup(128, &ctx);
     if (ret < 0) {
         log_error("io_setup error");
+        exit(-2);
     }
     // open-file
     int fd = open("test-file", O_CREAT | O_WRONLY | O_DIRECT, S_IRUSR | S_IWUSR);
@@ -164,8 +163,12 @@ void TestWrite() {
     struct timespec tmo{};
     tmo.tv_sec = 0;
     tmo.tv_nsec = 0;
+    auto test = std::chrono::high_resolution_clock::now();
+    printf("start %ld\n", std::chrono::duration_cast<std::chrono::nanoseconds>(test.time_since_epoch()).count());
     for (int i = 0; i < TESTFILE_SIZE / BUF_SIZE; i++) {
         if (pending_cnt_ >= RING_SIZE) {
+            test = std::chrono::high_resolution_clock::now();
+            printf("%d %ld\n", i, std::chrono::duration_cast<std::chrono::nanoseconds>(test.time_since_epoch()).count());
             while (!waitasync(afd, -1));
 //            int eval;
 //            if (read(afd, &eval, sizeof(eval)) <= 0)
@@ -175,9 +178,6 @@ void TestWrite() {
         }
 
         char *buffer = ring_buffer + BUF_SIZE * next_id;
-        for (auto j = 0; j < BUF_SIZE; j++) {
-            buffer[j] = static_cast<char>(j * j + i * i);
-        }
         asyio_prep_pwrite(ring_iocb + next_id, fd, (const void *) buffer, BUF_SIZE, static_cast<size_t>(BUF_SIZE) * i,
                           afd);
 
@@ -189,14 +189,12 @@ void TestWrite() {
         pending_cnt_++;
 //        log_info("ok\n");
 
-        while (pending_cnt_ > 0) {
-            while (!waitasync(afd, -1));
-//            int eval;
-//            if (read(afd, &eval, sizeof(eval)) <= 0)
-//                log_error("read");
-            auto r = io_getevents(ctx, 1, 1, events, &tmo);
-            pending_cnt_ -= r;
-        }
+    }
+
+    while (pending_cnt_ > 0) {
+        while (!waitasync(afd, -1));
+        auto r = io_getevents(ctx, 1, 1, events, &tmo);
+        pending_cnt_ -= r;
     }
     // io-destroy, close fds
     io_destroy(ctx);
