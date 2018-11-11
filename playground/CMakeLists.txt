@@ -13,7 +13,7 @@ add_executable(test_engine_nonoff test_engine.cpp ../engine_race/engine_race.cc 
         ../engine_race/stat.cc)
 #link_directories(${CMAKE_SOURCE_DIR}/lib)
 message(${CMAKE_SOURCE_DIR})
-
+target_link_libraries(test_engine_nonoff PRIVATE rt)
 
 add_executable(test_sparsepp test_sparsepp.cpp stat.cpp log.cpp)
 

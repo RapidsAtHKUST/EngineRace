@@ -13,6 +13,8 @@
 #include <thread>
 #include <cassert>
 #include <algorithm>
+#include <aio.h>
+#include <linux/aio_abi.h>
 #include "log.h"
 
 #include "util.h"
@@ -21,7 +23,6 @@
 //#include <tbb/parallel_sort.h>
 //#include <parallel/algorithm>
 //#include "parasort.h"
-
 
 namespace polar_race {
     using namespace std::chrono;
@@ -607,7 +608,6 @@ namespace polar_race {
         for (uint32_t i = 0; i < thread_num; ++i) {
             workers[i] = move(thread([write_file_block_offset, block_size, write_block_num, i, this]() {
                 int local_value_file_dp = write_value_file_dp_[i];
-                int local_key_file_dp = write_key_file_dp_[i];
 
                 char* value_buffer = aligned_buffer_[i];
                 char local_value[VALUE_SIZE];
@@ -696,10 +696,11 @@ namespace polar_race {
     }
 
     void EngineRace::Benchmark() {
-        const size_t value_file_size = (size_t) VALUE_SIZE * KEY_VALUE_MAX_COUNT_PER_THREAD;
-        vector<uint32_t> block_size_config = {4096, 4096 * 2, 4096 * 4, 4096 * 8, 4096 * 16};
+        const size_t value_file_size = (size_t) VALUE_SIZE * KEY_VALUE_MAX_COUNT_PER_THREAD * 32;
+        vector<uint32_t> block_size_config = {4096};
         vector<uint32_t> alignment_size_config = {4096};
-        vector<uint32_t> thread_num_config = {64};
+        vector<uint32_t> thread_num_config = {1};
+        vector<uint32_t> ring_size_config = {32, 64};
         uint32_t flag_config_num = 1;
         vector<int> write_file_flags_config = {O_CREAT | O_RDWR | O_DIRECT};
         vector<int> read_file_flags_config = {O_CREAT | O_RDONLY | O_DIRECT};
@@ -717,12 +718,11 @@ namespace polar_race {
                 for (uint32_t thread_num : thread_num_config) {
                     for (uint32_t flag_config = 0; flag_config < flag_config_num; ++flag_config) {
                         int write_file_flags = write_file_flags_config[flag_config];
-                        int read_file_flags = read_file_flags_config[flag_config];
-
-                        log_info("%d", count++);
-
-                        TestDevice(write_file_flags, file_block_offset, block_num,
-                                   read_file_flags, file_block_offset, block_num, thread_num, block_size, alignment_size);
+                        for (uint32_t ring_size : ring_size_config) {
+                            log_info("%d", count++);
+                            TestDevice(write_file_flags, file_block_offset, block_num, thread_num, block_size,
+                                       alignment_size, ring_size);
+                        }
                     }
                 }
             }
@@ -759,5 +759,116 @@ namespace polar_race {
 //            }
 //            delete[] file_block_offset;
 //        }
+    }
+
+    void EngineRace::TestDevice(int open_write_file_flag, uint32_t *write_file_block_offset, uint32_t write_block_num,
+                                uint32_t thread_num, uint32_t block_size, uint32_t alignment_size, uint32_t ring_size) {
+        const string value_file_path = dir_ + "/" + value_file_name;
+        const string key_file_path = dir_ + "/" + key_file_name;
+
+        write_value_file_dp_ = new int[thread_num];
+        char** ring_value_buffer = new char*[thread_num];
+        aiocb** ring_aiocb_buffer = new aiocb*[thread_num];
+
+        string temp_dir = "rm -r " + dir_ +  "/*";
+        log_info("%s", temp_dir.c_str());
+        exec(temp_dir.c_str());
+
+        auto start = high_resolution_clock::now();
+        for (uint32_t i = 0; i < thread_num; ++i) {
+            string temp_value_file = value_file_path + to_string(i);
+
+            write_value_file_dp_[i] = open(temp_value_file.c_str(), open_write_file_flag, FILE_PRIVILEGE);
+
+            if (write_value_file_dp_[i] < 0) {
+                log_info("Fail to open key-value files.");
+                exit(-1);
+            }
+
+            fallocate(write_value_file_dp_[i], 0, 0, ((size_t)FILESYSTEM_BLOCK_SIZE) * KEY_VALUE_MAX_COUNT_PER_THREAD * 32);
+
+            ring_value_buffer[i] = (char*) memalign(alignment_size, ring_size * block_size);
+            ring_aiocb_buffer[i] = new aiocb[ring_size];
+            memset(ring_aiocb_buffer[i], 0, sizeof(aiocb) * ring_size);
+        }
+
+        auto end = high_resolution_clock::now();
+        log_info("Release %s, %s, %.3lf", strerror(errno),
+                 FormatWithCommas(getValue()).c_str(), duration_cast<milliseconds>(end - start).count() / 1000.0);
+        vector<thread> workers(thread_num);
+
+        start = high_resolution_clock::now();
+
+        for (uint32_t i = 0; i < thread_num; ++i) {
+            workers[i] = move(thread([write_file_block_offset, block_size, write_block_num, i, ring_aiocb_buffer, ring_value_buffer, ring_size, this]() {
+                int local_value_file_dp = write_value_file_dp_[i];
+                char* local_ring_value_buffer = ring_value_buffer[i];
+                aiocb* local_ring_aiocb_buffer = ring_aiocb_buffer[i];
+                uint32_t pending_cnt = 0;
+                uint32_t next_id = 0;
+                char local_value[VALUE_SIZE];
+
+                for (uint32_t j = 0; j < write_block_num; ++j) {
+                    if (pending_cnt >= ring_size) {
+                        int err;
+                        while ((err = aio_error(&local_ring_aiocb_buffer[next_id])) == EINPROGRESS);
+                        pending_cnt -= 1;
+
+                        ssize_t ret = aio_return(&local_ring_aiocb_buffer[next_id]);
+                        if (err != 0) {
+                            log_info("Error %d", err);
+                            return;
+                        }
+                        if (ret != block_size) {
+                            log_info("Return %zu", ret);
+                        }
+                    }
+
+                    size_t write_value_offset = (size_t)write_file_block_offset[j] * block_size;
+                    local_value[0] = 'a';
+                    memcpy(local_ring_value_buffer + (size_t)block_size * next_id, local_value, VALUE_SIZE);
+
+                    local_ring_aiocb_buffer[next_id].aio_fildes = local_value_file_dp;
+                    local_ring_aiocb_buffer[next_id].aio_offset = write_value_offset;
+                    local_ring_aiocb_buffer[next_id].aio_nbytes = block_size;
+                    local_ring_aiocb_buffer[next_id].aio_lio_opcode = IOCB_CMD_PWRITE;
+                    local_ring_aiocb_buffer[next_id].aio_buf = local_ring_value_buffer + (size_t)block_size * next_id;
+
+                    if (aio_write(&local_ring_aiocb_buffer[next_id]) < 0) {
+                        log_info("Error write");
+                        return;
+                    }
+
+                    next_id += 1;
+                    if (next_id == ring_size) {
+                        next_id = 0;
+                    }
+
+                    pending_cnt += 1;
+                }
+            }));
+        }
+
+        for (uint32_t i = 0; i < thread_num; ++i) {
+            workers[i].join();
+        }
+
+        end = high_resolution_clock::now();
+        log_info("Step one %s, %s, %.3lf", strerror(errno),
+                 FormatWithCommas(getValue()).c_str(), duration_cast<milliseconds>(end - start).count() / 1000.0);
+
+        for (uint32_t i = 0; i < thread_num; ++i) {
+            fsync(write_value_file_dp_[i]);
+            close(write_value_file_dp_[i]);
+            delete ring_value_buffer[i];
+            delete ring_aiocb_buffer[i];
+        }
+        delete[] write_value_file_dp_;
+        delete[] ring_value_buffer;
+        delete[] ring_aiocb_buffer;
+
+        end = high_resolution_clock::now();
+        log_info("Step one %s, %s, %.3lf end.", strerror(errno),
+                 FormatWithCommas(getValue()).c_str(), duration_cast<milliseconds>(end - start).count() / 1000.0);
     }
 }  // namespace polar_race
