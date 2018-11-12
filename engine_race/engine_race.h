@@ -20,10 +20,10 @@
 #define FILE_PRIVILEGE (0644)
 #define KEY_VALUE_MAX_COUNT_PER_THREAD (1000000)
 //#define TMP_VALUE_BUFFER_SIZE (4)
-#define TMP_KEY_BUFFER_SIZE (2048)
+#define TMP_KEY_BUFFER_SIZE (512)
 #define KEY_READ_BLOCK_COUNT (8192)
 #define TO_UINT64(buffer) (*(uint64_t*)(buffer))
-#define BARRIER_NUM (NUM_THREADS)
+#define BARRIER_NUM (16)
 
 namespace polar_race {
     using namespace std;

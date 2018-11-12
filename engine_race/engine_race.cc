@@ -268,6 +268,7 @@ namespace polar_race {
 // 1. Open engine
     RetCode EngineRace::Open(const std::string &name, Engine **eptr) {
         log_info("hostname: %s", exec("hostname").c_str());
+        printf("hostname: %s\n", exec("hostname").c_str());
         if (!file_exists(name.c_str())) {
             int ret = mkdir(name.c_str(), 0755);
             if (ret != 0) {
