@@ -23,7 +23,7 @@
 #define TMP_KEY_BUFFER_SIZE (2048)
 #define KEY_READ_BLOCK_COUNT (8192)
 #define TO_UINT64(buffer) (*(uint64_t*)(buffer))
-#define BARRIER_NUM (32)
+#define BARRIER_NUM (NUM_THREADS)
 
 namespace polar_race {
     using namespace std;
