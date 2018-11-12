@@ -345,11 +345,13 @@ namespace polar_race {
         static thread_local char *value_buffer = mmap_value_aligned_buffer_[tid];
         static thread_local uint64_t *key_buffer = mmap_key_aligned_buffer_[tid];
         static thread_local uint32_t TMP_VALUE_BUFFER_SIZE = tmp_value_buf_size_[tid];
+#ifdef STAT
         static thread_local std::chrono::time_point<std::chrono::high_resolution_clock> first_write_clk;
         static thread_local std::chrono::time_point<std::chrono::high_resolution_clock> last_write_clk;
         if (local_block_offset == 0) {
             first_write_clk = high_resolution_clock::now();
         }
+#endif
         if (local_block_offset % 10000 == 0 && tid < WRITE_BARRIER_NUM) {
             barrier_.Wait();
         }
@@ -380,6 +382,7 @@ namespace polar_race {
 
         // Update the meta data.
         local_block_offset += 1;
+#ifdef STAT
         if (local_block_offset == 1000000) {
             last_write_clk = high_resolution_clock::now();
             log_info("Write Stat of tid %d, mem usage: %s KB, elapsed time: %.3lf s, ts: %.3lf s",
@@ -387,6 +390,7 @@ namespace polar_race {
                      duration_cast<milliseconds>(last_write_clk - first_write_clk).count() / 1000.0,
                      duration_cast<milliseconds>(last_write_clk.time_since_epoch()).count() / 1000.0);
         }
+#endif
         mmap_local_meta_file_[0] = local_block_offset;
         mmap_local_meta_file_[get_partition_id(key_int) + 1]++;
         return kSucc;
@@ -399,11 +403,13 @@ namespace polar_race {
         static thread_local bool is_first_not_found = true;
         static thread_local uint32_t local_block_offset = 0;
 
+#ifdef STAT
         static thread_local std::chrono::time_point<std::chrono::high_resolution_clock> first_write_clk;
         static thread_local std::chrono::time_point<std::chrono::high_resolution_clock> last_write_clk;
         if (local_block_offset == 0) {
             first_write_clk = high_resolution_clock::now();
         }
+#endif
         uint64_t key_uint = TO_UINT64(key.data());
 
         KeyEntry tmp{};
@@ -419,14 +425,16 @@ namespace polar_race {
         auto it = index_[partition_id] + branchfree_search(index_[partition_id], total_cnt_[partition_id], tmp);
 #endif
         local_block_offset++;
-        if (local_block_offset == 1000000) {
-            last_write_clk = high_resolution_clock::now();
-            log_info("Read Stat of tid %d, mem usage: %s KB, elapsed time: %.3lf s, ts: %.3lf s",
-                     tid, FormatWithCommas(getValue()).c_str(),
-                     duration_cast<milliseconds>(last_write_clk - first_write_clk).count() / 1000.0,
-                     duration_cast<milliseconds>(last_write_clk.time_since_epoch()).count() / 1000.0);
-        }
 
+#ifdef STAT
+        if (local_block_offset == 1000000) {
+                    last_write_clk = high_resolution_clock::now();
+                    log_info("Read Stat of tid %d, mem usage: %s KB, elapsed time: %.3lf s, ts: %.3lf s",
+                             tid, FormatWithCommas(getValue()).c_str(),
+                             duration_cast<milliseconds>(last_write_clk - first_write_clk).count() / 1000.0,
+                             duration_cast<milliseconds>(last_write_clk.time_since_epoch()).count() / 1000.0);
+                }
+#endif
         if (it == index_[partition_id] + total_cnt_[partition_id] || it->key_ != key_uint) {
             if (is_first_not_found) {
                 log_info("not found in tid: %d\n", tid);
