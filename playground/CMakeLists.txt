@@ -1,6 +1,6 @@
 add_executable(skip_list_study legacy/skip_list_study.cpp)
 
-add_executable(polar_string_study polar_string_study.cpp log.cpp stat.cpp)
+add_executable(polar_string_study polar_string_study.cpp log.cpp stat.cpp aio_test.cpp)
 
 find_package(OpenMP)
 if (OPENMP_FOUND)
@@ -26,4 +26,6 @@ target_link_libraries(test_aio_linux_wrapper PRIVATE rt)
 add_executable(test_aio_linux_simple test_aio_linux_simple.cpp log.cpp)
 target_link_libraries(test_aio_linux_simple PRIVATE rt)
 
+add_executable(aio_test aio_test.cpp)
+target_link_libraries(aio_test PRIVATE rt)
 #target_link_libraries(test_engine_nonoff PRIVATE ${CMAKE_SOURCE_DIR}/engine_race/lib/libengine.a)

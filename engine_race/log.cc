@@ -22,6 +22,7 @@
 
 #include "log.h"
 
+#define USE_LOG
 #ifdef USE_LOG
 
 #include <cstdio>

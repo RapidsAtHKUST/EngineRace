@@ -81,10 +81,7 @@ namespace polar_race {
     private:
         void BuildIndex(string dir);
         void TestDevice(int open_write_file_flag, uint32_t *write_file_block_offset, uint32_t write_block_num,
-                        int open_read_file_flag, uint32_t *read_file_block_offset, uint32_t read_block_num,
-                        uint32_t thread_num, uint32_t block_size, uint32_t alignment_size);
-        void TestDevice(int open_write_file_flag, uint32_t *write_file_block_offset, uint32_t write_block_num,
-                            uint32_t thread_num, uint32_t block_size, uint32_t alignment_size, uint32_t ring_size);
+                            uint32_t thread_num, uint32_t block_size, uint32_t alignment_size, uint32_t queue_depth);
 
         void Benchmark();
     };
