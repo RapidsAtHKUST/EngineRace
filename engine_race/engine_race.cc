@@ -124,8 +124,8 @@ namespace polar_race {
             write_key_file_dp_(nullptr), write_value_file_dp_(nullptr), write_value_buffer_file_dp_(nullptr),
             write_key_buffer_file_dp_(nullptr), write_meta_file_dp_(-1), write_mmap_meta_file_(nullptr),
             mmap_value_aligned_buffer_(nullptr), mmap_key_aligned_buffer_(nullptr), aligned_buffer_(nullptr),
-            tmp_value_buf_size_(NUM_THREADS, 4), lower_bound_cost_(NUM_THREADS, 0), barrier_(BARRIER_NUM),
-            read_barrier_(BARRIER_NUM) {
+            tmp_value_buf_size_(NUM_THREADS, 4), lower_bound_cost_(NUM_THREADS, 0), barrier_(WRITE_BARRIER_NUM),
+            read_barrier_(READ_BARRIER_NUM) {
         clock_end = high_resolution_clock::now();
         log_info("Start init DB, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
@@ -269,7 +269,6 @@ namespace polar_race {
 // 1. Open engine
     RetCode EngineRace::Open(const std::string &name, Engine **eptr) {
         log_info("hostname: %s", exec("hostname").c_str());
-        printf("hostname: %s\n", exec("hostname").c_str());
         if (!file_exists(name.c_str())) {
             int ret = mkdir(name.c_str(), 0755);
             if (ret != 0) {
@@ -319,11 +318,13 @@ namespace polar_race {
         for (KeyEntry *index_partition: index_) {
             free(index_partition);
         }
-//        if (total_cnt_.size() > 0) {
-//            for (auto i = 0; i < NUM_THREADS; i++) {
-//                log_info("time for bs: %lld ns", lower_bound_cost_[i]);
-//            }
-//        }
+#ifdef LB_STAT
+        if (total_cnt_.size() > 0) {
+            for (auto i = 0; i < NUM_THREADS; i++) {
+                log_info("time for bs: %lld ns", lower_bound_cost_[i]);
+            }
+        }
+#endif
 
         clock_end = high_resolution_clock::now();
         log_info("Finish ~EngineRace(), mem usage: %s KB, time: %.3lf s, ts: %.3lf s",
@@ -347,7 +348,7 @@ namespace polar_race {
         if (local_block_offset == 0) {
             first_write_clk = high_resolution_clock::now();
         }
-        if (local_block_offset % 10000 == 0 && tid < BARRIER_NUM) {
+        if (local_block_offset % 1000 == 0 && tid < WRITE_BARRIER_NUM) {
             barrier_.Wait();
         }
 #ifdef DEBUG
@@ -407,11 +408,14 @@ namespace polar_race {
         tmp.key_ = key_uint;
         auto partition_id = get_partition_id(key_uint);
 
-//        auto clk_beg = high_resolution_clock::now();
-
+#ifdef LB_STAT
+        auto clk_beg = high_resolution_clock::now();
         auto it = index_[partition_id] + branchfree_search(index_[partition_id], total_cnt_[partition_id], tmp);
-//        auto clk_end = high_resolution_clock::now();
-//        lower_bound_cost_[tid] += duration_cast<nanoseconds>(clk_end - clk_beg).count();
+        auto clk_end = high_resolution_clock::now();
+        lower_bound_cost_[tid] += duration_cast<nanoseconds>(clk_end - clk_beg).count();
+#else
+        auto it = index_[partition_id] + branchfree_search(index_[partition_id], total_cnt_[partition_id], tmp);
+#endif
         local_block_offset++;
         if (local_block_offset == 1000000) {
             last_write_clk = high_resolution_clock::now();
@@ -429,7 +433,7 @@ namespace polar_race {
             return kNotFound;
         }
 
-        if (local_block_offset % 100000 == 0 && tid < BARRIER_NUM) {
+        if (local_block_offset % 100000 == 0 && tid < READ_BARRIER_NUM) {
             read_barrier_.Wait();
         }
         ValueOffset value_offset = it->value_offset_;
