@@ -348,7 +348,7 @@ namespace polar_race {
         if (local_block_offset == 0) {
             first_write_clk = high_resolution_clock::now();
         }
-        if (local_block_offset % 1000 == 0 && tid < WRITE_BARRIER_NUM) {
+        if (local_block_offset % 10000 == 0 && tid < WRITE_BARRIER_NUM) {
             barrier_.Wait();
         }
 #ifdef DEBUG
