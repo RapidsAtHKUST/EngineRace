@@ -28,17 +28,17 @@ namespace polar_race {
     std::chrono::time_point<std::chrono::high_resolution_clock> clock_start;
     std::chrono::time_point<std::chrono::high_resolution_clock> clock_end;
 
-    std::string exec(const char *cmd) {
-        std::array<char, 128> buffer;
-        std::string result;
-        std::shared_ptr<FILE> pipe(popen(cmd, "r"), pclose);
-        if (!pipe) throw std::runtime_error("popen() failed!");
-        while (!feof(pipe.get())) {
-            if (fgets(buffer.data(), 128, pipe.get()) != nullptr)
-                result += buffer.data();
-        }
-        return result;
-    }
+//    std::string exec(const char *cmd) {
+//        std::array<char, 128> buffer;
+//        std::string result;
+//        std::shared_ptr<FILE> pipe(popen(cmd, "r"), pclose);
+//        if (!pipe) throw std::runtime_error("popen() failed!");
+//        while (!feof(pipe.get())) {
+//            if (fgets(buffer.data(), 128, pipe.get()) != nullptr)
+//                result += buffer.data();
+//        }
+//        return result;
+//    }
 
     bool operator<(KeyEntry l, KeyEntry r) {
         return l.key_ < r.key_;
@@ -268,7 +268,9 @@ namespace polar_race {
 
 // 1. Open engine
     RetCode EngineRace::Open(const std::string &name, Engine **eptr) {
-        log_info("hostname: %s", exec("hostname").c_str());
+        char hostname[1024];
+        gethostname(hostname, 1024);
+        log_info("hostname: %s", hostname);
         if (!file_exists(name.c_str())) {
             int ret = mkdir(name.c_str(), 0755);
             if (ret != 0) {
