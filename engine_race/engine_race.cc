@@ -372,8 +372,8 @@ namespace polar_race {
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
 
-        if (total_cnt_.size() > 0 && (total_cnt_[0] > 10)) {
-            log_info("Close.");
+        if (total_cnt_.size() > 0 && (total_cnt_[0] > 500000)) {
+            log_info("Close.......");
             Benchmark();
         }
     }
