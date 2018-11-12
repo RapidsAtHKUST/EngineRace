@@ -182,7 +182,7 @@ namespace polar_race {
                     string temp_buffer_value = tmp_value_file_path + to_string(i);
                     string temp_buffer_key = tmp_key_file_path + to_string(i);
 
-                    write_key_file_dp_[i] = open(temp_key.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
+                    write_key_file_dp_[i] = open(temp_key.c_str(), O_RDWR | O_CREAT | O_DIRECT, FILE_PRIVILEGE);
                     write_value_file_dp_[i] = open(temp_value.c_str(), O_RDWR | O_CREAT | O_DIRECT, FILE_PRIVILEGE);
                     write_value_buffer_file_dp_[i] = open(temp_buffer_value.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
                     write_key_buffer_file_dp_[i] = open(temp_buffer_key.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
@@ -332,7 +332,7 @@ namespace polar_race {
 
 // 3. Write a key-value pair into engine
     RetCode EngineRace::Write(const PolarString &key, const PolarString &value) {
-        static thread_local uint32_t tid = (uint32_t) (++write_num_threads) % NUM_THREADS;
+        static thread_local uint32_t tid = (uint32_t)(++write_num_threads) % NUM_THREADS;
         static thread_local uint32_t *mmap_local_meta_file_ = write_mmap_meta_file_[tid];
         static thread_local int local_key_file = write_key_file_dp_[tid];
         static thread_local int local_value_file = write_value_file_dp_[tid];
@@ -345,8 +345,9 @@ namespace polar_race {
         if (local_block_offset == 0) {
             first_write_clk = high_resolution_clock::now();
         }
-        if (local_block_offset == 800000 && tid < BARRIER_NUM) {
+        if (local_block_offset % 10000 == 0 && tid < BARRIER_NUM) {
             barrier_.Wait();
+//            log_info("local offset: %d, tid: %d", local_block_offset, tid);
         }
 #ifdef AFFINITY
         if (local_block_offset == 0) {
@@ -420,7 +421,7 @@ namespace polar_race {
 
         ValueOffset value_offset = it->value_offset_;
         pread(write_value_file_dp_[value_offset.partition_], value_buffer, VALUE_SIZE,
-              (uint64_t) (value_offset.block_offset_) * VALUE_SIZE);
+              (uint64_t)(value_offset.block_offset_) * VALUE_SIZE);
 
         *value = std::string(value_buffer, VALUE_SIZE);
         return kSucc;
