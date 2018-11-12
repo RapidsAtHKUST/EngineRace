@@ -715,8 +715,8 @@ namespace polar_race {
 
                     // Get completed events.
                     uint32_t in_flight = submitted_num - completed_num;
-                    // uint32_t expected = (4 <= in_flight ? 4 : in_flight);
-                    ret = io_getevents(aio_ctx, 0, in_flight, io_events, NULL);
+                    uint32_t expected = (4 <= in_flight ? 4 : in_flight);
+                    ret = io_getevents(aio_ctx, expected, in_flight, io_events, NULL);
                     if (ret < 0) {
                         log_info("Get error.");
                         return;
