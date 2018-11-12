@@ -741,6 +741,9 @@ namespace polar_race {
                 }
 
                 delete[] local_value;
+
+                auto test = high_resolution_clock::now();
+                log_info("%d: %ld", i, duration_cast<nanoseconds>(test.time_since_epoch()).count());
             }));
         }
 
