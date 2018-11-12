@@ -124,7 +124,8 @@ namespace polar_race {
             write_key_file_dp_(nullptr), write_value_file_dp_(nullptr), write_value_buffer_file_dp_(nullptr),
             write_key_buffer_file_dp_(nullptr), write_meta_file_dp_(-1), write_mmap_meta_file_(nullptr),
             mmap_value_aligned_buffer_(nullptr), mmap_key_aligned_buffer_(nullptr), aligned_buffer_(nullptr),
-            tmp_value_buf_size_(NUM_THREADS, 4), lower_bound_cost_(NUM_THREADS, 0), barrier_(BARRIER_NUM) {
+            tmp_value_buf_size_(NUM_THREADS, 4), lower_bound_cost_(NUM_THREADS, 0), barrier_(BARRIER_NUM),
+            read_barrier_(BARRIER_NUM) {
         clock_end = high_resolution_clock::now();
         log_info("Start init DB, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
@@ -333,7 +334,7 @@ namespace polar_race {
 
 // 3. Write a key-value pair into engine
     RetCode EngineRace::Write(const PolarString &key, const PolarString &value) {
-        static thread_local uint32_t tid = (uint32_t)(++write_num_threads) % NUM_THREADS;
+        static thread_local uint32_t tid = (uint32_t) (++write_num_threads) % NUM_THREADS;
         static thread_local uint32_t *mmap_local_meta_file_ = write_mmap_meta_file_[tid];
         static thread_local int local_key_file = write_key_file_dp_[tid];
         static thread_local int local_value_file = write_value_file_dp_[tid];
@@ -348,13 +349,7 @@ namespace polar_race {
         }
         if (local_block_offset % 10000 == 0 && tid < BARRIER_NUM) {
             barrier_.Wait();
-//            log_info("local offset: %d, tid: %d", local_block_offset, tid);
         }
-#ifdef AFFINITY
-        if (local_block_offset == 0) {
-            setThreadSelfAffinity(tid);
-        }
-#endif
 #ifdef DEBUG
         if (tid == 0 && local_block_offset == 0) {
             log_info("First Write, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
@@ -399,7 +394,13 @@ namespace polar_race {
         static thread_local int64_t tid = (++read_num_threads_count) % NUM_THREADS;
         static thread_local char *value_buffer = aligned_buffer_[tid];
         static thread_local bool is_first_not_found = true;
+        static thread_local uint32_t local_block_offset = 0;
 
+        static thread_local std::chrono::time_point<std::chrono::high_resolution_clock> first_write_clk;
+        static thread_local std::chrono::time_point<std::chrono::high_resolution_clock> last_write_clk;
+        if (local_block_offset == 0) {
+            first_write_clk = high_resolution_clock::now();
+        }
         uint64_t key_uint = TO_UINT64(key.data());
 
         KeyEntry tmp{};
@@ -411,6 +412,14 @@ namespace polar_race {
         auto it = index_[partition_id] + branchfree_search(index_[partition_id], total_cnt_[partition_id], tmp);
 //        auto clk_end = high_resolution_clock::now();
 //        lower_bound_cost_[tid] += duration_cast<nanoseconds>(clk_end - clk_beg).count();
+        local_block_offset++;
+        if (local_block_offset == 1000000) {
+            last_write_clk = high_resolution_clock::now();
+            log_info("Read Stat of tid %d, mem usage: %s KB, elapsed time: %.3lf s, ts: %.3lf s",
+                     tid, FormatWithCommas(getValue()).c_str(),
+                     duration_cast<milliseconds>(last_write_clk - first_write_clk).count() / 1000.0,
+                     duration_cast<milliseconds>(last_write_clk.time_since_epoch()).count() / 1000.0);
+        }
 
         if (it == index_[partition_id] + total_cnt_[partition_id] || it->key_ != key_uint) {
             if (is_first_not_found) {
@@ -420,11 +429,15 @@ namespace polar_race {
             return kNotFound;
         }
 
+        if (local_block_offset % 100000 == 0 && tid < BARRIER_NUM) {
+            read_barrier_.Wait();
+        }
         ValueOffset value_offset = it->value_offset_;
         pread(write_value_file_dp_[value_offset.partition_], value_buffer, VALUE_SIZE,
-              (uint64_t)(value_offset.block_offset_) * VALUE_SIZE);
+              (uint64_t) (value_offset.block_offset_) * VALUE_SIZE);
 
         *value = std::string(value_buffer, VALUE_SIZE);
+
         return kSucc;
     }
 

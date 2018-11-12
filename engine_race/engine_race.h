@@ -59,6 +59,7 @@ namespace polar_race {
         vector<uint32_t> tmp_value_buf_size_;
         vector<int64_t> lower_bound_cost_;
         Barrier barrier_;
+        Barrier read_barrier_;
     public:
         static RetCode Open(const std::string &name, Engine **eptr);
 
