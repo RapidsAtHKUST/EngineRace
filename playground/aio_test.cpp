@@ -188,7 +188,7 @@ void CheckResult() {
     printf("Correct");
 }
 int main() {
-    //AioWrite();
-    //CheckResult();
+    AioWrite();
+    CheckResult();
     return 0;
 }
