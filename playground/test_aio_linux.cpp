@@ -38,8 +38,6 @@
 #include <fcntl.h>
 #include <time.h>
 #include <errno.h>
-
-
 /*
  * This were good at the time of 2.6.21-rc5.mm4 ...
  */
