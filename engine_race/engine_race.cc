@@ -702,7 +702,7 @@ namespace polar_race {
                             AioNode* aio_node = free_nodes->front();
                             free_nodes->pop_front();
 
-                            // memcpy(aio_node->value_buffer_ptr_, local_value, block_size);
+                            memcpy(aio_node->value_buffer_ptr_, local_value, block_size);
 
                             size_t offset = write_file_block_offset[submitted_num + j] * (size_t)(block_size);
                             fill_aio_node(local_value_file_dp, aio_node, offset, block_size, IOCB_CMD_PWRITE);
