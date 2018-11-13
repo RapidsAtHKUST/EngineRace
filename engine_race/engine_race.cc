@@ -682,6 +682,10 @@ namespace polar_race {
                 uint32_t submitted_num = 0;
                 uint32_t completed_num = 0;
 
+                size_t submit_time = 0;
+                size_t get_event_time = 0;
+                auto test_start = high_resolution_clock::now();
+
                 while (completed_num < block_num) {
                     long ret;
 
@@ -696,14 +700,17 @@ namespace polar_race {
                             AioNode* aio_node = free_nodes->front();
                             free_nodes->pop_front();
 
-                            memcpy(aio_node->value_buffer_ptr_, local_value, block_size);
+                            // memcpy(aio_node->value_buffer_ptr_, local_value, block_size);
 
                             size_t offset = write_file_block_offset[submitted_num + j] * (size_t)(block_size);
                             fill_aio_node(local_value_file_dp, aio_node, offset, block_size, IOCB_CMD_PWRITE);
                             iocb_ptrs[j] = aio_node->iocb_ptr_;
                         }
 
+                        auto submit_start = high_resolution_clock::now();
                         ret = io_submit(aio_ctx, to_submit, iocb_ptrs);
+                        auto submit_end = high_resolution_clock::now();
+                        submit_time += duration_cast<nanoseconds>(submit_end - submit_start).count();
 
                         if (ret != to_submit) {
                             log_info("Result %d", ret);
@@ -715,8 +722,13 @@ namespace polar_race {
 
                     // Get completed events.
                     uint32_t in_flight = submitted_num - completed_num;
-                    uint32_t expected = (16 <= in_flight ? 16 : in_flight);
+                    uint32_t expected = (4 <= in_flight ? 4 : in_flight);
+
+                    auto getevent_start = high_resolution_clock::now();
                     ret = io_getevents(aio_ctx, expected, in_flight, io_events, NULL);
+                    auto getevent_end = high_resolution_clock::now();
+                    get_event_time += duration_cast<nanoseconds>(getevent_end - getevent_start).count();
+
                     if (ret < 0) {
                         log_info("Get error.");
                         return;
@@ -742,8 +754,10 @@ namespace polar_race {
 
                 delete[] local_value;
 
-                auto test = high_resolution_clock::now();
-                log_info("%d: %ld", i, duration_cast<nanoseconds>(test.time_since_epoch()).count());
+                auto test_end = high_resolution_clock::now();
+                log_info("%d: %.6lf", i, duration_cast<nanoseconds>(test_end - test_start).count()/1000000000.0);
+                log_info("%.6lf", submit_time / 1000000000.0);
+                log_info("%.6lf", get_event_time / 1000000000.0);
             }));
         }
 
@@ -779,11 +793,11 @@ namespace polar_race {
     }
 
     void EngineRace::Benchmark() {
-        const size_t value_file_size = (size_t) VALUE_SIZE * KEY_VALUE_MAX_COUNT_PER_THREAD;
+        const size_t value_file_size = (size_t) VALUE_SIZE * KEY_VALUE_MAX_COUNT_PER_THREAD * 16;
         // const size_t value_file_size = (size_t) VALUE_SIZE * 100;
         vector<uint32_t> block_size_config = {4096 * 4};
-        vector<uint32_t> thread_num_config = {64};
-        vector<uint32_t> queue_depth_config = {128};
+        vector<uint32_t> thread_num_config = {1};
+        vector<uint32_t> queue_depth_config = {64};
         uint32_t flag_config_num = 1;
         vector<int> write_file_flags_config = {O_CREAT | O_WRONLY | O_DIRECT};
 
