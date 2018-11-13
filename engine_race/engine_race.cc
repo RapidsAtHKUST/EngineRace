@@ -684,7 +684,9 @@ namespace polar_race {
 
                 size_t submit_time = 0;
                 size_t get_event_time = 0;
+                size_t first_time = 0;
                 auto test_start = high_resolution_clock::now();
+                bool is_first = true;
 
                 while (completed_num < block_num) {
                     long ret;
@@ -700,7 +702,7 @@ namespace polar_race {
                             AioNode* aio_node = free_nodes->front();
                             free_nodes->pop_front();
 
-                            memcpy(aio_node->value_buffer_ptr_, local_value, block_size);
+                            // memcpy(aio_node->value_buffer_ptr_, local_value, block_size);
 
                             size_t offset = write_file_block_offset[submitted_num + j] * (size_t)(block_size);
                             fill_aio_node(local_value_file_dp, aio_node, offset, block_size, IOCB_CMD_PWRITE);
@@ -711,7 +713,10 @@ namespace polar_race {
                         ret = io_submit(aio_ctx, to_submit, iocb_ptrs);
                         auto submit_end = high_resolution_clock::now();
                         submit_time += duration_cast<nanoseconds>(submit_end - submit_start).count();
-
+                        if (is_first) {
+                            is_first = false;
+                            first_time = submit_time;
+                        }
                         if (ret != to_submit) {
                             log_info("Result %d", ret);
                             return;
@@ -758,6 +763,7 @@ namespace polar_race {
                 log_info("%d: %.6lf", i, duration_cast<nanoseconds>(test_end - test_start).count()/1000000000.0);
                 log_info("%.6lf", submit_time / 1000000000.0);
                 log_info("%.6lf", get_event_time / 1000000000.0);
+                log_info("%.6lf", first_time / 1000000000.0);
             }));
         }
 
@@ -795,7 +801,7 @@ namespace polar_race {
     void EngineRace::Benchmark() {
         const size_t value_file_size = (size_t) VALUE_SIZE * KEY_VALUE_MAX_COUNT_PER_THREAD * 16;
         // const size_t value_file_size = (size_t) VALUE_SIZE * 100;
-        vector<uint32_t> block_size_config = {4096 * 4};
+        vector<uint32_t> block_size_config = {4096 * 128};
         vector<uint32_t> thread_num_config = {1};
         vector<uint32_t> queue_depth_config = {64};
         uint32_t flag_config_num = 1;
