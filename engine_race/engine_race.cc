@@ -31,8 +31,8 @@ namespace polar_race {
     using namespace std::chrono;
 
     struct AioNode {
-        char* value_buffer_ptr_;
-        iocb* iocb_ptr_;
+        char *value_buffer_ptr_;
+        iocb *iocb_ptr_;
     };
 
     static inline long
@@ -57,7 +57,7 @@ namespace polar_race {
     }
 
     static inline void
-    fill_aio_node(int fd, AioNode* aio_node, size_t offset, size_t buffer_size, uint16_t operation) {
+    fill_aio_node(int fd, AioNode *aio_node, size_t offset, size_t buffer_size, uint16_t operation) {
         memset(aio_node->iocb_ptr_, 0, sizeof(iocb));
         aio_node->iocb_ptr_->aio_buf = (uintptr_t) aio_node->value_buffer_ptr_;
         aio_node->iocb_ptr_->aio_data = (uintptr_t) aio_node;
@@ -611,21 +611,22 @@ namespace polar_race {
     }
 
     void EngineRace::TestDevice(int open_write_file_flag, uint32_t *write_file_block_offset, uint32_t write_block_num,
-                                uint32_t thread_num, uint32_t block_size, uint32_t alignment_size, uint32_t queue_depth) {
+                                uint32_t thread_num, uint32_t block_size, uint32_t alignment_size,
+                                uint32_t queue_depth) {
         const string value_file_path = dir_ + "/" + value_file_name;
 
         // Remove existing files in the dir_.
-        string temp_dir = "rm -r " + dir_ +  "/*";
+        string temp_dir = "rm -r " + dir_ + "/*";
         exec(temp_dir.c_str());
 
         write_value_file_dp_ = new int[thread_num];
-        aligned_buffer_ = new char*[thread_num];
+        aligned_buffer_ = new char *[thread_num];
 
-        iocb** global_iocb_buffers = new iocb*[thread_num];
-        iocb*** global_iocb_ptrs = new iocb**[thread_num];
-        io_event** global_io_events = new io_event*[thread_num];
-        AioNode** global_aio_nodes = new AioNode*[thread_num];
-        list<AioNode*>** global_free_nodes = new list<AioNode*>*[thread_num];
+        iocb **global_iocb_buffers = new iocb *[thread_num];
+        iocb ***global_iocb_ptrs = new iocb **[thread_num];
+        io_event **global_io_events = new io_event *[thread_num];
+        AioNode **global_aio_nodes = new AioNode *[thread_num];
+        list<AioNode *> **global_free_nodes = new list<AioNode *> *[thread_num];
 
         auto start = high_resolution_clock::now();
         for (uint32_t i = 0; i < thread_num; ++i) {
@@ -638,14 +639,14 @@ namespace polar_race {
                 return;
             }
 
-            fallocate(write_value_file_dp_[i], 0, 0, ((size_t)block_size) * write_block_num);
+            fallocate(write_value_file_dp_[i], 0, 0, ((size_t) block_size) * write_block_num);
             aligned_buffer_[i] = (char *) memalign(alignment_size, block_size * queue_depth);
 
             global_iocb_buffers[i] = new iocb[queue_depth];
-            global_iocb_ptrs[i] = new iocb*[queue_depth];
+            global_iocb_ptrs[i] = new iocb *[queue_depth];
             global_io_events[i] = new io_event[queue_depth];
             global_aio_nodes[i] = new AioNode[queue_depth];
-            global_free_nodes[i] = new list<AioNode*>();
+            global_free_nodes[i] = new list<AioNode *>();
 
             for (uint32_t j = 0; j < queue_depth; ++j) {
                 global_aio_nodes[i][j].value_buffer_ptr_ = aligned_buffer_[i] + j * block_size;
@@ -662,13 +663,13 @@ namespace polar_race {
 
         for (uint32_t i = 0; i < thread_num; ++i) {
             workers[i] = move(thread([write_file_block_offset, block_size, write_block_num, i, queue_depth,
-                                      global_iocb_ptrs, global_io_events, global_free_nodes, this]() {
+                                             global_iocb_ptrs, global_io_events, global_free_nodes, this]() {
                 int local_value_file_dp = write_value_file_dp_[i];
-                iocb** iocb_ptrs = global_iocb_ptrs[i];
-                io_event* io_events = global_io_events[i];
-                list<AioNode*>* free_nodes = global_free_nodes[i];
+                iocb **iocb_ptrs = global_iocb_ptrs[i];
+                io_event *io_events = global_io_events[i];
+                list<AioNode *> *free_nodes = global_free_nodes[i];
 
-                char* local_value = new char[block_size];
+                char *local_value = new char[block_size];
 
                 aio_context_t aio_ctx = 0;
 
@@ -691,7 +692,7 @@ namespace polar_race {
                 while (completed_num < block_num) {
                     long ret;
 
-                    uint32_t free_nodes_num = (uint32_t)free_nodes->size();
+                    uint32_t free_nodes_num = (uint32_t) free_nodes->size();
                     uint32_t remain_block_num = block_num - submitted_num;
 
                     uint32_t to_submit = min(free_nodes_num, remain_block_num);
@@ -699,12 +700,12 @@ namespace polar_race {
                     if (to_submit > 0) {
                         // Submit.
                         for (uint32_t j = 0; j < to_submit; ++j) {
-                            AioNode* aio_node = free_nodes->front();
+                            AioNode *aio_node = free_nodes->front();
                             free_nodes->pop_front();
 
                             memcpy(aio_node->value_buffer_ptr_, local_value, block_size);
 
-                            size_t offset = write_file_block_offset[submitted_num + j] * (size_t)(block_size);
+                            size_t offset = write_file_block_offset[submitted_num + j] * (size_t) (block_size);
                             fill_aio_node(local_value_file_dp, aio_node, offset, block_size, IOCB_CMD_PWRITE);
                             iocb_ptrs[j] = aio_node->iocb_ptr_;
                         }
@@ -760,7 +761,7 @@ namespace polar_race {
                 delete[] local_value;
 
                 auto test_end = high_resolution_clock::now();
-                log_info("%d: %.6lf", i, duration_cast<nanoseconds>(test_end - test_start).count()/1000000000.0);
+                log_info("%d: %.6lf", i, duration_cast<nanoseconds>(test_end - test_start).count() / 1000000000.0);
                 log_info("%.6lf", submit_time / 1000000000.0);
                 log_info("%.6lf", get_event_time / 1000000000.0);
                 log_info("%.6lf", first_time / 1000000000.0);
@@ -799,36 +800,38 @@ namespace polar_race {
     }
 
     void EngineRace::Benchmark() {
-        const size_t value_file_size = (size_t) VALUE_SIZE * KEY_VALUE_MAX_COUNT_PER_THREAD * 2;
         // const size_t value_file_size = (size_t) VALUE_SIZE * 100;
-        vector<uint32_t> block_size_config = {4096*4, 4096 * 8, 4096 * 16, 4096 * 32, 4096 * 64};
-        vector<uint32_t> thread_num_config = {32};
+        vector<uint32_t> block_size_config = {4096 * 8, 4096 * 16, 4096 * 32, 4096 * 64};
+        vector<uint32_t> thread_num_config = {4, 8, 16};
         vector<uint32_t> queue_depth_config = {32};
         uint32_t flag_config_num = 1;
         vector<int> write_file_flags_config = {O_CREAT | O_WRONLY | O_DIRECT};
 
         uint32_t count = 0;
         log_info("Close file..");
-        for (uint32_t block_size : block_size_config) {
-            uint32_t block_num = (uint32_t)(value_file_size / block_size);
-            uint32_t* file_block_offset = new uint32_t[block_num];
+        for (uint32_t thread_num : thread_num_config) {
+            for (uint32_t block_size : block_size_config) {
+                const size_t value_file_size = (size_t) VALUE_SIZE * KEY_VALUE_MAX_COUNT_PER_THREAD * (64 / thread_num);
+                uint32_t block_num = (uint32_t) (value_file_size / block_size);
+                uint32_t *file_block_offset = new uint32_t[block_num];
 
-            for (uint32_t i = 0; i < block_num; ++i) {
-                file_block_offset[i] = i;
-            }
+                for (uint32_t i = 0; i < block_num; ++i) {
+                    file_block_offset[i] = i;
+                }
 
-            for (uint32_t thread_num : thread_num_config) {
+
                 for (uint32_t flag_config = 0; flag_config < flag_config_num; ++flag_config) {
                     int write_file_flags = write_file_flags_config[flag_config];
                     for (uint32_t queue_depth : queue_depth_config) {
                         log_info("%d", count++);
                         TestDevice(write_file_flags, file_block_offset, block_num, thread_num, block_size,
-                                       4096, queue_depth);
+                                   4096, queue_depth);
                     }
                 }
+                delete[] file_block_offset;
             }
 
-            delete[] file_block_offset;
+
         }
 
         log_info("Close file end..");
