@@ -703,7 +703,7 @@ namespace polar_race {
                             AioNode *aio_node = free_nodes->front();
                             free_nodes->pop_front();
 
-                            // memcpy(aio_node->value_buffer_ptr_, local_value, block_size);
+                            memcpy(aio_node->value_buffer_ptr_, local_value, block_size);
 
                             size_t offset = write_file_block_offset[submitted_num + j] * (size_t) (block_size);
                             fill_aio_node(local_value_file_dp, aio_node, offset, block_size, IOCB_CMD_PWRITE);
@@ -728,7 +728,7 @@ namespace polar_race {
 
                     // Get completed events.
                     uint32_t in_flight = submitted_num - completed_num;
-                    uint32_t expected = (2 <= in_flight ? 2 : in_flight);
+                    uint32_t expected = (8 <= in_flight ? 8 : in_flight);
 
                     auto getevent_start = high_resolution_clock::now();
                     ret = io_getevents(aio_ctx, expected, in_flight, io_events, NULL);
@@ -801,9 +801,9 @@ namespace polar_race {
 
     void EngineRace::Benchmark() {
         // const size_t value_file_size = (size_t) VALUE_SIZE * 100;
-        vector<uint32_t> block_size_config = {4096 * 4, 4096 * 8, 4096 * 32};
-        vector<uint32_t> thread_num_config = {2, 4};
-        vector<uint32_t> queue_depth_config = {32};
+        vector<uint32_t> block_size_config = {4096};
+        vector<uint32_t> thread_num_config = {1, 16, 32, 64};
+        vector<uint32_t> queue_depth_config = {64};
         uint32_t flag_config_num = 1;
         vector<int> write_file_flags_config = {O_CREAT | O_WRONLY | O_DIRECT};
 
