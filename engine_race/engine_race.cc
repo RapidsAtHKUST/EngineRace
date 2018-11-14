@@ -801,7 +801,7 @@ namespace polar_race {
 
     void EngineRace::Benchmark() {
         // const size_t value_file_size = (size_t) VALUE_SIZE * 100;
-        vector<uint32_t> block_size_config = {4096};
+        vector<uint32_t> block_size_config = {4096 * 8};
         vector<uint32_t> thread_num_config = {1, 16, 32, 64};
         vector<uint32_t> queue_depth_config = {64};
         uint32_t flag_config_num = 1;
