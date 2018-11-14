@@ -728,7 +728,7 @@ namespace polar_race {
 
                     // Get completed events.
                     uint32_t in_flight = submitted_num - completed_num;
-                    uint32_t expected = (4 <= in_flight ? 4 : in_flight);
+                    uint32_t expected = (2 <= in_flight ? 2 : in_flight);
 
                     auto getevent_start = high_resolution_clock::now();
                     ret = io_getevents(aio_ctx, expected, in_flight, io_events, NULL);
@@ -801,7 +801,7 @@ namespace polar_race {
 
     void EngineRace::Benchmark() {
         // const size_t value_file_size = (size_t) VALUE_SIZE * 100;
-        vector<uint32_t> block_size_config = {4096 *128};
+        vector<uint32_t> block_size_config = {4096 * 4, 4096 * 8, 4096 * 32};
         vector<uint32_t> thread_num_config = {2, 4};
         vector<uint32_t> queue_depth_config = {32};
         uint32_t flag_config_num = 1;
