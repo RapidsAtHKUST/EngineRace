@@ -6,12 +6,8 @@
 #include <mutex>
 #include <vector>
 #include <atomic>
+
 #include "include/engine.h"
-//#include "sparsepp/spp.h"
-//#include "google/sparse_hash_map"
-
-//#include "sorted_array.h"
-
 #include "barrier.h"
 
 #define NUM_THREADS (64)
@@ -36,7 +32,6 @@ namespace polar_race {
     struct KeyEntry {
         uint64_t key_;
         ValueOffset value_offset_;
-
     };
 
     bool operator<(KeyEntry l, KeyEntry r);

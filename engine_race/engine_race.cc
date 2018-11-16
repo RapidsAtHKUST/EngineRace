@@ -13,32 +13,15 @@
 #include <thread>
 #include <cassert>
 #include <algorithm>
-#include "log.h"
 
+#include "log.h"
 #include "util.h"
 #include "stat.h"
-
-//#include <tbb/parallel_sort.h>
-//#include <parallel/algorithm>
-//#include "parasort.h"
-
 
 namespace polar_race {
     using namespace std::chrono;
     std::chrono::time_point<std::chrono::high_resolution_clock> clock_start;
     std::chrono::time_point<std::chrono::high_resolution_clock> clock_end;
-
-//    std::string exec(const char *cmd) {
-//        std::array<char, 128> buffer;
-//        std::string result;
-//        std::shared_ptr<FILE> pipe(popen(cmd, "r"), pclose);
-//        if (!pipe) throw std::runtime_error("popen() failed!");
-//        while (!feof(pipe.get())) {
-//            if (fgets(buffer.data(), 128, pipe.get()) != nullptr)
-//                result += buffer.data();
-//        }
-//        return result;
-//    }
 
     bool operator<(KeyEntry l, KeyEntry r) {
         return l.key_ < r.key_;
@@ -55,21 +38,6 @@ namespace polar_race {
             n -= half;
         }
         return (*base < x) + base - a;
-    }
-
-    inline void setThreadSelfAffinity(int core_id) {
-//        long num_cores = sysconf(_SC_NPROCESSORS_ONLN);
-//        assert(core_id >= 0 && core_id < num_cores);
-//        if (core_id == 0) {
-//            printf("affinity relevant logical cores: %ld\n", num_cores);
-//        }
-//        core_id = core_id % num_cores;
-        cpu_set_t cpuset;
-        CPU_ZERO(&cpuset);
-        CPU_SET(core_id, &cpuset);
-
-        pthread_t current_thread = pthread_self();
-        pthread_setaffinity_np(current_thread, sizeof(cpu_set_t), &cpuset);
     }
 
     inline bool file_exists(const char *file_name) {
@@ -103,11 +71,11 @@ namespace polar_race {
     RetCode Engine::Open(const std::string &name, Engine **eptr) {
         clock_start = high_resolution_clock::now();
         log_info("sizeof %d, %d", sizeof(off_t), sizeof(off64_t));
-        log_info("mem usage: %s KB,  ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
+        log_info("ts: %.3lf s",
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
         auto ret = EngineRace::Open(name, eptr);
         clock_end = high_resolution_clock::now();
-        log_info("After open DB, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
+        log_info("After open DB, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
         return ret;
@@ -127,7 +95,7 @@ namespace polar_race {
             tmp_value_buf_size_(NUM_THREADS, 4), lower_bound_cost_(NUM_THREADS, 0), barrier_(WRITE_BARRIER_NUM),
             read_barrier_(READ_BARRIER_NUM) {
         clock_end = high_resolution_clock::now();
-        log_info("Start init DB, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
+        log_info("Start init DB, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
         const string meta_file_path = dir + "/" + meta_file_name;
@@ -139,17 +107,6 @@ namespace polar_race {
         const size_t key_file_size = sizeof(uint64_t) * (size_t) KEY_VALUE_MAX_COUNT_PER_THREAD;
         const size_t value_file_size = VALUE_SIZE * (size_t) KEY_VALUE_MAX_COUNT_PER_THREAD;
 
-
-//        for (int i = 0; i < NUM_THREADS; i++) {
-//            if (i % 4 == 0) {
-//                tmp_value_buf_size_[i] = 4;
-//            } else if (i % 4 == 1) {
-//                tmp_value_buf_size_[i] = 4;
-//            } else if (i % 4 == 2) {
-//                tmp_value_buf_size_[i] = 4;
-//            }
-//        }
-//        const size_t tmp_buffer_value_file_size = VALUE_SIZE * (size_t) TMP_VALUE_BUFFER_SIZE;
         const size_t tmp_buffer_key_file_size = sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE;
 
         write_key_file_dp_ = new int[NUM_THREADS];
@@ -261,16 +218,13 @@ namespace polar_race {
             log_info("Reload the database successfully.");
         }
         clock_end = high_resolution_clock::now();
-        log_info("After init DB, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
+        log_info("After init DB, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
     }
 
 // 1. Open engine
     RetCode EngineRace::Open(const std::string &name, Engine **eptr) {
-//        char hostname[1024];
-//        gethostname(hostname, 1024);
-//        log_info("hostname: %s", hostname);
         if (!file_exists(name.c_str())) {
             int ret = mkdir(name.c_str(), 0755);
             if (ret != 0) {
@@ -286,8 +240,7 @@ namespace polar_race {
 
     EngineRace::~EngineRace() {
         clock_end = high_resolution_clock::now();
-        log_info("Start ~EngineRace(), mem usage: %s KB, time: %.3lf s, ts: %.3lf s",
-                 FormatWithCommas(getValue()).c_str(),
+        log_info("Start ~EngineRace(), time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
         close(write_meta_file_dp_);
@@ -329,8 +282,7 @@ namespace polar_race {
 #endif
 
         clock_end = high_resolution_clock::now();
-        log_info("Finish ~EngineRace(), mem usage: %s KB, time: %.3lf s, ts: %.3lf s",
-                 FormatWithCommas(getValue()).c_str(),
+        log_info("Finish ~EngineRace(), time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
     }
@@ -472,7 +424,7 @@ namespace polar_race {
     }
 
     void EngineRace::BuildIndex(string dir) {
-        log_info("Begin BI, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
+        log_info("Begin BI, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
         // Read meta data.
@@ -510,7 +462,7 @@ namespace polar_race {
                 close(tmp_fd);
             }
         }
-        log_info("Init Ready, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
+        log_info("Init Ready, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
         index_ = vector<KeyEntry *>(NUM_THREADS, nullptr);
@@ -569,8 +521,8 @@ namespace polar_race {
             workers[i].join();
         }
         clock_end = high_resolution_clock::now();
-        log_info("Build-1, last err: %s; mem usage: %s KB, time: %.3lf s, ts: %.3lf s", strerror(errno),
-                 FormatWithCommas(getValue()).c_str(), duration_cast<milliseconds>(clock_end - start).count() / 1000.0,
+        log_info("Build-1, last err: %s; time: %.3lf s, ts: %.3lf s", strerror(errno),
+                 duration_cast<milliseconds>(clock_end - start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
 
         for (uint32_t tid = 0; tid < NUM_THREADS; ++tid) {
@@ -589,7 +541,7 @@ namespace polar_race {
         }
         clock_end = high_resolution_clock::now();
 
-        log_info("Finish BI, mem usage: %s KB, time: %.3lf s, ts: %.3lf s", FormatWithCommas(getValue()).c_str(),
+        log_info("Finish BI, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
     }
