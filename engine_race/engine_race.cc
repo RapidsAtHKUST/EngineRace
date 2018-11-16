@@ -5,17 +5,17 @@
 #include <unistd.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <malloc.h>
+
+#include <cassert>
 
 #include <atomic>
 #include <iostream>
 #include <chrono>
-#include <malloc.h>
 #include <thread>
-#include <cassert>
 #include <algorithm>
 
 #include "log.h"
-#include "util.h"
 #include "stat.h"
 
 namespace polar_race {
