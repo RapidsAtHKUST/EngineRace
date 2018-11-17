@@ -280,7 +280,6 @@ namespace polar_race {
             }
         }
 #endif
-
         clock_end = high_resolution_clock::now();
         log_info("Finish ~EngineRace(), time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
@@ -387,6 +386,9 @@ namespace polar_race {
                              duration_cast<milliseconds>(last_write_clk.time_since_epoch()).count() / 1000.0);
                 }
 #endif
+        if (local_block_offset % 100000 == 0 && tid < READ_BARRIER_NUM) {
+            read_barrier_.Wait();
+        }
         if (it == index_[partition_id] + total_cnt_[partition_id] || it->key_ != key_uint) {
             if (is_first_not_found) {
                 log_info("not found in tid: %d\n", tid);
@@ -395,9 +397,6 @@ namespace polar_race {
             return kNotFound;
         }
 
-        if (local_block_offset % 100000 == 0 && tid < READ_BARRIER_NUM) {
-            read_barrier_.Wait();
-        }
         ValueOffset value_offset = it->value_offset_;
         pread(write_value_file_dp_[value_offset.partition_], value_buffer, VALUE_SIZE,
               (uint64_t) (value_offset.block_offset_) * VALUE_SIZE);
@@ -475,13 +474,19 @@ namespace polar_race {
         // Read each key file.
         auto start = high_resolution_clock::now();
         vector<thread> workers(NUM_THREADS);
+        uint64_t **local_buffers_g = new uint64_t *[NUM_THREADS];
+        uint32_t **par_off_arr = new uint32_t *[NUM_THREADS];
         for (uint32_t tid = 0; tid < NUM_THREADS; ++tid) {
-            workers[tid] = move(thread([&par_prefix_sum_arr, &entry_counts, tid, this]() {
-                auto *buffer = (uint64_t *) malloc(sizeof(uint64_t) * KEY_READ_BLOCK_COUNT);
+            local_buffers_g[tid] = new uint64_t[KEY_READ_BLOCK_COUNT];
+            par_off_arr[tid] = new uint32_t[NUM_THREADS];
+        }
+        for (uint32_t tid = 0; tid < NUM_THREADS; ++tid) {
+            workers[tid] = move(thread([&par_prefix_sum_arr, &entry_counts, tid, local_buffers_g, par_off_arr, this]() {
 //                posix_fadvise(write_key_file_dp_[tid], 0, entry_counts[tid] * sizeof(uint64_t), POSIX_FADV_SEQUENTIAL);
                 readahead(write_key_file_dp_[tid], 0, entry_counts[tid] * sizeof(uint64_t));
-                vector<uint32_t> par_off(NUM_THREADS);
-                for (size_t j = 0; j < par_off.size(); j++) {
+                uint64_t *local_buffer = local_buffers_g[tid];
+                uint32_t *par_off = par_off_arr[tid];
+                for (size_t j = 0; j < NUM_THREADS; j++) {
                     par_off[j] = par_prefix_sum_arr[tid][j];
                 }
                 uint32_t entry_count = entry_counts[tid];
@@ -490,11 +495,11 @@ namespace polar_race {
                 size_t read_offset = 0;
                 uint32_t file_offset = 0;
                 for (uint32_t j = 0; j < passes; ++j) {
-                    pread(write_key_file_dp_[tid], buffer, KEY_READ_BLOCK_COUNT * sizeof(uint64_t), read_offset);
+                    pread(write_key_file_dp_[tid], local_buffer, KEY_READ_BLOCK_COUNT * sizeof(uint64_t), read_offset);
 
                     for (int k = 0; k < KEY_READ_BLOCK_COUNT; k++) {
-                        auto par_id = get_partition_id(buffer[k]);
-                        index_[par_id][par_off[par_id]].key_ = buffer[k];
+                        auto par_id = get_partition_id(local_buffer[k]);
+                        index_[par_id][par_off[par_id]].key_ = local_buffer[k];
                         index_[par_id][par_off[par_id]].value_offset_.block_offset_ = file_offset;
                         index_[par_id][par_off[par_id]].value_offset_.partition_ = tid;
                         file_offset++;
@@ -504,22 +509,25 @@ namespace polar_race {
                 }
 
                 if (remain_entries_count != 0) {
-                    pread(write_key_file_dp_[tid], buffer, remain_entries_count * sizeof(uint64_t), read_offset);
+                    pread(write_key_file_dp_[tid], local_buffer, remain_entries_count * sizeof(uint64_t), read_offset);
                     for (uint32_t k = 0; k < remain_entries_count; k++) {
-                        auto par_id = get_partition_id(buffer[k]);
-                        index_[par_id][par_off[par_id]].key_ = buffer[k];
+                        auto par_id = get_partition_id(local_buffer[k]);
+                        index_[par_id][par_off[par_id]].key_ = local_buffer[k];
                         index_[par_id][par_off[par_id]].value_offset_.block_offset_ = file_offset;
                         index_[par_id][par_off[par_id]].value_offset_.partition_ = tid;
                         file_offset++;
                         par_off[par_id]++;
                     }
                 }
-                free(buffer);
             }));
         }
         for (uint32_t i = 0; i < NUM_THREADS; ++i) {
             workers[i].join();
+            delete[]local_buffers_g[i];
+            delete[]par_off_arr[i];
         }
+        delete[]local_buffers_g;
+        delete[]par_off_arr;
         clock_end = high_resolution_clock::now();
         log_info("Build-1, last err: %s; time: %.3lf s, ts: %.3lf s", strerror(errno),
                  duration_cast<milliseconds>(clock_end - start).count() / 1000.0,
