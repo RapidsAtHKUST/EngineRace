@@ -293,7 +293,7 @@ namespace polar_race {
             uint32_t key_buffer_offset = (key_bucket_size_[key_par_id] % TMP_KEY_BUFFER_SIZE);
             KeyEntry *key_buffer = mmap_key_aligned_buffer_[key_par_id];
             key_buffer[key_buffer_offset].key_ = key_int_big_endian;
-            key_buffer[key_buffer_offset].value_offset_ = key_bucket_size_[key_par_id];
+            key_buffer[key_buffer_offset].value_offset_ = mmap_val_meta_cnt_[val_par_id];
             if (((key_bucket_size_[key_par_id] + 1) % TMP_KEY_BUFFER_SIZE) == 0) {
                 pwrite(write_key_file_dp_[key_par_id], key_buffer, sizeof(KeyEntry) * TMP_KEY_BUFFER_SIZE,
                        ((uint64_t) key_bucket_size_[key_par_id] - (TMP_KEY_BUFFER_SIZE - 1)) * sizeof(KeyEntry));

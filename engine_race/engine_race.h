@@ -22,7 +22,7 @@
 #define READ_BARRIER_NUM (32)
 
 // value bucket num: at least 65536 to group 1000 values
-#define VAL_BUCKET_DIGITS (8)
+#define VAL_BUCKET_DIGITS (10)
 #define VAL_BUCKET_NUM (1 << VAL_BUCKET_DIGITS)
 
 #define KEY_BUCKET_DIGITS (8)
