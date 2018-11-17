@@ -11,49 +11,53 @@
 #include "barrier.h"
 
 #define NUM_THREADS (64)
+#define TOTAL_COUNT (64000000)
 #define VALUE_SIZE (4096)
 #define FILESYSTEM_BLOCK_SIZE (4096)
 #define FILE_PRIVILEGE (0644)
-#define KEY_VALUE_MAX_COUNT_PER_THREAD (1000000)
-//#define TMP_VALUE_BUFFER_SIZE (4)
-#define TMP_KEY_BUFFER_SIZE (512)
-#define KEY_READ_BLOCK_COUNT (8192)
+#define TMP_KEY_BUFFER_SIZE (1024)
+#define TMP_VALUE_BUFFER_SIZE (4)
 #define TO_UINT64(buffer) (*(uint64_t*)(buffer))
 #define WRITE_BARRIER_NUM (16)
 #define READ_BARRIER_NUM (32)
 
+// value bucket num: at least 65536 to group 1000 values
+#define VAL_BUCKET_DIGITS (8)
+#define VAL_BUCKET_NUM (1 << VAL_BUCKET_DIGITS)
+
+#define KEY_BUCKET_DIGITS (8)
+#define KEY_BUCKET_NUM (1 << KEY_BUCKET_DIGITS)
+
+#define AMPLIFY_FACTOR (VAL_BUCKET_NUM/KEY_BUCKET_NUM)
+
 namespace polar_race {
     using namespace std;
-    struct ValueOffset {
-        uint32_t partition_;
-        uint32_t block_offset_;
-    };
 
     struct KeyEntry {
         uint64_t key_;
-        ValueOffset value_offset_;
-    };
+        uint32_t value_offset_;
+    }__attribute__((packed));
 
     bool operator<(KeyEntry l, KeyEntry r);
 
     class EngineRace : public Engine {
     public:
+        int write_meta_file_dp_;
+        uint32_t *mmap_val_meta_cnt_;
+
         int *write_key_file_dp_;
+        int *write_key_buffer_file_dp_;
+        KeyEntry **mmap_key_aligned_buffer_;
+        vector<uint32_t> key_bucket_size_;
+        mutex *key_mtx_;
+
         int *write_value_file_dp_;
         int *write_value_buffer_file_dp_;
-        int *write_key_buffer_file_dp_;
-        int write_meta_file_dp_;
-
-        uint32_t **write_mmap_meta_file_;
         char **mmap_value_aligned_buffer_;
-        uint64_t **mmap_key_aligned_buffer_;
-
-        char **aligned_buffer_;
 
         vector<KeyEntry *> index_;
-        vector<uint32_t> total_cnt_;
-        vector<uint32_t> tmp_value_buf_size_;
-        vector<int64_t> lower_bound_cost_;
+        char **aligned_read_buffer_;
+
         Barrier barrier_;
         Barrier read_barrier_;
     public:
