@@ -20,6 +20,8 @@
 #include "log.h"
 #include "stat.h"
 
+#define STAT
+
 namespace polar_race {
     using namespace std::chrono;
     std::chrono::time_point<std::chrono::high_resolution_clock> clock_start;
@@ -57,6 +59,7 @@ namespace polar_race {
 
     using namespace std;
 
+    atomic_int write_num_threads(-1);
     atomic_int read_num_threads_count(-1);
 
     const string meta_file_name = "polar.meta";
@@ -269,9 +272,21 @@ namespace polar_race {
 
 // 3. Write a key-value pair into engine
     RetCode EngineRace::Write(const PolarString &key, const PolarString &value) {
+        static thread_local uint32_t tid = (uint32_t) (++write_num_threads) % NUM_THREADS;
+        static thread_local uint32_t local_block_offset = 0;
         uint64_t key_int_big_endian = bswap_64(TO_UINT64(key.data()));
         uint64_t key_par_id = get_key_par_id(key_int_big_endian);
         uint64_t val_par_id = get_val_par_id(key_int_big_endian);
+#ifdef STAT
+        static thread_local std::chrono::time_point<std::chrono::high_resolution_clock> first_write_clk;
+        static thread_local std::chrono::time_point<std::chrono::high_resolution_clock> last_write_clk;
+        if (local_block_offset == 0) {
+            first_write_clk = high_resolution_clock::now();
+        }
+#endif
+        if (local_block_offset % 10000 == 0 && tid < WRITE_BARRIER_NUM) {
+            barrier_.Wait();
+        }
         {
             unique_lock<mutex> lock(key_mtx_[key_par_id]);
             // Write key to the key file.
@@ -297,6 +312,15 @@ namespace polar_race {
             key_bucket_size_[key_par_id]++;
             mmap_val_meta_cnt_[val_par_id]++;
         }
+        local_block_offset++;
+#ifdef STAT
+        if (local_block_offset == 1000000) {
+            last_write_clk = high_resolution_clock::now();
+            log_info("Write Stat of tid %d, elapsed time: %.3lf s, ts: %.3lf s",
+                     tid, duration_cast<milliseconds>(last_write_clk - first_write_clk).count() / 1000.0,
+                     duration_cast<milliseconds>(last_write_clk.time_since_epoch()).count() / 1000.0);
+        }
+#endif
         return kSucc;
     }
 
