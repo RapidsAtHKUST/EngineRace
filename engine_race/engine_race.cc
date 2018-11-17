@@ -401,8 +401,7 @@ namespace polar_race {
         pread(write_value_file_dp_[value_offset.partition_], value_buffer, VALUE_SIZE,
               (uint64_t) (value_offset.block_offset_) * VALUE_SIZE);
 
-        *value = std::string(value_buffer, VALUE_SIZE);
-
+        value->assign(value_buffer, VALUE_SIZE);
         return kSucc;
     }
 
