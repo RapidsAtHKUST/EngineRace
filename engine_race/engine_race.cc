@@ -368,9 +368,16 @@ namespace polar_race {
         KeyEntry tmp{};
         tmp.key_ = big_endian_key_uint;
         auto key_par_id = get_key_par_id(big_endian_key_uint);
-        if (!is_sorted_[key_par_id]) {
+
+        if (!is_sorted_[key_par_id] && mmap_key_meta_cnt_[key_par_id] > 0) {
             unique_lock<mutex> lock(key_mtx_[key_par_id]);
             if (!is_sorted_[key_par_id]) {
+                auto ret = pread(write_key_file_dp_[key_par_id], index_[key_par_id],
+                                 mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry), 0);
+                if (ret != mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry)) {
+                    log_info("ret: %d, err: %s", ret, strerror(errno));
+                }
+                assert(ret == mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry));
                 sort(index_[key_par_id], index_[key_par_id] + mmap_key_meta_cnt_[key_par_id],
                      [](KeyEntry l, KeyEntry r) {
                          if (l.key_ == r.key_) {
@@ -382,6 +389,7 @@ namespace polar_race {
                 is_sorted_[key_par_id] = true;
             }
         }
+
         auto it = index_[key_par_id] + branchfree_search(index_[key_par_id], mmap_key_meta_cnt_[key_par_id], tmp);
         local_block_offset++;
 
@@ -457,32 +465,32 @@ namespace polar_race {
             }
         }
         // Read each key file.
-        vector <thread> workers(NUM_THREADS);
-        for (uint32_t tid = 0; tid < NUM_THREADS; ++tid) {
-            workers[tid] = move(thread([tid, this]() {
-                for (uint32_t key_par_id = tid; key_par_id < KEY_BUCKET_NUM; key_par_id += NUM_THREADS) {
-                    if (mmap_key_meta_cnt_[key_par_id] > 0) {
-                        auto ret = pread(write_key_file_dp_[key_par_id], index_[key_par_id],
-                                         mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry), 0);
-                        if (ret != mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry)) {
-                            log_info("ret: %d, err: %s", ret, strerror(errno));
-                        }
-                        assert(ret == mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry));
-//                        sort(index_[key_par_id], index_[key_par_id] + mmap_key_meta_cnt_[key_par_id],
-//                             [](KeyEntry l, KeyEntry r) {
-//                                 if (l.key_ == r.key_) {
-//                                     return l.value_offset_ > r.value_offset_;
-//                                 } else {
-//                                     return l.key_ < r.key_;
-//                                 }
-//                             });
-                    }
-                }
-            }));
-        }
-        for (uint32_t i = 0; i < NUM_THREADS; ++i) {
-            workers[i].join();
-        }
+//        vector<thread> workers(NUM_THREADS);
+//        for (uint32_t tid = 0; tid < NUM_THREADS; ++tid) {
+//            workers[tid] = move(thread([tid, this]() {
+//                for (uint32_t key_par_id = tid; key_par_id < KEY_BUCKET_NUM; key_par_id += NUM_THREADS) {
+//                    if (mmap_key_meta_cnt_[key_par_id] > 0) {
+//                        auto ret = pread(write_key_file_dp_[key_par_id], index_[key_par_id],
+//                                         mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry), 0);
+//                        if (ret != mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry)) {
+//                            log_info("ret: %d, err: %s", ret, strerror(errno));
+//                        }
+//                        assert(ret == mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry));
+////                        sort(index_[key_par_id], index_[key_par_id] + mmap_key_meta_cnt_[key_par_id],
+////                             [](KeyEntry l, KeyEntry r) {
+////                                 if (l.key_ == r.key_) {
+////                                     return l.value_offset_ > r.value_offset_;
+////                                 } else {
+////                                     return l.key_ < r.key_;
+////                                 }
+////                             });
+//                    }
+//                }
+//            }));
+//        }
+//        for (uint32_t i = 0; i < NUM_THREADS; ++i) {
+//            workers[i].join();
+//        }
         clock_end = high_resolution_clock::now();
         log_info("Finish BI, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
