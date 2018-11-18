@@ -94,7 +94,7 @@ namespace polar_race {
             mmap_key_aligned_buffer_(nullptr), key_mtx_(nullptr), val_mtx_(nullptr),
             write_value_file_dp_(nullptr), write_value_buffer_file_dp_(nullptr),
             mmap_value_aligned_buffer_(nullptr), aligned_read_buffer_(nullptr),
-            barrier_(WRITE_BARRIER_NUM), read_barrier_(READ_BARRIER_NUM) {
+            barrier_(WRITE_BARRIER_NUM), read_barrier_(READ_BARRIER_NUM), is_sorted_(nullptr) {
         clock_end = high_resolution_clock::now();
         log_info("Start init DB, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
@@ -195,6 +195,7 @@ namespace polar_race {
                                                               write_value_buffer_file_dp_[i], 0);
             }
             // Key.
+            key_mtx_ = new mutex[KEY_BUCKET_NUM];
             for (int i = 0; i < KEY_BUCKET_NUM; ++i) {
                 string temp_key = key_file_path + to_string(i);
                 string temp_buffer_key = tmp_key_file_path + to_string(i);
@@ -269,6 +270,7 @@ namespace polar_race {
         delete[] write_key_file_dp_;
         delete[] mmap_key_aligned_buffer_;
         delete[] key_mtx_;
+        delete[] is_sorted_;
         // Free indices
         for (KeyEntry *index_partition: index_) {
             free(index_partition);
@@ -366,7 +368,20 @@ namespace polar_race {
         KeyEntry tmp{};
         tmp.key_ = big_endian_key_uint;
         auto key_par_id = get_key_par_id(big_endian_key_uint);
-
+        if (!is_sorted_[key_par_id]) {
+            unique_lock<mutex> lock(key_mtx_[key_par_id]);
+            if (!is_sorted_[key_par_id]) {
+                sort(index_[key_par_id], index_[key_par_id] + mmap_key_meta_cnt_[key_par_id],
+                     [](KeyEntry l, KeyEntry r) {
+                         if (l.key_ == r.key_) {
+                             return l.value_offset_ > r.value_offset_;
+                         } else {
+                             return l.key_ < r.key_;
+                         }
+                     });
+                is_sorted_[key_par_id] = true;
+            }
+        }
         auto it = index_[key_par_id] + branchfree_search(index_[key_par_id], mmap_key_meta_cnt_[key_par_id], tmp);
         local_block_offset++;
 
@@ -409,6 +424,8 @@ namespace polar_race {
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
         // Key Cnt, Index Allocation.
+        is_sorted_ = new bool[KEY_BUCKET_NUM];
+        memset((void *) is_sorted_, 0, KEY_BUCKET_NUM);
         index_ = vector<KeyEntry *>(KEY_BUCKET_NUM, nullptr);
         for (int key_par_id = 0; key_par_id < KEY_BUCKET_NUM; key_par_id++) {
             index_[key_par_id] = static_cast<KeyEntry *>(malloc(mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry)));
@@ -440,7 +457,7 @@ namespace polar_race {
             }
         }
         // Read each key file.
-        vector<thread> workers(NUM_THREADS);
+        vector <thread> workers(NUM_THREADS);
         for (uint32_t tid = 0; tid < NUM_THREADS; ++tid) {
             workers[tid] = move(thread([tid, this]() {
                 for (uint32_t key_par_id = tid; key_par_id < KEY_BUCKET_NUM; key_par_id += NUM_THREADS) {
@@ -451,17 +468,16 @@ namespace polar_race {
                             log_info("ret: %d, err: %s", ret, strerror(errno));
                         }
                         assert(ret == mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry));
-                        sort(index_[key_par_id], index_[key_par_id] + mmap_key_meta_cnt_[key_par_id],
-                             [](KeyEntry l, KeyEntry r) {
-                                 if (l.key_ == r.key_) {
-                                     return l.value_offset_ > r.value_offset_;
-                                 } else {
-                                     return l.key_ < r.key_;
-                                 }
-                             });
+//                        sort(index_[key_par_id], index_[key_par_id] + mmap_key_meta_cnt_[key_par_id],
+//                             [](KeyEntry l, KeyEntry r) {
+//                                 if (l.key_ == r.key_) {
+//                                     return l.value_offset_ > r.value_offset_;
+//                                 } else {
+//                                     return l.key_ < r.key_;
+//                                 }
+//                             });
                     }
                 }
-
             }));
         }
         for (uint32_t i = 0; i < NUM_THREADS; ++i) {

@@ -61,6 +61,8 @@ namespace polar_race {
 
         Barrier barrier_;
         Barrier read_barrier_;
+
+        volatile bool * is_sorted_;
     public:
         static RetCode Open(const std::string &name, Engine **eptr);
 
