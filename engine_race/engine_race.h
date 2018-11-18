@@ -21,14 +21,11 @@
 #define WRITE_BARRIER_NUM (16)
 #define READ_BARRIER_NUM (32)
 
-// value bucket num: at least 65536 to group 1000 values
 #define VAL_BUCKET_DIGITS (5)
 #define VAL_BUCKET_NUM (1 << VAL_BUCKET_DIGITS)
 
-#define KEY_BUCKET_DIGITS (10)
+#define KEY_BUCKET_DIGITS (8)
 #define KEY_BUCKET_NUM (1 << KEY_BUCKET_DIGITS)
-
-#define AMPLIFY_FACTOR (VAL_BUCKET_NUM/KEY_BUCKET_NUM)
 
 namespace polar_race {
     using namespace std;
@@ -51,7 +48,7 @@ namespace polar_race {
         int *write_key_file_dp_;
         int *write_key_buffer_file_dp_;
         KeyEntry **mmap_key_aligned_buffer_;
-//        vector<uint32_t> key_bucket_size_;
+
         mutex *key_mtx_;
         mutex *val_mtx_;
 

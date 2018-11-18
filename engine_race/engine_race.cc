@@ -70,7 +70,7 @@ namespace polar_race {
 
     RetCode Engine::Open(const std::string &name, Engine **eptr) {
         clock_start = high_resolution_clock::now();
-        log_info("sizeof %d, %d", sizeof(off_t), sizeof(off64_t));
+        log_info("sizeof %d, %d, %d", sizeof(off_t), sizeof(off64_t), sizeof(KeyEntry));
         log_info("ts: %.3lf s",
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
         auto ret = EngineRace::Open(name, eptr);
@@ -120,13 +120,13 @@ namespace polar_race {
             log_info("Initialize the database...");
             // Meta.
             val_meta_file_dp_ = open(val_meta_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
-            ftruncate(val_meta_file_dp_, sizeof(uint64_t) * VAL_BUCKET_NUM);
+            ftruncate(val_meta_file_dp_, sizeof(uint32_t) * VAL_BUCKET_NUM);
             mmap_val_meta_cnt_ = (uint32_t *) mmap(nullptr, sizeof(uint32_t) * (VAL_BUCKET_NUM),
                                                    PROT_READ | PROT_WRITE, MAP_SHARED, val_meta_file_dp_, 0);
             memset(mmap_val_meta_cnt_, 0, sizeof(uint32_t) * (VAL_BUCKET_NUM));
 
             key_meta_file_dp_ = open(key_meta_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
-            ftruncate(key_meta_file_dp_, sizeof(uint64_t) * KEY_BUCKET_NUM);
+            ftruncate(key_meta_file_dp_, sizeof(uint32_t) * KEY_BUCKET_NUM);
             mmap_key_meta_cnt_ = (uint32_t *) mmap(nullptr, sizeof(uint32_t) * (KEY_BUCKET_NUM),
                                                    PROT_READ | PROT_WRITE, MAP_SHARED, key_meta_file_dp_, 0);
             memset(mmap_key_meta_cnt_, 0, sizeof(uint32_t) * (KEY_BUCKET_NUM));
@@ -269,6 +269,7 @@ namespace polar_race {
         delete[] write_key_file_dp_;
         delete[] mmap_key_aligned_buffer_;
         delete[] key_mtx_;
+        // Free indices
         for (KeyEntry *index_partition: index_) {
             free(index_partition);
         }
@@ -364,15 +365,15 @@ namespace polar_race {
 
         KeyEntry tmp{};
         tmp.key_ = big_endian_key_uint;
-        auto partition_id = get_key_par_id(big_endian_key_uint);
+        auto key_par_id = get_key_par_id(big_endian_key_uint);
 
-        auto it = index_[partition_id] + branchfree_search(index_[partition_id], mmap_key_meta_cnt_[partition_id], tmp);
+        auto it = index_[key_par_id] + branchfree_search(index_[key_par_id], mmap_key_meta_cnt_[key_par_id], tmp);
         local_block_offset++;
 
         if (local_block_offset % 100000 == 0 && tid < READ_BARRIER_NUM) {
             read_barrier_.Wait();
         }
-        if (it == index_[partition_id] + mmap_key_meta_cnt_[partition_id] || it->key_ != big_endian_key_uint) {
+        if (it == index_[key_par_id] + mmap_key_meta_cnt_[key_par_id] || it->key_ != big_endian_key_uint) {
             if (is_first_not_found) {
                 log_info("not found in tid: %d\n", tid);
                 is_first_not_found = false;
