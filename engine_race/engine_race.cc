@@ -68,12 +68,6 @@ namespace polar_race {
     const string value_buffer_file_name = "polar.valbuffers";
     const string key_buffer_file_name = "polar.keybuffers";
 
-    int64_t polar_str_to_int64(PolarString ps) {
-        int64_t int3;
-        memcpy(&int3, ps.data(), sizeof(int64_t));
-        return int3;
-    }
-
     RetCode Engine::Open(const std::string &name, Engine **eptr) {
         clock_start = high_resolution_clock::now();
         log_info("sizeof %d, %d", sizeof(off_t), sizeof(off64_t));
@@ -126,25 +120,32 @@ namespace polar_race {
             // Meta.
             write_meta_file_dp_ = open(meta_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
             ftruncate(write_meta_file_dp_, sizeof(uint64_t) * VAL_BUCKET_NUM);
+            mmap_val_meta_cnt_ = (uint32_t *) mmap(nullptr, sizeof(uint32_t) * (VAL_BUCKET_NUM),
+                                                   PROT_READ | PROT_WRITE, MAP_SHARED, write_meta_file_dp_, 0);
+            memset(mmap_val_meta_cnt_, 0, sizeof(uint32_t) * (VAL_BUCKET_NUM));
 
             // Value.
-            mmap_val_meta_cnt_ = new uint32_t[VAL_BUCKET_NUM];
             for (int i = 0; i < VAL_BUCKET_NUM; ++i) {
-                mmap_val_meta_cnt_ = (uint32_t *) mmap(nullptr, sizeof(uint32_t) * (VAL_BUCKET_NUM),
-                                                       PROT_READ | PROT_WRITE, MAP_SHARED, write_meta_file_dp_, 0);
                 string temp_value = value_file_path + to_string(i);
                 string temp_buffer_value = tmp_value_file_path + to_string(i);
 
                 write_value_file_dp_[i] = open(temp_value.c_str(), O_RDWR | O_CREAT | O_DIRECT, FILE_PRIVILEGE);
-                ftruncate(write_value_file_dp_[i], static_cast<uint64_t>(VALUE_SIZE) * (TOTAL_COUNT / VAL_BUCKET_NUM));
+                if (write_value_file_dp_[i] < 0) {
+                    log_info("fd err of %d: %d, err info: %s", i, write_value_file_dp_[i], strerror(errno));
+                    exit(-1);
+                }
+                fallocate(write_value_file_dp_[i], 0, 0,
+                          static_cast<uint64_t>(VALUE_SIZE) * (TOTAL_COUNT / VAL_BUCKET_NUM));
 
                 size_t tmp_buffer_value_file_size = VALUE_SIZE * TMP_VALUE_BUFFER_SIZE;
                 write_value_buffer_file_dp_[i] = open(temp_buffer_value.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
+                if (write_value_buffer_file_dp_[i] < 0) {
+                    log_info("fd err of %d: %d, err info: %s", i, write_value_buffer_file_dp_[i], strerror(errno));
+                    exit(-1);
+                }
                 ftruncate(write_value_buffer_file_dp_[i], tmp_buffer_value_file_size);
                 mmap_value_aligned_buffer_[i] = (char *) mmap(nullptr, tmp_buffer_value_file_size, \
                         PROT_READ | PROT_WRITE, MAP_SHARED, write_value_buffer_file_dp_[i], 0);
-
-                memset(mmap_val_meta_cnt_, 0, sizeof(uint32_t) * (VAL_BUCKET_NUM));
             }
 
             // Key.
@@ -165,9 +166,11 @@ namespace polar_race {
             log_info("Create the database successfully.");
         } else {
             log_info("Reload the database.");
+            // Meta.
             write_meta_file_dp_ = open(meta_file_path.c_str(), O_RDONLY, FILE_PRIVILEGE);
             mmap_val_meta_cnt_ = (uint32_t *) mmap(nullptr, sizeof(uint32_t) * (VAL_BUCKET_NUM),
                                                    PROT_READ, MAP_PRIVATE | MAP_POPULATE, write_meta_file_dp_, 0);
+            // Value.
             for (int i = 0; i < VAL_BUCKET_NUM; ++i) {
                 string temp_value = value_file_path + to_string(i);
                 string temp_buffer_value = tmp_value_file_path + to_string(i);
@@ -180,6 +183,7 @@ namespace polar_race {
                                                               PROT_READ | PROT_WRITE, MAP_SHARED,
                                                               write_value_buffer_file_dp_[i], 0);
             }
+            // Key.
             for (int i = 0; i < KEY_BUCKET_NUM; ++i) {
                 string temp_key = key_file_path + to_string(i);
                 string temp_buffer_key = tmp_key_file_path + to_string(i);
@@ -191,6 +195,7 @@ namespace polar_race {
                         PROT_READ | PROT_WRITE, MAP_SHARED, write_key_buffer_file_dp_[i], 0);
 
             }
+            // Thread.
             aligned_read_buffer_ = new char *[NUM_THREADS];
             for (int i = 0; i < NUM_THREADS; ++i) {
                 aligned_read_buffer_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, VALUE_SIZE);
@@ -264,10 +269,12 @@ namespace polar_race {
         delete[] write_value_file_dp_;
         delete[] mmap_value_aligned_buffer_;
 
+        //sleep(20);
         clock_end = high_resolution_clock::now();
         log_info("Finish ~EngineRace(), time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
+
     }
 
 // 3. Write a key-value pair into engine
@@ -284,9 +291,9 @@ namespace polar_race {
             first_write_clk = high_resolution_clock::now();
         }
 #endif
-        if (local_block_offset % 10000 == 0 && tid < WRITE_BARRIER_NUM) {
-            barrier_.Wait();
-        }
+//        if (local_block_offset % 10000 == 0 && tid < WRITE_BARRIER_NUM) {
+//            barrier_.Wait();
+//        }
         {
             unique_lock<mutex> lock(key_mtx_[key_par_id]);
             // Write key to the key file.
@@ -412,7 +419,6 @@ namespace polar_race {
                 close(tmp_fd);
             }
         }
-
         // Read each key file.
         vector<thread> workers(NUM_THREADS);
         for (uint32_t tid = 0; tid < NUM_THREADS; ++tid) {
