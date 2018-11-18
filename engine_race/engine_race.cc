@@ -269,7 +269,7 @@ namespace polar_race {
         delete[] write_value_file_dp_;
         delete[] mmap_value_aligned_buffer_;
 
-        //sleep(20);
+        sleep(20);
         clock_end = high_resolution_clock::now();
         log_info("Finish ~EngineRace(), time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
