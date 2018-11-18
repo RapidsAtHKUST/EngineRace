@@ -20,7 +20,7 @@
 #include "log.h"
 #include "stat.h"
 
-#define STAT
+//#define STAT
 
 namespace polar_race {
     using namespace std::chrono;
@@ -287,7 +287,7 @@ namespace polar_race {
         delete[] write_value_file_dp_;
         delete[] mmap_value_aligned_buffer_;
 
-        sleep(20);
+//        sleep(20);
         clock_end = high_resolution_clock::now();
         log_info("Finish ~EngineRace(), time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
@@ -377,7 +377,7 @@ namespace polar_race {
                 if (ret != mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry)) {
                     log_info("ret: %d, err: %s", ret, strerror(errno));
                 }
-                assert(ret == mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry));
+//                assert(ret == mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry));
                 sort(index_[key_par_id], index_[key_par_id] + mmap_key_meta_cnt_[key_par_id],
                      [](KeyEntry l, KeyEntry r) {
                          if (l.key_ == r.key_) {
