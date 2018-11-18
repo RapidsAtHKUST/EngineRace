@@ -62,8 +62,8 @@ namespace polar_race {
     atomic_int write_num_threads(-1);
     atomic_int read_num_threads_count(-1);
 
-    const string meta_file_name = "polar.meta";
-    const string key_file_name = "polar.keys";
+    const string value_meta_file_name = "polar.keymeta";
+    const string key_meta_file_name = "polar.valmeta";
     const string value_file_name = "polar.values";
     const string value_buffer_file_name = "polar.valbuffers";
     const string key_buffer_file_name = "polar.keybuffers";
@@ -89,9 +89,9 @@ namespace polar_race {
  * Complete the functions below to implement you own engine
  */
     EngineRace::EngineRace(const std::string &dir) :
-            write_meta_file_dp_(-1), mmap_val_meta_cnt_(nullptr),
+            mmap_key_meta_cnt_(nullptr), mmap_val_meta_cnt_(nullptr),
             write_key_file_dp_(nullptr), write_key_buffer_file_dp_(nullptr),
-            mmap_key_aligned_buffer_(nullptr), key_bucket_size_(KEY_BUCKET_NUM, 0), key_mtx_(nullptr),
+            mmap_key_aligned_buffer_(nullptr), key_mtx_(nullptr), val_mtx_(nullptr),
             write_value_file_dp_(nullptr), write_value_buffer_file_dp_(nullptr),
             mmap_value_aligned_buffer_(nullptr), aligned_read_buffer_(nullptr),
             barrier_(WRITE_BARRIER_NUM), read_barrier_(READ_BARRIER_NUM) {
@@ -99,9 +99,10 @@ namespace polar_race {
         log_info("Start init DB, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
-        const string meta_file_path = dir + "/" + meta_file_name;
+        const string val_meta_file_path = dir + "/" + value_meta_file_name;
+        const string key_meta_file_path = dir + "/" + key_meta_file_name;
 
-        const string key_file_path = dir + "/" + key_file_name;
+        const string key_file_path = dir + "/" + key_meta_file_name;
         const string tmp_key_file_path = dir + "/" + key_buffer_file_name;
 
         const string value_file_path = dir + "/" + value_file_name;
@@ -115,16 +116,23 @@ namespace polar_race {
         write_value_buffer_file_dp_ = new int[VAL_BUCKET_NUM];
         mmap_value_aligned_buffer_ = new char *[VAL_BUCKET_NUM];
 
-        if (!file_exists(meta_file_path.c_str())) {
+        if (!file_exists(val_meta_file_path.c_str())) {
             log_info("Initialize the database...");
             // Meta.
-            write_meta_file_dp_ = open(meta_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
-            ftruncate(write_meta_file_dp_, sizeof(uint64_t) * VAL_BUCKET_NUM);
+            val_meta_file_dp_ = open(val_meta_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
+            ftruncate(val_meta_file_dp_, sizeof(uint64_t) * VAL_BUCKET_NUM);
             mmap_val_meta_cnt_ = (uint32_t *) mmap(nullptr, sizeof(uint32_t) * (VAL_BUCKET_NUM),
-                                                   PROT_READ | PROT_WRITE, MAP_SHARED, write_meta_file_dp_, 0);
+                                                   PROT_READ | PROT_WRITE, MAP_SHARED, val_meta_file_dp_, 0);
             memset(mmap_val_meta_cnt_, 0, sizeof(uint32_t) * (VAL_BUCKET_NUM));
 
+            key_meta_file_dp_ = open(key_meta_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
+            ftruncate(key_meta_file_dp_, sizeof(uint64_t) * KEY_BUCKET_NUM);
+            mmap_key_meta_cnt_ = (uint32_t *) mmap(nullptr, sizeof(uint32_t) * (KEY_BUCKET_NUM),
+                                                   PROT_READ | PROT_WRITE, MAP_SHARED, key_meta_file_dp_, 0);
+            memset(mmap_key_meta_cnt_, 0, sizeof(uint32_t) * (KEY_BUCKET_NUM));
+
             // Value.
+            val_mtx_ = new mutex[VAL_BUCKET_NUM];
             for (int i = 0; i < VAL_BUCKET_NUM; ++i) {
                 string temp_value = value_file_path + to_string(i);
                 string temp_buffer_value = tmp_value_file_path + to_string(i);
@@ -166,9 +174,13 @@ namespace polar_race {
         } else {
             log_info("Reload the database.");
             // Meta.
-            write_meta_file_dp_ = open(meta_file_path.c_str(), O_RDONLY, FILE_PRIVILEGE);
+            val_meta_file_dp_ = open(val_meta_file_path.c_str(), O_RDONLY, FILE_PRIVILEGE);
             mmap_val_meta_cnt_ = (uint32_t *) mmap(nullptr, sizeof(uint32_t) * (VAL_BUCKET_NUM),
-                                                   PROT_READ, MAP_PRIVATE | MAP_POPULATE, write_meta_file_dp_, 0);
+                                                   PROT_READ, MAP_PRIVATE | MAP_POPULATE, val_meta_file_dp_, 0);
+            key_meta_file_dp_ = open(key_meta_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
+            mmap_key_meta_cnt_ = (uint32_t *) mmap(nullptr, sizeof(uint32_t) * (KEY_BUCKET_NUM),
+                                                   PROT_READ | PROT_WRITE, MAP_SHARED, key_meta_file_dp_, 0);
+
             // Value.
             for (int i = 0; i < VAL_BUCKET_NUM; ++i) {
                 string temp_value = value_file_path + to_string(i);
@@ -230,9 +242,13 @@ namespace polar_race {
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
         // Meta.
         if (mmap_val_meta_cnt_ != nullptr) {
-            munmap(mmap_val_meta_cnt_, VALUE_SIZE);
+            munmap(mmap_val_meta_cnt_, sizeof(uint32_t) * (VAL_BUCKET_NUM));
         }
-        close(write_meta_file_dp_);
+        close(val_meta_file_dp_);
+        if (mmap_key_meta_cnt_ != nullptr) {
+            munmap(mmap_key_meta_cnt_, sizeof(uint32_t) * (KEY_BUCKET_NUM));
+        }
+        close(key_meta_file_dp_);
 
         // Thread.
         for (uint32_t i = 0; i < NUM_THREADS; ++i) {
@@ -293,18 +309,12 @@ namespace polar_race {
         if (local_block_offset % 10000 == 0 && tid < WRITE_BARRIER_NUM) {
             barrier_.Wait();
         }
-        {
-            unique_lock<mutex> lock(key_mtx_[key_par_id]);
-            // Write key to the key file.
-            uint32_t key_buffer_offset = (key_bucket_size_[key_par_id] % TMP_KEY_BUFFER_SIZE);
-            KeyEntry *key_buffer = mmap_key_aligned_buffer_[key_par_id];
-            key_buffer[key_buffer_offset].key_ = key_int_big_endian;
-            key_buffer[key_buffer_offset].value_offset_ = mmap_val_meta_cnt_[val_par_id];
-            if (((key_bucket_size_[key_par_id] + 1) % TMP_KEY_BUFFER_SIZE) == 0) {
-                pwrite(write_key_file_dp_[key_par_id], key_buffer, sizeof(KeyEntry) * TMP_KEY_BUFFER_SIZE,
-                       ((uint64_t) key_bucket_size_[key_par_id] - (TMP_KEY_BUFFER_SIZE - 1)) * sizeof(KeyEntry));
-            }
 
+        // Value.
+        uint32_t val_offset_get;
+        {
+            unique_lock<mutex> lock(val_mtx_[val_par_id]);
+            val_offset_get = mmap_val_meta_cnt_[val_par_id];
             // Write value to the value file, with a tmp file as value_buffer.
             uint32_t val_buffer_offset = (mmap_val_meta_cnt_[val_par_id] % TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
             char *value_buffer = mmap_value_aligned_buffer_[val_par_id];
@@ -313,10 +323,23 @@ namespace polar_race {
                 pwrite(write_value_file_dp_[val_par_id], value_buffer, VALUE_SIZE * TMP_VALUE_BUFFER_SIZE,
                        ((uint64_t) mmap_val_meta_cnt_[val_par_id] - (TMP_VALUE_BUFFER_SIZE - 1)) * VALUE_SIZE);
             }
-
             // Update the meta data.
-            key_bucket_size_[key_par_id]++;
             mmap_val_meta_cnt_[val_par_id]++;
+        }
+        // Key.
+        {
+            unique_lock<mutex> lock(key_mtx_[key_par_id]);
+            // Write key to the key file.
+            uint32_t key_buffer_offset = (mmap_key_meta_cnt_[key_par_id] % TMP_KEY_BUFFER_SIZE);
+            KeyEntry *key_buffer = mmap_key_aligned_buffer_[key_par_id];
+            key_buffer[key_buffer_offset].key_ = key_int_big_endian;
+            key_buffer[key_buffer_offset].value_offset_ = val_offset_get;
+            if (((mmap_key_meta_cnt_[key_par_id] + 1) % TMP_KEY_BUFFER_SIZE) == 0) {
+                pwrite(write_key_file_dp_[key_par_id], key_buffer, sizeof(KeyEntry) * TMP_KEY_BUFFER_SIZE,
+                       ((uint64_t) mmap_key_meta_cnt_[key_par_id] - (TMP_KEY_BUFFER_SIZE - 1)) * sizeof(KeyEntry));
+            }
+            // Update the meta data.
+            mmap_key_meta_cnt_[key_par_id]++;
         }
         local_block_offset++;
 #ifdef STAT
@@ -343,13 +366,13 @@ namespace polar_race {
         tmp.key_ = big_endian_key_uint;
         auto partition_id = get_key_par_id(big_endian_key_uint);
 
-        auto it = index_[partition_id] + branchfree_search(index_[partition_id], key_bucket_size_[partition_id], tmp);
+        auto it = index_[partition_id] + branchfree_search(index_[partition_id], mmap_key_meta_cnt_[partition_id], tmp);
         local_block_offset++;
 
         if (local_block_offset % 100000 == 0 && tid < READ_BARRIER_NUM) {
             read_barrier_.Wait();
         }
-        if (it == index_[partition_id] + key_bucket_size_[partition_id] || it->key_ != big_endian_key_uint) {
+        if (it == index_[partition_id] + mmap_key_meta_cnt_[partition_id] || it->key_ != big_endian_key_uint) {
             if (is_first_not_found) {
                 log_info("not found in tid: %d\n", tid);
                 is_first_not_found = false;
@@ -387,10 +410,7 @@ namespace polar_race {
         // Key Cnt, Index Allocation.
         index_ = vector<KeyEntry *>(KEY_BUCKET_NUM, nullptr);
         for (int key_par_id = 0; key_par_id < KEY_BUCKET_NUM; key_par_id++) {
-            for (int val_id = AMPLIFY_FACTOR * key_par_id; val_id < AMPLIFY_FACTOR * (key_par_id + 1); val_id++) {
-                key_bucket_size_[key_par_id] += mmap_val_meta_cnt_[val_id];
-            }
-            index_[key_par_id] = static_cast<KeyEntry *>(malloc(key_bucket_size_[key_par_id] * sizeof(KeyEntry)));
+            index_[key_par_id] = static_cast<KeyEntry *>(malloc(mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry)));
         }
         // Flush Values.
         for (int i = 0; i < VAL_BUCKET_NUM; i++) {
@@ -407,11 +427,11 @@ namespace polar_race {
         }
         // Flush Keys.
         for (int i = 0; i < KEY_BUCKET_NUM; i++) {
-            const string key_file_path = dir + "/" + key_file_name;
+            const string key_file_path = dir + "/" + key_meta_file_name;
             string temp_key = key_file_path + to_string(i);
-            if ((key_bucket_size_[i] % TMP_KEY_BUFFER_SIZE) != 0) {
-                size_t write_length = (key_bucket_size_[i] % TMP_KEY_BUFFER_SIZE) * sizeof(KeyEntry);
-                size_t write_offset = static_cast<uint64_t>(key_bucket_size_[i] / TMP_KEY_BUFFER_SIZE *
+            if ((mmap_key_meta_cnt_[i] % TMP_KEY_BUFFER_SIZE) != 0) {
+                size_t write_length = (mmap_key_meta_cnt_[i] % TMP_KEY_BUFFER_SIZE) * sizeof(KeyEntry);
+                size_t write_offset = static_cast<uint64_t>(mmap_key_meta_cnt_[i] / TMP_KEY_BUFFER_SIZE *
                                                             TMP_KEY_BUFFER_SIZE) * sizeof(KeyEntry);
                 auto tmp_fd = open(temp_key.c_str(), O_RDWR, FILE_PRIVILEGE);
                 pwrite(tmp_fd, mmap_key_aligned_buffer_[i], write_length, write_offset);
@@ -423,14 +443,14 @@ namespace polar_race {
         for (uint32_t tid = 0; tid < NUM_THREADS; ++tid) {
             workers[tid] = move(thread([tid, this]() {
                 for (uint32_t key_par_id = tid; key_par_id < KEY_BUCKET_NUM; key_par_id += NUM_THREADS) {
-                    if (key_bucket_size_[key_par_id] > 0) {
+                    if (mmap_key_meta_cnt_[key_par_id] > 0) {
                         auto ret = pread(write_key_file_dp_[key_par_id], index_[key_par_id],
-                                         key_bucket_size_[key_par_id] * sizeof(KeyEntry), 0);
-                        if (ret != key_bucket_size_[key_par_id] * sizeof(KeyEntry)) {
+                                         mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry), 0);
+                        if (ret != mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry)) {
                             log_info("ret: %d, err: %s", ret, strerror(errno));
                         }
-                        assert(ret == key_bucket_size_[key_par_id] * sizeof(KeyEntry));
-                        sort(index_[key_par_id], index_[key_par_id] + key_bucket_size_[key_par_id],
+                        assert(ret == mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry));
+                        sort(index_[key_par_id], index_[key_par_id] + mmap_key_meta_cnt_[key_par_id],
                              [](KeyEntry l, KeyEntry r) {
                                  if (l.key_ == r.key_) {
                                      return l.value_offset_ > r.value_offset_;
