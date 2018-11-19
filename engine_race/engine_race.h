@@ -61,8 +61,13 @@ namespace polar_race {
 
         Barrier barrier_;
         Barrier read_barrier_;
+        Barrier range_barrier_;
 
-        volatile bool * is_sorted_;
+        volatile bool *is_sorted_;
+        volatile bool is_range_init_;
+
+        string dir_;
+        vector<pair<PolarString*, PolarString*>> polar_str_pairs_;
     public:
         static RetCode Open(const std::string &name, Engine **eptr);
 
@@ -86,6 +91,8 @@ namespace polar_race {
 
     private:
         void FlushTmpFiles(string dir);
+
+        void LazyLoadIndex(uint32_t key_par_id);
 
         void BuildIndex(string dir);
     };

@@ -23,7 +23,7 @@
 #include "stat.h"
 
 //#define STAT
-#define POSTPONE_READ
+//#define POSTPONE_READ
 
 namespace polar_race {
     using namespace std::chrono;
@@ -60,10 +60,29 @@ namespace polar_race {
         return static_cast<uint32_t >((key >> (NUM_THREADS - VAL_BUCKET_DIGITS)) & 0xffffffu);
     }
 
+    inline uint64_t polar_str_to_big_endian_uint64(const PolarString &polar_str) {
+        static thread_local bool is_first = true;
+
+        if (polar_str.size() == 8) {
+            return bswap_64(TO_UINT64(polar_str.data()));
+        } else {
+            if (is_first) {
+                log_info("polar str size: %d", polar_str.size());
+                is_first = false;
+            }
+            char tmp[8];
+            memset(tmp, 0, 8);
+            memcpy(tmp, polar_str.data(), min<size_t>(8, strlen(polar_str.data())));
+            uint64_t tmp_int = bswap_64(TO_UINT64(tmp));
+            return polar_str.size() < 8 ? tmp_int : tmp_int + 1;
+        }
+    }
+
     using namespace std;
 
     atomic_int write_num_threads(-1);
     atomic_int read_num_threads_count(-1);
+    atomic_int range_num_threads_count(-1);
 
     const string value_meta_file_name = "polar.keymeta";
     const string key_meta_file_name = "polar.valmeta";
@@ -97,7 +116,8 @@ namespace polar_race {
             mmap_key_aligned_buffer_(nullptr), key_mtx_(nullptr), val_mtx_(nullptr),
             write_value_file_dp_(nullptr), write_value_buffer_file_dp_(nullptr),
             mmap_value_aligned_buffer_(nullptr), aligned_read_buffer_(nullptr),
-            barrier_(WRITE_BARRIER_NUM), read_barrier_(READ_BARRIER_NUM), is_sorted_(nullptr) {
+            barrier_(WRITE_BARRIER_NUM), read_barrier_(READ_BARRIER_NUM), range_barrier_(NUM_THREADS),
+            is_sorted_(nullptr), is_range_init_(false), polar_str_pairs_(NUM_THREADS) {
         clock_end = high_resolution_clock::now();
         log_info("Start init DB, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
@@ -216,6 +236,7 @@ namespace polar_race {
                 aligned_read_buffer_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, VALUE_SIZE);
             }
             BuildIndex(dir);
+            dir_ = dir;
             log_info("Reload the database successfully.");
         }
         clock_end = high_resolution_clock::now();
@@ -289,6 +310,16 @@ namespace polar_race {
         }
         delete[] write_value_file_dp_;
         delete[] mmap_value_aligned_buffer_;
+
+        // Range: Thread.
+        if (is_range_init_) {
+            for (auto &kv_pair : polar_str_pairs_) {
+                delete[] kv_pair.first->data();
+                delete kv_pair.first;
+                delete[] kv_pair.second->data();
+                delete kv_pair.second;
+            }
+        }
 
 //        sleep(20);
         clock_end = high_resolution_clock::now();
@@ -373,26 +404,7 @@ namespace polar_race {
         auto key_par_id = get_key_par_id(big_endian_key_uint);
 
 #ifdef POSTPONE_READ
-        if (!is_sorted_[key_par_id] && mmap_key_meta_cnt_[key_par_id] > 0) {
-            unique_lock<mutex> lock(key_mtx_[key_par_id]);
-            if (!is_sorted_[key_par_id]) {
-                auto ret = pread(write_key_file_dp_[key_par_id], index_[key_par_id],
-                                 mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry), 0);
-                if (ret != mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry)) {
-                    log_info("ret: %d, err: %s", ret, strerror(errno));
-                }
-//                assert(ret == mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry));
-                sort(index_[key_par_id], index_[key_par_id] + mmap_key_meta_cnt_[key_par_id],
-                     [](KeyEntry l, KeyEntry r) {
-                         if (l.key_ == r.key_) {
-                             return l.value_offset_ > r.value_offset_;
-                         } else {
-                             return l.key_ < r.key_;
-                         }
-                     });
-                is_sorted_[key_par_id] = true;
-            }
-        }
+        LazyLoadIndex(key_par_id);
 #endif
         auto it = index_[key_par_id] + branchfree_search(index_[key_par_id], mmap_key_meta_cnt_[key_par_id], tmp);
         local_block_offset++;
@@ -428,6 +440,84 @@ namespace polar_race {
 //   Range("", "", visitor)
     RetCode EngineRace::Range(const PolarString &lower, const PolarString &upper,
                               Visitor &visitor) {
+        static thread_local int64_t tid = (++range_num_threads_count) % NUM_THREADS;
+        static thread_local uint32_t local_block_offset = 0;
+        static thread_local PolarString *polar_key_ptr_;
+        static thread_local PolarString *polar_val_ptr_;
+        // Thread Local Key/Value Init
+        if (local_block_offset == 0) {
+            char *key_chars = new char[sizeof(uint64_t)];
+            char *val_chars = new char[VALUE_SIZE];
+            polar_str_pairs_[tid].first = new PolarString(key_chars, sizeof(uint64_t));
+            polar_key_ptr_ = polar_str_pairs_[tid].first;
+            polar_str_pairs_[tid].second = new PolarString(val_chars, VALUE_SIZE);
+            polar_val_ptr_ = polar_str_pairs_[tid].second;
+        }
+        if (!is_range_init_) {
+            log_info("init range in tid %d: ", tid);
+            if (tid == 0) {
+                const string value_file_path = dir_ + "/" + value_file_name;
+                // Value Files. (using PageCache)
+                for (int i = 0; i < VAL_BUCKET_NUM; i++) {
+                    string temp_value = value_file_path + to_string(i);
+                    close(write_value_file_dp_[i]);
+                    write_value_file_dp_[i] = open(temp_value.c_str(), O_RDONLY, FILE_PRIVILEGE);
+                }
+                is_range_init_ = true;
+            }
+            range_barrier_.Wait();
+        }
+
+        uint64_t key_lower_uint64 = polar_str_to_big_endian_uint64(lower);
+        uint64_t key_upper_uint64 = polar_str_to_big_endian_uint64(upper);
+
+
+        // Determine Key Partitions.
+        uint32_t lower_key_par_id = get_key_par_id(key_lower_uint64);
+        KeyEntry tmp{};
+        tmp.key_ = key_lower_uint64;
+        uint32_t first_bucket_beg =
+                branchfree_search(index_[lower_key_par_id], mmap_key_meta_cnt_[lower_key_par_id], tmp);
+
+        uint32_t upper_key_par_id = get_key_par_id(key_upper_uint64);
+        tmp.key_ = key_upper_uint64;
+        uint32_t last_bucket_end =
+                branchfree_search(index_[upper_key_par_id], mmap_key_meta_cnt_[upper_key_par_id], tmp) - 1;
+
+
+        if (local_block_offset < 10) {
+            log_info("tid: %d, [%zu, %zu), sizes: %zu, %zu", tid, key_lower_uint64, key_upper_uint64, lower.size(),
+                     upper.size());
+            log_info("tid: %d, [(%zu, %zu) to (%zu, %zu))", tid, lower_key_par_id, first_bucket_beg,
+                     upper_key_par_id, last_bucket_end);
+        }
+
+        // 2-level Loop.
+        for (uint32_t key_par_id = lower_key_par_id; key_par_id < upper_key_par_id + 1; key_par_id++) {
+            uint32_t in_par_id_beg = (key_par_id == lower_key_par_id ? first_bucket_beg : 0);
+            uint32_t in_par_id_end = (key_par_id == upper_key_par_id ? last_bucket_end
+                                                                     : mmap_key_meta_cnt_[key_par_id]);
+            for (uint32_t in_par_id = in_par_id_beg; in_par_id < in_par_id_end; in_par_id++) {
+                uint64_t big_endian_key = index_[in_par_id]->key_;
+                // Key. (to little endian first)
+                assert(polar_key_ptr_->data() != nullptr);
+                (*(uint64_t *) polar_key_ptr_->data()) = bswap_64(big_endian_key);
+
+                // Value.
+                uint64_t val_par_id = get_val_par_id(big_endian_key);
+                uint64_t val_id = index_[in_par_id]->value_offset_;
+                pread(write_value_file_dp_[val_par_id], (char *) polar_val_ptr_->data(), VALUE_SIZE,
+                      val_id * VALUE_SIZE);
+
+                // Visit Key/Value.
+                visitor.Visit(*polar_key_ptr_, *polar_val_ptr_);
+
+                local_block_offset++;
+                if (local_block_offset % 10000 == 0) {
+                    range_barrier_.Wait();
+                }
+            }
+        }
         return kSucc;
     }
 
@@ -456,6 +546,29 @@ namespace polar_race {
                 auto tmp_fd = open(temp_key.c_str(), O_RDWR, FILE_PRIVILEGE);
                 pwrite(tmp_fd, mmap_key_aligned_buffer_[i], write_length, write_offset);
                 close(tmp_fd);
+            }
+        }
+    }
+
+    void EngineRace::LazyLoadIndex(uint32_t key_par_id) {
+        if (!is_sorted_[key_par_id] && mmap_key_meta_cnt_[key_par_id] > 0) {
+            unique_lock<mutex> lock(key_mtx_[key_par_id]);
+            if (!is_sorted_[key_par_id]) {
+                auto ret = pread(write_key_file_dp_[key_par_id], index_[key_par_id],
+                                 mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry), 0);
+                if (ret != mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry)) {
+                    log_info("ret: %d, err: %s", ret, strerror(errno));
+                }
+//                assert(ret == mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry));
+                sort(index_[key_par_id], index_[key_par_id] + mmap_key_meta_cnt_[key_par_id],
+                     [](KeyEntry l, KeyEntry r) {
+                         if (l.key_ == r.key_) {
+                             return l.value_offset_ > r.value_offset_;
+                         } else {
+                             return l.key_ < r.key_;
+                         }
+                     });
+                is_sorted_[key_par_id] = true;
             }
         }
     }
