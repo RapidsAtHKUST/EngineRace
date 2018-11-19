@@ -1,3 +1,5 @@
+#include <utility>
+
 // Copyright [2018] Alibaba Cloud All rights reserved
 #include "engine_race.h"
 
@@ -21,6 +23,7 @@
 #include "stat.h"
 
 //#define STAT
+#define POSTPONE_READ
 
 namespace polar_race {
     using namespace std::chrono;
@@ -369,6 +372,7 @@ namespace polar_race {
         tmp.key_ = big_endian_key_uint;
         auto key_par_id = get_key_par_id(big_endian_key_uint);
 
+#ifdef POSTPONE_READ
         if (!is_sorted_[key_par_id] && mmap_key_meta_cnt_[key_par_id] > 0) {
             unique_lock<mutex> lock(key_mtx_[key_par_id]);
             if (!is_sorted_[key_par_id]) {
@@ -389,7 +393,7 @@ namespace polar_race {
                 is_sorted_[key_par_id] = true;
             }
         }
-
+#endif
         auto it = index_[key_par_id] + branchfree_search(index_[key_par_id], mmap_key_meta_cnt_[key_par_id], tmp);
         local_block_offset++;
 
@@ -427,17 +431,7 @@ namespace polar_race {
         return kSucc;
     }
 
-    void EngineRace::BuildIndex(string dir) {
-        log_info("Begin BI, time: %.3lf s, ts: %.3lf s",
-                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
-                 std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
-        // Key Cnt, Index Allocation.
-        is_sorted_ = new bool[KEY_BUCKET_NUM];
-        memset((void *) is_sorted_, 0, KEY_BUCKET_NUM);
-        index_ = vector<KeyEntry *>(KEY_BUCKET_NUM, nullptr);
-        for (int key_par_id = 0; key_par_id < KEY_BUCKET_NUM; key_par_id++) {
-            index_[key_par_id] = static_cast<KeyEntry *>(malloc(mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry)));
-        }
+    void EngineRace::FlushTmpFiles(string dir) {
         // Flush Values.
         for (int i = 0; i < VAL_BUCKET_NUM; i++) {
             const string value_file_path = dir + "/" + value_file_name;
@@ -464,36 +458,56 @@ namespace polar_race {
                 close(tmp_fd);
             }
         }
+    }
+
+    void EngineRace::BuildIndex(string dir) {
+        log_info("Begin BI, time: %.3lf s, ts: %.3lf s",
+                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
+                 std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
+        // Key Cnt, Index Allocation.
+        is_sorted_ = new bool[KEY_BUCKET_NUM];
+        memset((void *) is_sorted_, 0, KEY_BUCKET_NUM);
+        index_ = vector<KeyEntry *>(KEY_BUCKET_NUM, nullptr);
+        for (int key_par_id = 0; key_par_id < KEY_BUCKET_NUM; key_par_id++) {
+            index_[key_par_id] = static_cast<KeyEntry *>(malloc(mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry)));
+        }
+
+        // Flush tmp Files
+        FlushTmpFiles(std::move(dir));
+
+#ifndef POSTPONE_READ
         // Read each key file.
-//        vector<thread> workers(NUM_THREADS);
-//        for (uint32_t tid = 0; tid < NUM_THREADS; ++tid) {
-//            workers[tid] = move(thread([tid, this]() {
-//                for (uint32_t key_par_id = tid; key_par_id < KEY_BUCKET_NUM; key_par_id += NUM_THREADS) {
-//                    if (mmap_key_meta_cnt_[key_par_id] > 0) {
-//                        auto ret = pread(write_key_file_dp_[key_par_id], index_[key_par_id],
-//                                         mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry), 0);
-//                        if (ret != mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry)) {
-//                            log_info("ret: %d, err: %s", ret, strerror(errno));
-//                        }
-//                        assert(ret == mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry));
-////                        sort(index_[key_par_id], index_[key_par_id] + mmap_key_meta_cnt_[key_par_id],
-////                             [](KeyEntry l, KeyEntry r) {
-////                                 if (l.key_ == r.key_) {
-////                                     return l.value_offset_ > r.value_offset_;
-////                                 } else {
-////                                     return l.key_ < r.key_;
-////                                 }
-////                             });
-//                    }
-//                }
-//            }));
-//        }
-//        for (uint32_t i = 0; i < NUM_THREADS; ++i) {
-//            workers[i].join();
-//        }
+        vector<thread> workers(NUM_THREADS);
+        for (uint32_t tid = 0; tid < NUM_THREADS; ++tid) {
+            workers[tid] = move(thread([tid, this]() {
+                for (uint32_t key_par_id = tid; key_par_id < KEY_BUCKET_NUM; key_par_id += NUM_THREADS) {
+                    if (mmap_key_meta_cnt_[key_par_id] > 0) {
+                        auto ret = pread(write_key_file_dp_[key_par_id], index_[key_par_id],
+                                         mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry), 0);
+                        if (ret != mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry)) {
+                            log_info("ret: %d, err: %s", ret, strerror(errno));
+                        }
+                        assert(ret == mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry));
+                        sort(index_[key_par_id], index_[key_par_id] + mmap_key_meta_cnt_[key_par_id],
+                             [](KeyEntry l, KeyEntry r) {
+                                 if (l.key_ == r.key_) {
+                                     return l.value_offset_ > r.value_offset_;
+                                 } else {
+                                     return l.key_ < r.key_;
+                                 }
+                             });
+                    }
+                }
+            }));
+        }
+        for (uint32_t i = 0; i < NUM_THREADS; ++i) {
+            workers[i].join();
+        }
+#endif
         clock_end = high_resolution_clock::now();
         log_info("Finish BI, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
     }
+
 }  // namespace polar_race

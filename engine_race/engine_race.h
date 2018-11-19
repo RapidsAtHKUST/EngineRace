@@ -85,6 +85,8 @@ namespace polar_race {
                       Visitor &visitor) override;
 
     private:
+        void FlushTmpFiles(string dir);
+
         void BuildIndex(string dir);
     };
 
