@@ -52,7 +52,7 @@ public:
 //        log_debug("Visit %s --> %s\n", key.data(), value.data());
 
         // Verify the order
-//        assert(prev_.compare(value) <= 0);
+        assert(prev_.compare(value) <= 0);
         memcpy(key_str_, value.data(), sizeof(uint64_t));
 //        log_info("order correct");
         uint64_t verify_int = static_cast<uint64_t>(-1);
