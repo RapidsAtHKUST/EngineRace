@@ -454,6 +454,7 @@ namespace polar_race {
             polar_val_ptr_ = polar_str_pairs_[tid].second;
         }
         if (!is_range_init_) {
+            range_barrier_.Wait();
             log_info("init range in tid %d: ", tid);
             if (tid == 0) {
                 const string value_file_path = dir_ + "/" + value_file_name;
@@ -494,11 +495,14 @@ namespace polar_race {
 
         // 2-level Loop.
         for (uint32_t key_par_id = lower_key_par_id; key_par_id < upper_key_par_id + 1; key_par_id++) {
+
             uint32_t in_par_id_beg = (key_par_id == lower_key_par_id ? first_bucket_beg : 0);
             uint32_t in_par_id_end = (key_par_id == upper_key_par_id ? last_bucket_end
                                                                      : mmap_key_meta_cnt_[key_par_id]);
             for (uint32_t in_par_id = in_par_id_beg; in_par_id < in_par_id_end; in_par_id++) {
                 uint64_t big_endian_key = index_[in_par_id]->key_;
+//                log_info("tid: %d, process %zu", tid, big_endian_key);
+
                 // Key. (to little endian first)
                 assert(polar_key_ptr_->data() != nullptr);
                 (*(uint64_t *) polar_key_ptr_->data()) = bswap_64(big_endian_key);
@@ -514,6 +518,9 @@ namespace polar_race {
 
                 local_block_offset++;
                 if (local_block_offset % 10000 == 0) {
+                    if (local_block_offset % 1000000 == 0) {
+                        log_info("wait tid: %d, local off: %d", tid, local_block_offset);
+                    }
                     range_barrier_.Wait();
                 }
             }
