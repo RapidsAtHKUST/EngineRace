@@ -39,7 +39,7 @@ class DumpVisitor : public Visitor {
 public:
     DumpVisitor(int *kcnt, uint64_t key_id, uint64_t seed, PolarString prev)
             : key_id_(key_id), key_str_(new char[sizeof(uint64_t)]), prev_key_(key_str_, sizeof(uint64_t)),
-              seed_(seed) {
+              seed_(seed), is_first(true) {
         // Copy
         memcpy(key_str_, prev.data(), sizeof(uint64_t));
     }
@@ -49,18 +49,26 @@ public:
     }
 
     void Visit(const PolarString &key, const PolarString &value) {
-        static thread_local bool is_first = true;
 //        log_debug("Visit %s --> %s\n", key.data(), value.data());
 
         // Verify the order
         if (prev_key_.compare(key) > 0) {
             log_info("err order: %zu, %zu, %zu, %zu", TO_UINT64(prev_key_.data()), TO_UINT64(key.data()),
                      bswap_64(TO_UINT64(prev_key_.data())), bswap_64(TO_UINT64(key.data())));
+        } else if (prev_key_.compare(key) == 0 && !is_first) {
+            log_info("err order in later: %zu, %zu, %zu, %zu", TO_UINT64(prev_key_.data()), TO_UINT64(key.data()),
+                     bswap_64(TO_UINT64(prev_key_.data())), bswap_64(TO_UINT64(key.data())));
+        }
+        if (!is_first) {
+            assert(prev_key_.compare(key) < 0);
         }
         assert(prev_key_.compare(key) <= 0);
+        if (is_first) {
+            is_first = false;
+        }
         memcpy(key_str_, key.data(), sizeof(uint64_t));
-//        log_info("order correct");
-        uint64_t verify_int = static_cast<uint64_t>(-1);
+
+        auto verify_int = static_cast<uint64_t>(-1);
         for (uint64_t j = 0; j < 4096; j += 8) {
             // Verify the Key-Value Correctness.
             key_id_ = TO_UINT64(key.data());
@@ -78,6 +86,7 @@ public:
     }
 
 private:
+    bool is_first;
     uint64_t key_id_;
     char *key_str_;
     PolarString prev_key_;
@@ -149,8 +158,8 @@ int main() {
         Engine *engine = nullptr;
         Engine::Open(kEnginePath, &engine);
 
-//#define RANGE_THREADS (5)
-#define RANGE_THREADS (NUM_THREADS)
+#define RANGE_THREADS (1)
+//#define RANGE_THREADS (NUM_THREADS)
 #pragma omp parallel num_threads(RANGE_THREADS)
         {
             char tmp_chars_lower[8];
