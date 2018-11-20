@@ -547,11 +547,14 @@ namespace polar_race {
             uint32_t in_par_id_beg = 0;
             uint32_t in_par_id_end = mmap_key_meta_cnt_[key_par_id];
             uint64_t prev_key = 0;
+            uint32_t duplicates_num = 0;
             for (uint32_t in_par_id = in_par_id_beg; in_par_id < in_par_id_end; in_par_id++) {
                 // Skip the equalities.
                 uint64_t big_endian_key = index_[key_par_id][in_par_id].key_;
                 if (in_par_id != in_par_id_beg) {
-                    if (big_endian_key == prev_key) {
+                    if (big_endian_key == prev_key && tid == 0 && duplicates_num < 10) {
+                        log_info("duplicates...%d", duplicates_num);
+                        duplicates_num++;
                         continue;
                     }
                 }
