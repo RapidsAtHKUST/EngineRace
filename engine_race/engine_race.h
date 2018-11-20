@@ -61,15 +61,18 @@ namespace polar_race {
 
         Barrier barrier_;
         Barrier read_barrier_;
-        Barrier range_barrier_;
+        Barrier* range_barrier_ptr_;
 
         volatile bool *is_sorted_;
         volatile bool is_range_init_;
         string dir_;
         vector<pair<PolarString *, PolarString *>> polar_str_pairs_;
 
-        char* value_shared_buffer_;
-        volatile bool * is_loaded_;
+        mutex range_mtx_;
+        condition_variable range_init_cond_;
+        char *value_shared_buffer_;
+        volatile bool *is_loaded_;
+        bool* is_buffer_available_;
 
         double total_time_;
     public:

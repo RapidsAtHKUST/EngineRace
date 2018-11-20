@@ -22,9 +22,7 @@
 #include "log.h"
 #include "stat.h"
 
-//#define GENERAL_CASES
 //#define STAT
-//#define POSTPONE_READ
 
 namespace polar_race {
     using namespace std::chrono;
@@ -117,9 +115,9 @@ namespace polar_race {
             mmap_key_aligned_buffer_(nullptr), key_mtx_(nullptr), val_mtx_(nullptr),
             write_value_file_dp_(nullptr), write_value_buffer_file_dp_(nullptr),
             mmap_value_aligned_buffer_(nullptr), aligned_read_buffer_(nullptr),
-            barrier_(WRITE_BARRIER_NUM), read_barrier_(READ_BARRIER_NUM), range_barrier_(NUM_THREADS),
+            barrier_(WRITE_BARRIER_NUM), read_barrier_(READ_BARRIER_NUM), range_barrier_ptr_(nullptr),
             is_sorted_(nullptr), is_range_init_(false), polar_str_pairs_(NUM_THREADS), is_loaded_(nullptr),
-            value_shared_buffer_(nullptr), total_time_(0) {
+            value_shared_buffer_(nullptr), total_time_(0), is_buffer_available_(nullptr) {
         clock_end = high_resolution_clock::now();
         log_info("Start init DB, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
@@ -316,14 +314,17 @@ namespace polar_race {
         // Range: Thread.
         if (is_range_init_) {
             for (auto &kv_pair : polar_str_pairs_) {
-                delete[] kv_pair.first->data();
+                if (kv_pair.first != nullptr)
+                    delete[] kv_pair.first->data();
                 delete kv_pair.first;
-                delete[] kv_pair.second->data();
+                if (kv_pair.second != nullptr)
+                    delete[] kv_pair.second->data();
                 delete kv_pair.second;
             }
         }
-
+        delete range_barrier_ptr_;
         free(value_shared_buffer_);
+        free(is_buffer_available_);
 
         if (total_time_ != 0) {
             log_info("Total Range Time: %.9lf s", total_time_);
@@ -337,7 +338,7 @@ namespace polar_race {
 
 // 3. Write a key-value pair into engine
     RetCode EngineRace::Write(const PolarString &key, const PolarString &value) {
-        static thread_local uint32_t tid = (uint32_t) (++write_num_threads) % NUM_THREADS;
+        static thread_local uint32_t tid = (uint32_t)(++write_num_threads) % NUM_THREADS;
         static thread_local uint32_t local_block_offset = 0;
         uint64_t key_int_big_endian = bswap_64(TO_UINT64(key.data()));
         uint64_t key_par_id = get_key_par_id(key_int_big_endian);
@@ -427,7 +428,7 @@ namespace polar_race {
         }
 
         uint64_t val_par_id = get_val_par_id(big_endian_key_uint);
-        pread(write_value_file_dp_[val_par_id], value_buffer, VALUE_SIZE, (uint64_t) (it->value_offset_) * VALUE_SIZE);
+        pread(write_value_file_dp_[val_par_id], value_buffer, VALUE_SIZE, (uint64_t)(it->value_offset_) * VALUE_SIZE);
 
         value->assign(value_buffer, VALUE_SIZE);
         return kSucc;
@@ -448,12 +449,10 @@ namespace polar_race {
                               Visitor &visitor) {
         static thread_local int64_t tid = (++range_num_threads_count) % NUM_THREADS;
         static thread_local uint32_t local_block_offset = 0;
-#ifdef GENERAL_CASES
         static thread_local uint32_t invocation_num = 0;
-#endif
         static thread_local PolarString *polar_key_ptr_;
         static thread_local PolarString *polar_val_ptr_;
-        // Thread Local Key/Value Init
+        // Thread Local Key/Value Init.
         if (local_block_offset == 0) {
             char *key_chars = new char[sizeof(uint64_t)];
             char *val_chars = new char[VALUE_SIZE];
@@ -462,89 +461,102 @@ namespace polar_race {
             polar_str_pairs_[tid].second = new PolarString(val_chars, VALUE_SIZE);
             polar_val_ptr_ = polar_str_pairs_[tid].second;
         }
+        // Initialization of Value Files.
         if (!is_range_init_) {
-            range_barrier_.Wait();
-            log_info("init range in tid %d: ", tid);
+            unique_lock<mutex> lock(range_mtx_);
+            log_info("Init Range in tid %d: range invocation num: %d", tid, ++invocation_num);
+            uint64_t key_lower_uint64 = polar_str_to_big_endian_uint64(lower);
+            uint64_t key_upper_uint64 = polar_str_to_big_endian_uint64(upper);
+            if (invocation_num < 10) {
+                invocation_num++;
+                log_info("tid: %d, [%zu, %zu), sizes: %zu, %zu", tid, key_lower_uint64, key_upper_uint64, lower.size(),
+                         upper.size());
+            }
             if (tid == 0) {
+                is_buffer_available_ = (bool *) malloc(VAL_BUCKET_NUM);
+                memset(is_buffer_available_, 0, VAL_BUCKET_NUM);
+
                 uint64_t VAL_SHARED_BUFFER_SIZE = 0;
                 for (int i = 0; i < VAL_BUCKET_NUM; i++) {
                     VAL_SHARED_BUFFER_SIZE = max<uint64_t>(VAL_SHARED_BUFFER_SIZE, mmap_val_meta_cnt_[i]);
                 }
                 VAL_SHARED_BUFFER_SIZE *= VALUE_SIZE;
-                log_info("Max size: %zu", VAL_SHARED_BUFFER_SIZE);
+                log_info("Max Buffer Size: %zu", VAL_SHARED_BUFFER_SIZE);
                 value_shared_buffer_ = (char *) memalign(FILESYSTEM_BLOCK_SIZE, VAL_SHARED_BUFFER_SIZE);
 
                 const string value_file_path = dir_ + "/" + value_file_name;
-                // Value Files. (using PageCache)
+                // Value Files.
                 for (int i = 0; i < VAL_BUCKET_NUM; i++) {
                     string temp_value = value_file_path + to_string(i);
                     close(write_value_file_dp_[i]);
                     write_value_file_dp_[i] = open(temp_value.c_str(), O_RDONLY | O_DIRECT, FILE_PRIVILEGE);
                 }
-                is_range_init_ = true;
-            }
-            range_barrier_.Wait();
-        }
 
-#ifdef GENERAL_CASES
-        uint64_t key_lower_uint64 = polar_str_to_big_endian_uint64(lower);
-        uint64_t key_upper_uint64 = polar_str_to_big_endian_uint64(upper);
-        if (key_upper_uint64 == 0) {
-            key_upper_uint64 = UINT64_MAX;
-        }
-
-        // Determine Key Partitions.
-        uint32_t lower_key_par_id = get_key_par_id(key_lower_uint64);
-        KeyEntry tmp{};
-        tmp.key_ = key_lower_uint64;
-        uint32_t first_bucket_beg =
-                branchfree_search(index_[lower_key_par_id], mmap_key_meta_cnt_[lower_key_par_id], tmp);
-
-        uint32_t upper_key_par_id = get_key_par_id(key_upper_uint64);
-        tmp.key_ = key_upper_uint64;
-        uint32_t last_bucket_end =
-                branchfree_search(index_[upper_key_par_id], mmap_key_meta_cnt_[upper_key_par_id], tmp);
-
-
-        if (invocation_num < 10) {
-            invocation_num++;
-            log_info("tid: %d, [%zu, %zu), sizes: %zu, %zu", tid, key_lower_uint64, key_upper_uint64, lower.size(),
-                     upper.size());
-            log_info("tid: %d, [(%zu, %zu) to (%zu, %zu))", tid, lower_key_par_id, first_bucket_beg,
-                     upper_key_par_id, last_bucket_end);
-        }
-#else
-        // 2-level Loop.
-        uint32_t lower_key_par_id = 0;
-        uint32_t upper_key_par_id = KEY_BUCKET_NUM - 1;
-#endif
-        for (uint32_t key_par_id = lower_key_par_id; key_par_id < upper_key_par_id + 1; key_par_id++) {
-            range_barrier_.Wait();
-            if (tid == 0) {
                 auto range_clock_beg = high_resolution_clock::now();
-                auto ret = pread(write_value_file_dp_[key_par_id], value_shared_buffer_,
-                                 VALUE_SIZE * mmap_val_meta_cnt_[key_par_id], 0);
+                auto ret = pread(write_value_file_dp_[0], value_shared_buffer_,
+                                 VALUE_SIZE * mmap_val_meta_cnt_[0], 0);
                 if (ret < 0) {
                     log_info("in range read err: %s", strerror(errno));
                 }
+                is_buffer_available_[0] = true;
                 auto range_clock_end = high_resolution_clock::now();
                 double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                                       static_cast<double>(1000000000);
-                log_info("elpased read time in bucket %d, %.9lf s", key_par_id, elapsed_time);
+                log_info("elpased read time in bucket %d, %.9lf s", 0, elapsed_time);
                 total_time_ += elapsed_time;
-            }
-            range_barrier_.Wait();
 
-#ifdef GENERAL_CASES
-            uint32_t in_par_id_beg = (key_par_id == lower_key_par_id ? first_bucket_beg : 0);
-            uint32_t in_par_id_end = (key_par_id == upper_key_par_id ? last_bucket_end
-                                                                     : mmap_key_meta_cnt_[key_par_id]);
-#else
+                auto total_num_threads = range_num_threads_count + 1;
+                range_barrier_ptr_ = new Barrier(static_cast<size_t>(total_num_threads));
+                log_info("Total number of range threads: %zu", total_num_threads);
+
+                is_range_init_ = true;
+                range_init_cond_.notify_all();
+            } else {
+                if (!is_range_init_) {
+                    range_init_cond_.wait(lock, [this]() { return is_range_init_; });
+                }
+            }
+        }
+        // later rounds
+        if (tid == 0 && is_buffer_available_ != nullptr) {
+            is_buffer_available_[0] = false;
+        }
+
+        // 2-level Loop.
+        uint32_t lower_key_par_id = 0;
+        uint32_t upper_key_par_id = KEY_BUCKET_NUM - 1;
+        for (uint32_t key_par_id = lower_key_par_id; key_par_id < upper_key_par_id + 1; key_par_id++) {
+            range_barrier_ptr_->Wait();
+            if (tid == 0) {
+                if (!is_buffer_available_[key_par_id]) {
+                    auto range_clock_beg = high_resolution_clock::now();
+                    auto ret = pread(write_value_file_dp_[key_par_id], value_shared_buffer_,
+                                     VALUE_SIZE * mmap_val_meta_cnt_[key_par_id], 0);
+                    if (ret < 0) {
+                        log_info("in range read err: %s", strerror(errno));
+                    }
+                    auto range_clock_end = high_resolution_clock::now();
+                    double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
+                                          static_cast<double>(1000000000);
+                    log_info("elpased read time in bucket %d, %.9lf s", key_par_id, elapsed_time);
+                    total_time_ += elapsed_time;
+                }
+            }
+            range_barrier_ptr_->Wait();
+
             uint32_t in_par_id_beg = 0;
             uint32_t in_par_id_end = mmap_key_meta_cnt_[key_par_id];
-#endif
+            uint64_t prev_key = 0;
             for (uint32_t in_par_id = in_par_id_beg; in_par_id < in_par_id_end; in_par_id++) {
+                // Skip the equalities.
                 uint64_t big_endian_key = index_[key_par_id][in_par_id].key_;
+                if (in_par_id != in_par_id_beg) {
+                    if (big_endian_key == prev_key) {
+                        continue;
+                    }
+                }
+                prev_key = big_endian_key;
+
                 // Key (to little endian first).
                 (*(uint64_t *) polar_key_ptr_->data()) = bswap_64(big_endian_key);
 
@@ -555,20 +567,18 @@ namespace polar_race {
                 // Visit Key/Value.
                 visitor.Visit(*polar_key_ptr_, *polar_val_ptr_);
 
-                // 40MB sync for L3 cache locality.
+                // L3 Cache Locality (40MB).
                 local_block_offset++;
                 if (local_block_offset % 10000 == 0) {
                     if (local_block_offset % 1000000 == 0 && tid == 0) {
                         log_info("wait tid: %d, local off: %d", tid, local_block_offset);
                     }
-                    range_barrier_.Wait();
+                    range_barrier_ptr_->Wait();
                 }
             }
         }
-        range_barrier_.Wait();
-        if (tid == 0) {
-            log_info("one round ok...");
-        }
+        if (tid == 0) { log_info("one round ok..."); }
+        range_barrier_ptr_->Wait();
         return kSucc;
     }
 

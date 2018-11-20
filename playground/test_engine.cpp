@@ -17,7 +17,7 @@
 
 #define TO_UINT64(buffer) (*(uint64_t*)(buffer))
 
-//#define ENABLE_READ
+#define ENABLE_READ
 
 static const char kEnginePath[] = "test_engine";
 
@@ -148,7 +148,10 @@ int main() {
         // 3rd: sequential
         Engine *engine = nullptr;
         Engine::Open(kEnginePath, &engine);
-#pragma omp parallel num_threads(NUM_THREADS)
+
+//#define RANGE_THREADS (5)
+#define RANGE_THREADS (NUM_THREADS)
+#pragma omp parallel num_threads(RANGE_THREADS)
         {
             char tmp_chars_lower[8];
             uint64_t tmp_lower = 0;
