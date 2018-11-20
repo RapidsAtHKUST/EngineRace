@@ -89,7 +89,7 @@ int main() {
     uint64_t NUM_THREADS = 64;
     exec(("rm -r " + std::string(kEnginePath)).c_str());
 
-    uint64_t round_size = 2555 * NUM_THREADS;
+    uint64_t round_size = 255 * NUM_THREADS;
     uint64_t iter_num = 1;   // switch this to test different settings
 
     for (uint64_t iter = 0; iter < iter_num; iter++) {
@@ -162,6 +162,9 @@ int main() {
 
             DumpVisitor visitor(nullptr, 0, seed, lower);
             engine->Range(lower, upper, visitor);
+
+            DumpVisitor visitor2(nullptr, 0, seed, lower);
+            engine->Range(lower, upper, visitor2);
         }
         delete engine;
     }

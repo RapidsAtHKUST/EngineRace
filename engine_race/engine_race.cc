@@ -555,15 +555,19 @@ namespace polar_race {
                 // Visit Key/Value.
                 visitor.Visit(*polar_key_ptr_, *polar_val_ptr_);
 
-                // 4M sync for L3 cache locality.
+                // 40MB sync for L3 cache locality.
                 local_block_offset++;
-                if (local_block_offset % 1000 == 0) {
+                if (local_block_offset % 10000 == 0) {
                     if (local_block_offset % 1000000 == 0 && tid == 0) {
                         log_info("wait tid: %d, local off: %d", tid, local_block_offset);
                     }
                     range_barrier_.Wait();
                 }
             }
+        }
+        range_barrier_.Wait();
+        if (tid == 0) {
+            log_info("one round ok...");
         }
         return kSucc;
     }
