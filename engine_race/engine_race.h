@@ -24,8 +24,10 @@
 #define VAL_BUCKET_DIGITS (10)
 #define VAL_BUCKET_NUM (1 << VAL_BUCKET_DIGITS)
 
-#define KEY_BUCKET_DIGITS (8)
+#define KEY_BUCKET_DIGITS (VAL_BUCKET_DIGITS)      // must be the same for the range query
 #define KEY_BUCKET_NUM (1 << KEY_BUCKET_DIGITS)
+
+#define VAL_SHARED_BUFFER_SIZE (500 * 1024 * 1024)
 
 namespace polar_race {
     using namespace std;
@@ -65,9 +67,11 @@ namespace polar_race {
 
         volatile bool *is_sorted_;
         volatile bool is_range_init_;
-
         string dir_;
         vector<pair<PolarString *, PolarString *>> polar_str_pairs_;
+
+        char* value_shared_buffer_;
+        volatile bool * is_loaded_;
     public:
         static RetCode Open(const std::string &name, Engine **eptr);
 

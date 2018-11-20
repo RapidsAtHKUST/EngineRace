@@ -117,7 +117,8 @@ namespace polar_race {
             write_value_file_dp_(nullptr), write_value_buffer_file_dp_(nullptr),
             mmap_value_aligned_buffer_(nullptr), aligned_read_buffer_(nullptr),
             barrier_(WRITE_BARRIER_NUM), read_barrier_(READ_BARRIER_NUM), range_barrier_(NUM_THREADS),
-            is_sorted_(nullptr), is_range_init_(false), polar_str_pairs_(NUM_THREADS) {
+            is_sorted_(nullptr), is_range_init_(false), polar_str_pairs_(NUM_THREADS), is_loaded_(nullptr),
+            value_shared_buffer_(nullptr) {
         clock_end = high_resolution_clock::now();
         log_info("Start init DB, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
@@ -321,6 +322,7 @@ namespace polar_race {
             }
         }
 
+        free(value_shared_buffer_);
 //        sleep(20);
         clock_end = high_resolution_clock::now();
         log_info("Finish ~EngineRace(), time: %.3lf s, ts: %.3lf s",
@@ -457,12 +459,14 @@ namespace polar_race {
             range_barrier_.Wait();
             log_info("init range in tid %d: ", tid);
             if (tid == 0) {
+                value_shared_buffer_ = (char *) memalign(FILESYSTEM_BLOCK_SIZE, VAL_SHARED_BUFFER_SIZE);
+
                 const string value_file_path = dir_ + "/" + value_file_name;
                 // Value Files. (using PageCache)
                 for (int i = 0; i < VAL_BUCKET_NUM; i++) {
                     string temp_value = value_file_path + to_string(i);
                     close(write_value_file_dp_[i]);
-                    write_value_file_dp_[i] = open(temp_value.c_str(), O_RDONLY, FILE_PRIVILEGE);
+                    write_value_file_dp_[i] = open(temp_value.c_str(), O_RDONLY | O_DIRECT, FILE_PRIVILEGE);
                 }
                 is_range_init_ = true;
             }
@@ -499,6 +503,16 @@ namespace polar_race {
         uint32_t upper_key_par_id = KEY_BUCKET_NUM - 1;
 #endif
         for (uint32_t key_par_id = lower_key_par_id; key_par_id < upper_key_par_id + 1; key_par_id++) {
+            range_barrier_.Wait();
+            if (tid == 0) {
+                auto ret = pread(write_value_file_dp_[key_par_id], value_shared_buffer_,
+                                 VALUE_SIZE * mmap_val_meta_cnt_[key_par_id],
+                                 0);
+                if (ret < 0) {
+                    log_info("in range read err: %s", strerror(errno));
+                }
+            }
+            range_barrier_.Wait();
 
 #ifdef GENERAL_CASES
             uint32_t in_par_id_beg = (key_par_id == lower_key_par_id ? first_bucket_beg : 0);
@@ -514,22 +528,15 @@ namespace polar_race {
                 (*(uint64_t *) polar_key_ptr_->data()) = bswap_64(big_endian_key);
 
                 // Value.
-                uint64_t val_par_id = get_val_par_id(big_endian_key);
+//                uint64_t val_par_id = get_val_par_id(big_endian_key);
                 uint64_t val_id = index_[key_par_id][in_par_id].value_offset_;
-                pread(write_value_file_dp_[val_par_id], (char *) polar_val_ptr_->data(), VALUE_SIZE,
-                      val_id * VALUE_SIZE);
+
+                memcpy((char *) polar_val_ptr_->data(), value_shared_buffer_ + val_id * VALUE_SIZE, VALUE_SIZE);
 
                 // Visit Key/Value.
                 visitor.Visit(*polar_key_ptr_, *polar_val_ptr_);
-
-                local_block_offset++;
-                if (local_block_offset % 10000 == 0) {
-                    if (local_block_offset % 1000000 == 0) {
-                        log_info("wait tid: %d, local off: %d", tid, local_block_offset);
-                    }
-                    range_barrier_.Wait();
-                }
             }
+            range_barrier_.Wait();
         }
         return kSucc;
     }
@@ -597,6 +604,10 @@ namespace polar_race {
         for (int key_par_id = 0; key_par_id < KEY_BUCKET_NUM; key_par_id++) {
             index_[key_par_id] = static_cast<KeyEntry *>(malloc(mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry)));
         }
+
+        // Value Buckets Files
+        is_loaded_ = new bool[VAL_BUCKET_NUM];
+        memset((void *) is_loaded_, 0, VAL_BUCKET_NUM);
 
         // Flush tmp Files
         FlushTmpFiles(std::move(dir));
