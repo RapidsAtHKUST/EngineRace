@@ -163,6 +163,7 @@ int main() {
             DumpVisitor visitor(nullptr, 0, seed, lower);
             engine->Range(lower, upper, visitor);
         }
+        delete engine;
     }
     log_info("correct...");
     return 0;

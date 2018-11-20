@@ -27,8 +27,6 @@
 #define KEY_BUCKET_DIGITS (VAL_BUCKET_DIGITS)      // must be the same for the range query
 #define KEY_BUCKET_NUM (1 << KEY_BUCKET_DIGITS)
 
-#define VAL_SHARED_BUFFER_SIZE (500 * 1024 * 1024)
-
 namespace polar_race {
     using namespace std;
 
@@ -72,6 +70,8 @@ namespace polar_race {
 
         char* value_shared_buffer_;
         volatile bool * is_loaded_;
+
+        double total_time_;
     public:
         static RetCode Open(const std::string &name, Engine **eptr);
 

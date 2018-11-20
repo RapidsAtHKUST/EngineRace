@@ -118,7 +118,7 @@ namespace polar_race {
             mmap_value_aligned_buffer_(nullptr), aligned_read_buffer_(nullptr),
             barrier_(WRITE_BARRIER_NUM), read_barrier_(READ_BARRIER_NUM), range_barrier_(NUM_THREADS),
             is_sorted_(nullptr), is_range_init_(false), polar_str_pairs_(NUM_THREADS), is_loaded_(nullptr),
-            value_shared_buffer_(nullptr) {
+            value_shared_buffer_(nullptr), total_time_(0) {
         clock_end = high_resolution_clock::now();
         log_info("Start init DB, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
@@ -323,7 +323,10 @@ namespace polar_race {
         }
 
         free(value_shared_buffer_);
-//        sleep(20);
+
+        if (total_time_ != 0) {
+            log_info("Total Range Time: %.9lf s", total_time_);
+        }
         clock_end = high_resolution_clock::now();
         log_info("Finish ~EngineRace(), time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
@@ -459,6 +462,12 @@ namespace polar_race {
             range_barrier_.Wait();
             log_info("init range in tid %d: ", tid);
             if (tid == 0) {
+                uint64_t VAL_SHARED_BUFFER_SIZE = 0;
+                for (int i = 0; i < VAL_BUCKET_NUM; i++) {
+                    VAL_SHARED_BUFFER_SIZE = max<uint64_t>(VAL_SHARED_BUFFER_SIZE, mmap_val_meta_cnt_[i]);
+                }
+                VAL_SHARED_BUFFER_SIZE *= VALUE_SIZE;
+                log_info("Max size: %zu", VAL_SHARED_BUFFER_SIZE);
                 value_shared_buffer_ = (char *) memalign(FILESYSTEM_BLOCK_SIZE, VAL_SHARED_BUFFER_SIZE);
 
                 const string value_file_path = dir_ + "/" + value_file_name;
@@ -505,12 +514,17 @@ namespace polar_race {
         for (uint32_t key_par_id = lower_key_par_id; key_par_id < upper_key_par_id + 1; key_par_id++) {
             range_barrier_.Wait();
             if (tid == 0) {
+                auto range_clock_beg = high_resolution_clock::now();
                 auto ret = pread(write_value_file_dp_[key_par_id], value_shared_buffer_,
-                                 VALUE_SIZE * mmap_val_meta_cnt_[key_par_id],
-                                 0);
+                                 VALUE_SIZE * mmap_val_meta_cnt_[key_par_id], 0);
                 if (ret < 0) {
                     log_info("in range read err: %s", strerror(errno));
                 }
+                auto range_clock_end = high_resolution_clock::now();
+                double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
+                                      static_cast<double>(1000000000);
+                log_info("elpased read time in bucket %d, %.9lf s", key_par_id, elapsed_time);
+                total_time_ += elapsed_time;
             }
             range_barrier_.Wait();
 
