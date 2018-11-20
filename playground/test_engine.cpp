@@ -87,9 +87,9 @@ private:
 int main() {
     uint64_t seed = 10;
     uint64_t NUM_THREADS = 64;
-    exec("rm -r test_engine");
+    exec(("rm -r " + std::string(kEnginePath)).c_str());
 
-    uint64_t round_size = 255 * NUM_THREADS;
+    uint64_t round_size = 2555 * NUM_THREADS;
     uint64_t iter_num = 1;   // switch this to test different settings
 
     for (uint64_t iter = 0; iter < iter_num; iter++) {
@@ -156,7 +156,7 @@ int main() {
             PolarString lower(tmp_chars_lower, 8);
 
             char tmp_upper_chars[8];
-            uint64_t tmp_upper = round_size * iter_num;
+            uint64_t tmp_upper = 0;
             (*(uint64_t *) tmp_upper_chars) = tmp_upper;
             PolarString upper(tmp_upper_chars, 8);
 

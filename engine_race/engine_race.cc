@@ -22,6 +22,7 @@
 #include "log.h"
 #include "stat.h"
 
+//#define GENERAL_CASES
 //#define STAT
 //#define POSTPONE_READ
 
@@ -447,6 +448,9 @@ namespace polar_race {
                               Visitor &visitor) {
         static thread_local int64_t tid = (++range_num_threads_count) % NUM_THREADS;
         static thread_local uint32_t local_block_offset = 0;
+#ifdef GENERAL_CASES
+        static thread_local uint32_t invocation_num = 0;
+#endif
         static thread_local PolarString *polar_key_ptr_;
         static thread_local PolarString *polar_val_ptr_;
         // Thread Local Key/Value Init
@@ -485,7 +489,9 @@ namespace polar_race {
 #ifdef GENERAL_CASES
         uint64_t key_lower_uint64 = polar_str_to_big_endian_uint64(lower);
         uint64_t key_upper_uint64 = polar_str_to_big_endian_uint64(upper);
-
+        if (key_upper_uint64 == 0) {
+            key_upper_uint64 = UINT64_MAX;
+        }
 
         // Determine Key Partitions.
         uint32_t lower_key_par_id = get_key_par_id(key_lower_uint64);
@@ -497,10 +503,11 @@ namespace polar_race {
         uint32_t upper_key_par_id = get_key_par_id(key_upper_uint64);
         tmp.key_ = key_upper_uint64;
         uint32_t last_bucket_end =
-                branchfree_search(index_[upper_key_par_id], mmap_key_meta_cnt_[upper_key_par_id], tmp) - 1;
+                branchfree_search(index_[upper_key_par_id], mmap_key_meta_cnt_[upper_key_par_id], tmp);
 
 
-        if (local_block_offset < 10) {
+        if (invocation_num < 10) {
+            invocation_num++;
             log_info("tid: %d, [%zu, %zu), sizes: %zu, %zu", tid, key_lower_uint64, key_upper_uint64, lower.size(),
                      upper.size());
             log_info("tid: %d, [(%zu, %zu) to (%zu, %zu))", tid, lower_key_par_id, first_bucket_beg,
@@ -530,27 +537,33 @@ namespace polar_race {
 
 #ifdef GENERAL_CASES
             uint32_t in_par_id_beg = (key_par_id == lower_key_par_id ? first_bucket_beg : 0);
-            uint32_t in_par_id_end = (key_par_id == upper_key_par_id ? last_bucket_end : mmap_key_meta_cnt_[key_par_id]);
+            uint32_t in_par_id_end = (key_par_id == upper_key_par_id ? last_bucket_end
+                                                                     : mmap_key_meta_cnt_[key_par_id]);
 #else
             uint32_t in_par_id_beg = 0;
             uint32_t in_par_id_end = mmap_key_meta_cnt_[key_par_id];
 #endif
             for (uint32_t in_par_id = in_par_id_beg; in_par_id < in_par_id_end; in_par_id++) {
                 uint64_t big_endian_key = index_[key_par_id][in_par_id].key_;
-                // Key. (to little endian first)
-                assert(polar_key_ptr_->data() != nullptr);
+                // Key (to little endian first).
                 (*(uint64_t *) polar_key_ptr_->data()) = bswap_64(big_endian_key);
 
                 // Value.
-//                uint64_t val_par_id = get_val_par_id(big_endian_key);
                 uint64_t val_id = index_[key_par_id][in_par_id].value_offset_;
-
                 memcpy((char *) polar_val_ptr_->data(), value_shared_buffer_ + val_id * VALUE_SIZE, VALUE_SIZE);
 
                 // Visit Key/Value.
                 visitor.Visit(*polar_key_ptr_, *polar_val_ptr_);
+
+                // 4M sync for L3 cache locality.
+                local_block_offset++;
+                if (local_block_offset % 1000 == 0) {
+                    if (local_block_offset % 1000000 == 0 && tid == 0) {
+                        log_info("wait tid: %d, local off: %d", tid, local_block_offset);
+                    }
+                    range_barrier_.Wait();
+                }
             }
-            range_barrier_.Wait();
         }
         return kSucc;
     }
