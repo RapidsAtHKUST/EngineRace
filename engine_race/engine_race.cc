@@ -469,50 +469,53 @@ namespace polar_race {
             range_barrier_.Wait();
         }
 
-//        uint64_t key_lower_uint64 = polar_str_to_big_endian_uint64(lower);
-//        uint64_t key_upper_uint64 = polar_str_to_big_endian_uint64(upper);
-//
-//
-//        // Determine Key Partitions.
-//        uint32_t lower_key_par_id = get_key_par_id(key_lower_uint64);
-//        KeyEntry tmp{};
-//        tmp.key_ = key_lower_uint64;
-//        uint32_t first_bucket_beg =
-//                branchfree_search(index_[lower_key_par_id], mmap_key_meta_cnt_[lower_key_par_id], tmp);
-//
-//        uint32_t upper_key_par_id = get_key_par_id(key_upper_uint64);
-//        tmp.key_ = key_upper_uint64;
-//        uint32_t last_bucket_end =
-//                branchfree_search(index_[upper_key_par_id], mmap_key_meta_cnt_[upper_key_par_id], tmp) - 1;
+#ifdef GENERAL_CASES
+        uint64_t key_lower_uint64 = polar_str_to_big_endian_uint64(lower);
+        uint64_t key_upper_uint64 = polar_str_to_big_endian_uint64(upper);
 
 
-//        if (local_block_offset < 10) {
-//            log_info("tid: %d, [%zu, %zu), sizes: %zu, %zu", tid, key_lower_uint64, key_upper_uint64, lower.size(),
-//                     upper.size());
-//            log_info("tid: %d, [(%zu, %zu) to (%zu, %zu))", tid, lower_key_par_id, first_bucket_beg,
-//                     upper_key_par_id, last_bucket_end);
-//        }
+        // Determine Key Partitions.
+        uint32_t lower_key_par_id = get_key_par_id(key_lower_uint64);
+        KeyEntry tmp{};
+        tmp.key_ = key_lower_uint64;
+        uint32_t first_bucket_beg =
+                branchfree_search(index_[lower_key_par_id], mmap_key_meta_cnt_[lower_key_par_id], tmp);
 
+        uint32_t upper_key_par_id = get_key_par_id(key_upper_uint64);
+        tmp.key_ = key_upper_uint64;
+        uint32_t last_bucket_end =
+                branchfree_search(index_[upper_key_par_id], mmap_key_meta_cnt_[upper_key_par_id], tmp) - 1;
+
+
+        if (local_block_offset < 10) {
+            log_info("tid: %d, [%zu, %zu), sizes: %zu, %zu", tid, key_lower_uint64, key_upper_uint64, lower.size(),
+                     upper.size());
+            log_info("tid: %d, [(%zu, %zu) to (%zu, %zu))", tid, lower_key_par_id, first_bucket_beg,
+                     upper_key_par_id, last_bucket_end);
+        }
+#else
         // 2-level Loop.
         uint32_t lower_key_par_id = 0;
         uint32_t upper_key_par_id = KEY_BUCKET_NUM - 1;
+#endif
         for (uint32_t key_par_id = lower_key_par_id; key_par_id < upper_key_par_id + 1; key_par_id++) {
 
-//            uint32_t in_par_id_beg = (key_par_id == lower_key_par_id ? first_bucket_beg : 0);
+#ifdef GENERAL_CASES
+            uint32_t in_par_id_beg = (key_par_id == lower_key_par_id ? first_bucket_beg : 0);
+            uint32_t in_par_id_end = (key_par_id == upper_key_par_id ? last_bucket_end : mmap_key_meta_cnt_[key_par_id]);
+#else
             uint32_t in_par_id_beg = 0;
-//            uint32_t in_par_id_end = (key_par_id == upper_key_par_id ? last_bucket_end : mmap_key_meta_cnt_[key_par_id]);
             uint32_t in_par_id_end = mmap_key_meta_cnt_[key_par_id];
+#endif
             for (uint32_t in_par_id = in_par_id_beg; in_par_id < in_par_id_end; in_par_id++) {
-                uint64_t big_endian_key = index_[in_par_id]->key_;
-//                log_info("tid: %d, process %zu", tid, big_endian_key);
-
+                uint64_t big_endian_key = index_[key_par_id][in_par_id].key_;
                 // Key. (to little endian first)
                 assert(polar_key_ptr_->data() != nullptr);
                 (*(uint64_t *) polar_key_ptr_->data()) = bswap_64(big_endian_key);
 
                 // Value.
                 uint64_t val_par_id = get_val_par_id(big_endian_key);
-                uint64_t val_id = index_[in_par_id]->value_offset_;
+                uint64_t val_id = index_[key_par_id][in_par_id].value_offset_;
                 pread(write_value_file_dp_[val_par_id], (char *) polar_val_ptr_->data(), VALUE_SIZE,
                       val_id * VALUE_SIZE);
 

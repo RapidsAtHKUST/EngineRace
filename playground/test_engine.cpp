@@ -38,7 +38,8 @@ std::string exec(const char *cmd) {
 class DumpVisitor : public Visitor {
 public:
     DumpVisitor(int *kcnt, uint64_t key_id, uint64_t seed, PolarString prev)
-            : key_id_(key_id), key_str_(new char[sizeof(uint64_t)]), prev_(key_str_, sizeof(uint64_t)), seed_(seed) {
+            : key_id_(key_id), key_str_(new char[sizeof(uint64_t)]), prev_key_(key_str_, sizeof(uint64_t)),
+              seed_(seed) {
         // Copy
         memcpy(key_str_, prev.data(), sizeof(uint64_t));
     }
@@ -52,22 +53,25 @@ public:
 //        log_debug("Visit %s --> %s\n", key.data(), value.data());
 
         // Verify the order
-        assert(prev_.compare(value) <= 0);
-        memcpy(key_str_, value.data(), sizeof(uint64_t));
+        if (prev_key_.compare(key) > 0) {
+            log_info("err order: %zu, %zu, %zu, %zu", TO_UINT64(prev_key_.data()), TO_UINT64(key.data()),
+                     bswap_64(TO_UINT64(prev_key_.data())), bswap_64(TO_UINT64(key.data())));
+        }
+        assert(prev_key_.compare(key) <= 0);
+        memcpy(key_str_, key.data(), sizeof(uint64_t));
 //        log_info("order correct");
         uint64_t verify_int = static_cast<uint64_t>(-1);
         for (uint64_t j = 0; j < 4096; j += 8) {
-
-            // Verify the Correctness.
+            // Verify the Key-Value Correctness.
             key_id_ = TO_UINT64(key.data());
             memcpy(&verify_int, value.data() + j, sizeof(uint64_t));
             if (verify_int != j + key_id_ + seed_) {
-                //log_info("Err info: %d, %d, %d", verify_int, (j + key_id_ + seed_), key_id_);
+                log_info("Err info: %d, %d, %d", verify_int, (j + key_id_ + seed_), key_id_);
             }
             assert(verify_int == j + key_id_ + seed_);
             if (is_first) {
                 is_first = false;
-                //log_info("First Range...%lld, %lld", verify_int, j + key_id_ + seed_);
+                log_info("First Range...%lld, %lld", verify_int, j + key_id_ + seed_);
             }
         }
         key_id_++;
@@ -76,7 +80,7 @@ public:
 private:
     uint64_t key_id_;
     char *key_str_;
-    PolarString prev_;
+    PolarString prev_key_;
     uint64_t seed_;
 };
 

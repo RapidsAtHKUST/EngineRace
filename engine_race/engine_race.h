@@ -21,7 +21,7 @@
 #define WRITE_BARRIER_NUM (16)
 #define READ_BARRIER_NUM (32)
 
-#define VAL_BUCKET_DIGITS (5)
+#define VAL_BUCKET_DIGITS (10)
 #define VAL_BUCKET_NUM (1 << VAL_BUCKET_DIGITS)
 
 #define KEY_BUCKET_DIGITS (8)
@@ -67,7 +67,7 @@ namespace polar_race {
         volatile bool is_range_init_;
 
         string dir_;
-        vector<pair<PolarString*, PolarString*>> polar_str_pairs_;
+        vector<pair<PolarString *, PolarString *>> polar_str_pairs_;
     public:
         static RetCode Open(const std::string &name, Engine **eptr);
 
