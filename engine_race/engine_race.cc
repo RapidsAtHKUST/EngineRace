@@ -23,6 +23,7 @@
 #include "stat.h"
 
 //#define STAT
+//#define BARRIER_FOR_CACHE
 
 namespace polar_race {
     using namespace std::chrono;
@@ -441,7 +442,7 @@ namespace polar_race {
 
     void EngineRace::ReadBucketToBuffer(uint32_t bucket_id) {
         auto range_clock_beg = high_resolution_clock::now();
-        log_info("ReadBucketToBuffer start ts: %.9lf s",
+        log_info("In bucket %d, ReadBucketToBuffer start ts: %.9lf s", bucket_id,
                  std::chrono::duration_cast<std::chrono::nanoseconds>(range_clock_beg.time_since_epoch()).count() /
                  1000000000.0);
         auto buffer_id = static_cast<uint32_t>(bucket_id % MAX_BUFFER_NUM);
@@ -454,55 +455,15 @@ namespace polar_race {
         auto range_clock_end = high_resolution_clock::now();
         double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                               static_cast<double>(1000000000);
-        log_info("ReadBucketToBuffer elapsed read time in bucket %d, %.9lf s, ts: %.9lf s", bucket_id, elapsed_time,
+        log_info("In bucket %d, ReadBucketToBuffer elapsed read time %.9lf s, ts: %.9lf s", bucket_id, elapsed_time,
                  std::chrono::duration_cast<std::chrono::nanoseconds>(range_clock_end.time_since_epoch()).count() /
                  1000000000.0);
         total_time_ += elapsed_time;
     }
 
-/*
- * NOTICE: Implement 'Range' in quarter-final,
- *         you can skip it in preliminary.
- */
-// 5. Applies the given Vistor::Visit function to the result
-// of every key-value pair in the key range [first, last),
-// in order
-// lower=="" is treated as a key before all keys in the database.
-// upper=="" is treated as a key after all keys in the database.
-// Therefore the following call will traverse the entire database:
-//   Range("", "", visitor)
-    RetCode EngineRace::Range(const PolarString &lower, const PolarString &upper,
-                              Visitor &visitor) {
-        static thread_local int64_t tid = (++range_num_threads_count) % NUM_THREADS;
-        static thread_local uint32_t local_block_offset = 0;
-        static thread_local uint32_t invocation_num = 0;
-        static thread_local PolarString *polar_key_ptr_;
-        static thread_local PolarString *polar_val_ptr_;
-
-        auto range_init_start_clock = high_resolution_clock::now();
-        log_info("Start range ts: %.9lf s in tid %d",
-                 std::chrono::duration_cast<std::chrono::nanoseconds>(
-                         range_init_start_clock.time_since_epoch()).count() / 1000000000.0, tid);
-        // Thread Local Key/Value Init.
-        if (local_block_offset == 0) {
-            char *key_chars = new char[sizeof(uint64_t)];
-            char *val_chars = new char[VALUE_SIZE];
-            polar_str_pairs_[tid].first = new PolarString(key_chars, sizeof(uint64_t));
-            polar_key_ptr_ = polar_str_pairs_[tid].first;
-            polar_str_pairs_[tid].second = new PolarString(val_chars, VALUE_SIZE);
-            polar_val_ptr_ = polar_str_pairs_[tid].second;
-        }
-        // Initialization of Value Files.
+    void EngineRace::InitForRange(int64_t tid) {
         if (!is_range_init_) {
             unique_lock<mutex> lock(range_mtx_);
-            log_info("Init Range in tid %d: range invocation num: %d", tid, ++invocation_num);
-            uint64_t key_lower_uint64 = polar_str_to_big_endian_uint64(lower);
-            uint64_t key_upper_uint64 = polar_str_to_big_endian_uint64(upper);
-            if (invocation_num < 10) {
-                invocation_num++;
-                log_info("tid: %d, [%zu, %zu), sizes: %zu, %zu", tid, key_lower_uint64, key_upper_uint64, lower.size(),
-                         upper.size());
-            }
             if (tid == 0) {
                 range_io_worker_pool_ = new ThreadPool(1);
 
@@ -548,7 +509,6 @@ namespace polar_race {
             }
         }
         // later rounds
-
         if (tid == 0) {
             for (auto next_bucket_idx = static_cast<uint32_t>(futures_.size());
                  next_bucket_idx < MAX_BUFFER_NUM; next_bucket_idx++) {
@@ -558,10 +518,54 @@ namespace polar_race {
                 }));
             }
         }
+    }
+
+/*
+ * NOTICE: Implement 'Range' in quarter-final,
+ *         you can skip it in preliminary.
+ */
+// 5. Applies the given Vistor::Visit function to the result
+// of every key-value pair in the key range [first, last),
+// in order
+// lower=="" is treated as a key before all keys in the database.
+// upper=="" is treated as a key after all keys in the database.
+// Therefore the following call will traverse the entire database:
+//   Range("", "", visitor)
+    RetCode EngineRace::Range(const PolarString &lower, const PolarString &upper,
+                              Visitor &visitor) {
+        static thread_local int64_t tid = (++range_num_threads_count) % NUM_THREADS;
+        static thread_local uint32_t local_block_offset = 0;
+        static thread_local uint32_t invocation_num = 0;
+        static thread_local PolarString *polar_key_ptr_;
+        static thread_local PolarString *polar_val_ptr_;
+
+        auto range_init_start_clock = high_resolution_clock::now();
+
+        log_info("Start range ts: %.9lf s in tid %d",
+                 std::chrono::duration_cast<std::chrono::nanoseconds>(
+                         range_init_start_clock.time_since_epoch()).count() / 1000000000.0, tid);
+        // Thread Local Key/Value Init.
+        if (local_block_offset == 0) {
+            char *key_chars = new char[sizeof(uint64_t)];
+            char *val_chars = new char[VALUE_SIZE];
+            polar_str_pairs_[tid].first = new PolarString(key_chars, sizeof(uint64_t));
+            polar_key_ptr_ = polar_str_pairs_[tid].first;
+            polar_str_pairs_[tid].second = new PolarString(val_chars, VALUE_SIZE);
+            polar_val_ptr_ = polar_str_pairs_[tid].second;
+        }
+        uint64_t key_lower_uint64 = polar_str_to_big_endian_uint64(lower);
+        uint64_t key_upper_uint64 = polar_str_to_big_endian_uint64(upper);
+        if (invocation_num < 10) {
+            invocation_num++;
+            log_info("tid: %d, [%zu, %zu), sizes: %zu, %zu, invocation times: %d", tid, key_lower_uint64,
+                     key_upper_uint64, lower.size(), upper.size(), invocation_num);
+        }
+        InitForRange(tid);
+
         auto range_init_end_clock = high_resolution_clock::now();
         double elapsed_time = duration_cast<nanoseconds>(range_init_end_clock - range_init_start_clock).count() /
                               static_cast<double>(1000000000);
-        log_info("Elapsed init in tid %d, %.9lf s, ts: %.9lf s", tid, elapsed_time,
+        log_info("Init elapsed time in tid %d, %.9lf s, ts: %.9lf s", tid, elapsed_time,
                  std::chrono::duration_cast<std::chrono::nanoseconds>(
                          range_init_end_clock.time_since_epoch()).count() / 1000000000.0);
 
@@ -570,24 +574,28 @@ namespace polar_race {
         uint32_t upper_key_par_id = KEY_BUCKET_NUM - 1;
         for (uint32_t key_par_id = lower_key_par_id; key_par_id < upper_key_par_id + 1; key_par_id++) {
             range_barrier_ptr_->Wait();
-            if (key_par_id == 255) {
+            if (key_par_id % 256 == 0) {
                 range_init_start_clock = high_resolution_clock::now();
-                log_info("Sampling 255 bucket straggler ... tid %d... ts: %.9lf s", tid, 0, elapsed_time,
+                log_info("In bucket: %d, checking straggler in tid %d, ts: %.9lf s", key_par_id, tid,
                          std::chrono::duration_cast<std::chrono::nanoseconds>(
                                  range_init_start_clock.time_since_epoch()).count() / 1000000000.0);
             }
             if (tid == 0) {
                 auto wait_start_clock = high_resolution_clock::now();
+#ifdef LOG_WAIT_TIME
                 log_info("Start wait io ts: %.9lf s",
                          std::chrono::duration_cast<std::chrono::nanoseconds>(
                                  wait_start_clock.time_since_epoch()).count() / 1000000000.0);
+#endif
                 futures_.front().get();
                 auto wait_end_clock = high_resolution_clock::now();
-                double elapsed_time = duration_cast<nanoseconds>(wait_end_clock - wait_start_clock).count() /
-                                      static_cast<double>(1000000000);
+                elapsed_time = duration_cast<nanoseconds>(wait_end_clock - wait_start_clock).count() /
+                               static_cast<double>(1000000000);
+#ifdef LOG_WAIT_TIME
                 log_info("Elapsed wait io time, %.9lf s, ts: %.9lf s", 0, elapsed_time,
                          std::chrono::duration_cast<std::chrono::nanoseconds>(
                                  wait_end_clock.time_since_epoch()).count() / 1000000000.0);
+#endif
                 wait_get_time_ += elapsed_time;
             }
             range_barrier_ptr_->Wait();
@@ -602,7 +610,7 @@ namespace polar_race {
                 uint64_t big_endian_key = index_[key_par_id][in_par_id].key_;
                 if (in_par_id != in_par_id_beg) {
                     if (big_endian_key == prev_key) {
-                        if (tid == 0 && duplicates_num < 10) {
+                        if (tid == 0 && duplicates_num < 3) {
                             log_info("duplicates...%d", duplicates_num);
                             duplicates_num++;
                         }
@@ -621,15 +629,26 @@ namespace polar_race {
 
                 // Visit Key/Value.
                 visitor.Visit(*polar_key_ptr_, *polar_val_ptr_);
+
+#ifdef BARRIER_FOR_CACHE
+                // L3 Cache Locality (40MB).
+                local_block_offset++;
+                if (local_block_offset % 10000 == 0) {
+                    if (local_block_offset % 1000000 == 0 && tid == 0) {
+                        log_info("Barrier for Cache tid: %d, local off: %d", tid, local_block_offset);
+                    }
+                    range_barrier_ptr_->Wait();
+                }
+#endif
             }
 
-            if (key_par_id == 255) {
+            if (key_par_id % 256 == 0) {
                 range_init_end_clock = high_resolution_clock::now();
-                double elapsed_time = duration_cast<nanoseconds>(range_init_end_clock - range_init_start_clock).
+                elapsed_time = duration_cast<nanoseconds>(range_init_end_clock - range_init_start_clock).
                         count() / static_cast<double>(1000000000);
-                log_info("Sampling 255 bucket straggler ... tid %d... ts: %.9lf s", tid, 0, elapsed_time,
-                         std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                 range_init_end_clock.time_since_epoch()).count() / 1000000000.0);
+                log_info("In bucket: %d, checking straggler, in tid %d, elapsed time: %.9lf s, ts: %.9lf s", tid,
+                         elapsed_time, std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        range_init_end_clock.time_since_epoch()).count() / 1000000000.0);
             }
             // End of inner loop, Submit IO Jobs.
             range_barrier_ptr_->Wait();
@@ -640,31 +659,18 @@ namespace polar_race {
                 // Submit
                 if (next_bucket_idx < upper_key_par_id + 1) {
                     auto wait_start_clock = high_resolution_clock::now();
-
-                    log_info("Start enqueue ts: %.9lf s",
-                             std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                     wait_start_clock.time_since_epoch()).count() / 1000000000.0);
                     futures_.emplace(range_io_worker_pool_->enqueue([this, next_bucket_idx]() {
                         ReadBucketToBuffer(next_bucket_idx);
                     }));
+
                     auto wait_end_clock = high_resolution_clock::now();
-                    double elapsed_time = duration_cast<nanoseconds>(wait_end_clock - wait_start_clock).count() /
-                                          static_cast<double>(1000000000);
-                    log_info("Elapsed enqueue time, %.9lf s, ts: %.9lf s", 0, elapsed_time,
-                             std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                     wait_end_clock.time_since_epoch()).count() / 1000000000.0);
+                    elapsed_time = duration_cast<nanoseconds>(wait_end_clock - wait_start_clock).count() /
+                                   static_cast<double>(1000000000);
                     enqueue_time_ += elapsed_time;
                 }
             }
         }
         if (tid == 0) { log_info("one round ok..."); }
-
-        auto range_finish_clock = high_resolution_clock::now();
-        elapsed_time = duration_cast<nanoseconds>(range_finish_clock - range_init_start_clock).count() /
-                       static_cast<double>(1000000000);
-        log_info("tid %d range invocation time, %.9lf s, ts: %.9lf s", tid, 0, elapsed_time,
-                 std::chrono::duration_cast<std::chrono::nanoseconds>(
-                         range_init_end_clock.time_since_epoch()).count() / 1000000000.0);
         range_barrier_ptr_->Wait();
         return kSucc;
     }
