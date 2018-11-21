@@ -95,6 +95,7 @@ private:
 
 int main() {
     uint64_t seed = 10;
+    uint64_t noise = 10;
     uint64_t NUM_THREADS = 64;
     exec(("rm -r " + std::string(kEnginePath)).c_str());
 
@@ -107,17 +108,32 @@ int main() {
         Engine *engine = nullptr;
         Engine::Open(kEnginePath, &engine);
 
-#pragma omp parallel for num_threads(NUM_THREADS)
-        for (uint64_t i = iter * round_size; i < (1 + iter) * round_size; i++) {
-            static thread_local char polar_key_str[8];
-            static thread_local char polar_value_str[4096];
-            memcpy(polar_key_str, &i, sizeof(uint64_t));
-            for (uint64_t j = 0; j < 4096; j += 8) {
-                uint64_t tmp = j + i + seed;
-                memcpy(polar_value_str + j, &tmp, sizeof(uint64_t));
+#pragma omp parallel num_threads(NUM_THREADS)
+        {
+#pragma omp for
+            for (uint64_t i = iter * round_size; i < (1 + iter) * round_size; i++) {
+                static thread_local char polar_key_str[8];
+                static thread_local char polar_value_str[4096];
+                memcpy(polar_key_str, &i, sizeof(uint64_t));
+                for (uint64_t j = 0; j < 4096; j += 8) {
+                    uint64_t tmp = j + i + seed + noise;
+                    memcpy(polar_value_str + j, &tmp, sizeof(uint64_t));
+                }
+                engine->Write(polar_key_str, polar_value_str);
             }
-            engine->Write(polar_key_str, polar_value_str);
-        };
+
+#pragma omp for
+            for (uint64_t i = iter * round_size; i < (1 + iter) * round_size; i++) {
+                static thread_local char polar_key_str[8];
+                static thread_local char polar_value_str[4096];
+                memcpy(polar_key_str, &i, sizeof(uint64_t));
+                for (uint64_t j = 0; j < 4096; j += 8) {
+                    uint64_t tmp = j + i + seed;
+                    memcpy(polar_value_str + j, &tmp, sizeof(uint64_t));
+                }
+                engine->Write(polar_key_str, polar_value_str);
+            }
+        }
         delete engine;
     }
 
@@ -158,8 +174,8 @@ int main() {
         Engine *engine = nullptr;
         Engine::Open(kEnginePath, &engine);
 
-#define RANGE_THREADS (1)
-//#define RANGE_THREADS (NUM_THREADS)
+//#define RANGE_THREADS (1)
+#define RANGE_THREADS (NUM_THREADS)
 #pragma omp parallel num_threads(RANGE_THREADS)
         {
             char tmp_chars_lower[8];

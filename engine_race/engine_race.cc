@@ -338,7 +338,7 @@ namespace polar_race {
 
 // 3. Write a key-value pair into engine
     RetCode EngineRace::Write(const PolarString &key, const PolarString &value) {
-        static thread_local uint32_t tid = (uint32_t)(++write_num_threads) % NUM_THREADS;
+        static thread_local uint32_t tid = (uint32_t) (++write_num_threads) % NUM_THREADS;
         static thread_local uint32_t local_block_offset = 0;
         uint64_t key_int_big_endian = bswap_64(TO_UINT64(key.data()));
         uint64_t key_par_id = get_key_par_id(key_int_big_endian);
@@ -428,7 +428,8 @@ namespace polar_race {
         }
 
         uint64_t val_par_id = get_val_par_id(big_endian_key_uint);
-        pread(write_value_file_dp_[val_par_id], value_buffer, VALUE_SIZE, (uint64_t)(it->value_offset_) * VALUE_SIZE);
+        pread(write_value_file_dp_[val_par_id], value_buffer, VALUE_SIZE,
+              static_cast<uint64_t>(it->value_offset_) * VALUE_SIZE);
 
         value->assign(value_buffer, VALUE_SIZE);
         return kSucc;
@@ -494,7 +495,7 @@ namespace polar_race {
 
                 auto range_clock_beg = high_resolution_clock::now();
                 auto ret = pread(write_value_file_dp_[0], value_shared_buffer_,
-                                 VALUE_SIZE * mmap_val_meta_cnt_[0], 0);
+                                 static_cast<uint64_t >(VALUE_SIZE) * mmap_val_meta_cnt_[0], 0);
                 if (ret < 0) {
                     log_info("in range read err: %s", strerror(errno));
                 }
@@ -531,7 +532,7 @@ namespace polar_race {
                 if (!is_buffer_available_[key_par_id]) {
                     auto range_clock_beg = high_resolution_clock::now();
                     auto ret = pread(write_value_file_dp_[key_par_id], value_shared_buffer_,
-                                     VALUE_SIZE * mmap_val_meta_cnt_[key_par_id], 0);
+                                     static_cast<uint64_t>(VALUE_SIZE) * mmap_val_meta_cnt_[key_par_id], 0);
                     if (ret < 0) {
                         log_info("in range read err: %s", strerror(errno));
                     }
@@ -552,9 +553,11 @@ namespace polar_race {
                 // Skip the equalities.
                 uint64_t big_endian_key = index_[key_par_id][in_par_id].key_;
                 if (in_par_id != in_par_id_beg) {
-                    if (big_endian_key == prev_key && tid == 0 && duplicates_num < 10) {
-                        log_info("duplicates...%d", duplicates_num);
-                        duplicates_num++;
+                    if (big_endian_key == prev_key) {
+                        if (tid == 0 && duplicates_num < 10) {
+                            log_info("duplicates...%d", duplicates_num);
+                            duplicates_num++;
+                        }
                         continue;
                     }
                 }
