@@ -570,6 +570,12 @@ namespace polar_race {
         uint32_t upper_key_par_id = KEY_BUCKET_NUM - 1;
         for (uint32_t key_par_id = lower_key_par_id; key_par_id < upper_key_par_id + 1; key_par_id++) {
             range_barrier_ptr_->Wait();
+            if (key_par_id == 255) {
+                range_init_start_clock = high_resolution_clock::now();
+                log_info("Sampling 255 bucket straggler ... tid %d... ts: %.9lf s", tid, 0, elapsed_time,
+                         std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                 range_init_start_clock.time_since_epoch()).count() / 1000000000.0);
+            }
             if (tid == 0) {
                 auto wait_start_clock = high_resolution_clock::now();
                 log_info("Start wait io ts: %.9lf s",
@@ -615,6 +621,15 @@ namespace polar_race {
 
                 // Visit Key/Value.
                 visitor.Visit(*polar_key_ptr_, *polar_val_ptr_);
+            }
+
+            if (key_par_id == 255) {
+                range_init_end_clock = high_resolution_clock::now();
+                double elapsed_time = duration_cast<nanoseconds>(range_init_end_clock - range_init_start_clock).
+                        count() / static_cast<double>(1000000000);
+                log_info("Sampling 255 bucket straggler ... tid %d... ts: %.9lf s", tid, 0, elapsed_time,
+                         std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                 range_init_end_clock.time_since_epoch()).count() / 1000000000.0);
             }
             // End of inner loop, Submit IO Jobs.
             range_barrier_ptr_->Wait();

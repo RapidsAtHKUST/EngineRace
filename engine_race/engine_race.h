@@ -23,13 +23,13 @@
 #define WRITE_BARRIER_NUM (16)
 #define READ_BARRIER_NUM (32)
 
-#define VAL_BUCKET_DIGITS (10)
+#define VAL_BUCKET_DIGITS (12)
 #define VAL_BUCKET_NUM (1 << VAL_BUCKET_DIGITS)
 
 #define KEY_BUCKET_DIGITS (VAL_BUCKET_DIGITS)      // must be the same for the range query
 #define KEY_BUCKET_NUM (1 << KEY_BUCKET_DIGITS)
 
-#define MAX_BUFFER_NUM (3u)
+#define MAX_BUFFER_NUM (12u)
 
 namespace polar_race {
     using namespace std;
