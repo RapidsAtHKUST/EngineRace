@@ -167,7 +167,9 @@ namespace polar_race {
                     log_info("fd err of %d: %d, err info: %s", i, write_value_file_dp_[i], strerror(errno));
                     exit(-1);
                 }
-                ftruncate(write_value_file_dp_[i], static_cast<uint64_t>(VALUE_SIZE) * (TOTAL_COUNT / VAL_BUCKET_NUM));
+//                ftruncate(write_value_file_dp_[i], static_cast<uint64_t>(VALUE_SIZE) * (TOTAL_COUNT / VAL_BUCKET_NUM));
+                fallocate(write_value_file_dp_[i], 0, 0,
+                          static_cast<uint64_t>(VALUE_SIZE) * (TOTAL_COUNT / VAL_BUCKET_NUM));
 
                 size_t tmp_buffer_value_file_size = VALUE_SIZE * TMP_VALUE_BUFFER_SIZE;
                 write_value_buffer_file_dp_[i] = open(temp_buffer_value.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
