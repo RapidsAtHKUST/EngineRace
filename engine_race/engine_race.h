@@ -81,6 +81,8 @@ namespace polar_race {
         queue<shared_future<void>> futures_;
         double total_time_;
 
+        double wait_get_time_;
+        double enqueue_time_;
         uint64_t val_buffer_max_size_;
         ThreadPool *range_io_worker_pool_;
     public:

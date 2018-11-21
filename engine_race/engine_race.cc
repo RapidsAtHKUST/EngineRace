@@ -117,7 +117,8 @@ namespace polar_race {
             mmap_value_aligned_buffer_(nullptr), aligned_read_buffer_(nullptr),
             barrier_(WRITE_BARRIER_NUM), read_barrier_(READ_BARRIER_NUM), range_barrier_ptr_(nullptr),
             is_sorted_(nullptr), is_range_init_(false), polar_str_pairs_(NUM_THREADS),
-            total_time_(0), val_buffer_max_size_(0), range_io_worker_pool_(nullptr) {
+            total_time_(0), wait_get_time_(0), enqueue_time_(0),
+            val_buffer_max_size_(0), range_io_worker_pool_(nullptr) {
         clock_end = high_resolution_clock::now();
         log_info("Start init DB, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
@@ -185,7 +186,7 @@ namespace polar_race {
                 string temp_buffer_key = tmp_key_file_path + to_string(i);
                 write_key_file_dp_[i] = open(temp_key.c_str(), O_RDWR | O_CREAT | O_DIRECT, FILE_PRIVILEGE);
                 ftruncate(write_key_file_dp_[i],
-                          static_cast<uint64_t>(sizeof(KeyEntry)) * (TOTAL_COUNT / VAL_BUCKET_NUM));
+                          static_cast<uint64_t>(sizeof(KeyEntry)) * (TOTAL_COUNT / KEY_BUCKET_NUM));
 
                 constexpr size_t tmp_buffer_key_file_size = sizeof(KeyEntry) * (size_t) TMP_KEY_BUFFER_SIZE;
                 write_key_buffer_file_dp_[i] = open(temp_buffer_key.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
@@ -329,7 +330,8 @@ namespace polar_race {
         delete range_io_worker_pool_;
 
         if (total_time_ != 0) {
-            log_info("Total Range Time: %.9lf s", total_time_);
+            log_info("Total Range Time: %.9lf s, wait: %.9lf s, enqueue: %.9lf s", total_time_, wait_get_time_,
+                     enqueue_time_);
         }
         clock_end = high_resolution_clock::now();
         log_info("Finish ~EngineRace(), time: %.3lf s, ts: %.3lf s",
@@ -439,6 +441,9 @@ namespace polar_race {
 
     void EngineRace::ReadBucketToBuffer(uint32_t bucket_id) {
         auto range_clock_beg = high_resolution_clock::now();
+        log_info("ReadBucketToBuffer start ts: %.9lf s",
+                 std::chrono::duration_cast<std::chrono::nanoseconds>(range_clock_beg.time_since_epoch()).count() /
+                 1000000000.0);
         auto buffer_id = static_cast<uint32_t>(bucket_id % MAX_BUFFER_NUM);
 
         auto ret = pread(write_value_file_dp_[bucket_id], value_shared_buffers_[buffer_id],
@@ -449,7 +454,9 @@ namespace polar_race {
         auto range_clock_end = high_resolution_clock::now();
         double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                               static_cast<double>(1000000000);
-        log_info("elpased read time in bucket %d, %.9lf s", bucket_id, elapsed_time);
+        log_info("ReadBucketToBuffer elapsed read time in bucket %d, %.9lf s, ts: %.9lf s", bucket_id, elapsed_time,
+                 std::chrono::duration_cast<std::chrono::nanoseconds>(range_clock_end.time_since_epoch()).count() /
+                 1000000000.0);
         total_time_ += elapsed_time;
     }
 
@@ -471,6 +478,11 @@ namespace polar_race {
         static thread_local uint32_t invocation_num = 0;
         static thread_local PolarString *polar_key_ptr_;
         static thread_local PolarString *polar_val_ptr_;
+
+        auto range_init_start_clock = high_resolution_clock::now();
+        log_info("Start range ts: %.9lf s in tid %d",
+                 std::chrono::duration_cast<std::chrono::nanoseconds>(
+                         range_init_start_clock.time_since_epoch()).count() / 1000000000.0, tid);
         // Thread Local Key/Value Init.
         if (local_block_offset == 0) {
             char *key_chars = new char[sizeof(uint64_t)];
@@ -521,7 +533,7 @@ namespace polar_race {
                 auto range_clock_end = high_resolution_clock::now();
                 double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                                       static_cast<double>(1000000000);
-                log_info("elpased read time in first sync, %.9lf s", 0, elapsed_time);
+                log_info("elapsed read time in first sync, %.9lf s", 0, elapsed_time);
 
                 auto total_num_threads = range_num_threads_count + 1;
                 range_barrier_ptr_ = new Barrier(static_cast<size_t>(total_num_threads));
@@ -546,6 +558,12 @@ namespace polar_race {
                 }));
             }
         }
+        auto range_init_end_clock = high_resolution_clock::now();
+        double elapsed_time = duration_cast<nanoseconds>(range_init_end_clock - range_init_start_clock).count() /
+                              static_cast<double>(1000000000);
+        log_info("Elapsed init in tid %d, %.9lf s, ts: %.9lf s", tid, elapsed_time,
+                 std::chrono::duration_cast<std::chrono::nanoseconds>(
+                         range_init_end_clock.time_since_epoch()).count() / 1000000000.0);
 
         // 2-level Loop.
         uint32_t lower_key_par_id = 0;
@@ -553,7 +571,18 @@ namespace polar_race {
         for (uint32_t key_par_id = lower_key_par_id; key_par_id < upper_key_par_id + 1; key_par_id++) {
             range_barrier_ptr_->Wait();
             if (tid == 0) {
+                auto wait_start_clock = high_resolution_clock::now();
+                log_info("Start wait io ts: %.9lf s",
+                         std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                 wait_start_clock.time_since_epoch()).count() / 1000000000.0);
                 futures_.front().get();
+                auto wait_end_clock = high_resolution_clock::now();
+                double elapsed_time = duration_cast<nanoseconds>(wait_end_clock - wait_start_clock).count() /
+                                      static_cast<double>(1000000000);
+                log_info("Elapsed wait io time, %.9lf s, ts: %.9lf s", 0, elapsed_time,
+                         std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                 wait_end_clock.time_since_epoch()).count() / 1000000000.0);
+                wait_get_time_ += elapsed_time;
             }
             range_barrier_ptr_->Wait();
 
@@ -586,15 +615,6 @@ namespace polar_race {
 
                 // Visit Key/Value.
                 visitor.Visit(*polar_key_ptr_, *polar_val_ptr_);
-
-                // L3 Cache Locality (40MB).
-                local_block_offset++;
-                if (local_block_offset % 10000 == 0) {
-                    if (local_block_offset % 1000000 == 0 && tid == 0) {
-                        log_info("wait tid: %d, local off: %d", tid, local_block_offset);
-                    }
-                    range_barrier_ptr_->Wait();
-                }
             }
             // End of inner loop, Submit IO Jobs.
             range_barrier_ptr_->Wait();
@@ -604,13 +624,32 @@ namespace polar_race {
 
                 // Submit
                 if (next_bucket_idx < upper_key_par_id + 1) {
+                    auto wait_start_clock = high_resolution_clock::now();
+
+                    log_info("Start enqueue ts: %.9lf s",
+                             std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                     wait_start_clock.time_since_epoch()).count() / 1000000000.0);
                     futures_.emplace(range_io_worker_pool_->enqueue([this, next_bucket_idx]() {
                         ReadBucketToBuffer(next_bucket_idx);
                     }));
+                    auto wait_end_clock = high_resolution_clock::now();
+                    double elapsed_time = duration_cast<nanoseconds>(wait_end_clock - wait_start_clock).count() /
+                                          static_cast<double>(1000000000);
+                    log_info("Elapsed enqueue time, %.9lf s, ts: %.9lf s", 0, elapsed_time,
+                             std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                     wait_end_clock.time_since_epoch()).count() / 1000000000.0);
+                    enqueue_time_ += elapsed_time;
                 }
             }
         }
         if (tid == 0) { log_info("one round ok..."); }
+
+        auto range_finish_clock = high_resolution_clock::now();
+        elapsed_time = duration_cast<nanoseconds>(range_finish_clock - range_init_start_clock).count() /
+                       static_cast<double>(1000000000);
+        log_info("tid %d range invocation time, %.9lf s, ts: %.9lf s", tid, 0, elapsed_time,
+                 std::chrono::duration_cast<std::chrono::nanoseconds>(
+                         range_init_end_clock.time_since_epoch()).count() / 1000000000.0);
         range_barrier_ptr_->Wait();
         return kSucc;
     }
