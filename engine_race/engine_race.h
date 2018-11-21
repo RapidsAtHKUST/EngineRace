@@ -6,9 +6,11 @@
 #include <mutex>
 #include <vector>
 #include <atomic>
+#include <list>
 
 #include "include/engine.h"
 #include "barrier.h"
+#include "thread_pool.h"
 
 #define NUM_THREADS (64)
 #define TOTAL_COUNT (64000000)
@@ -26,6 +28,8 @@
 
 #define KEY_BUCKET_DIGITS (VAL_BUCKET_DIGITS)      // must be the same for the range query
 #define KEY_BUCKET_NUM (1 << KEY_BUCKET_DIGITS)
+
+#define MAX_BUFFER_NUM (3u)
 
 namespace polar_race {
     using namespace std;
@@ -61,20 +65,24 @@ namespace polar_race {
 
         Barrier barrier_;
         Barrier read_barrier_;
-        Barrier* range_barrier_ptr_;
+        Barrier *range_barrier_ptr_;
 
         volatile bool *is_sorted_;
         volatile bool is_range_init_;
         string dir_;
+
+        // Range Related
         vector<pair<PolarString *, PolarString *>> polar_str_pairs_;
 
         mutex range_mtx_;
         condition_variable range_init_cond_;
-        char *value_shared_buffer_;
-        volatile bool *is_loaded_;
-        bool* is_buffer_available_;
+        vector<char *> value_shared_buffers_;
 
+        queue<shared_future<void>> futures_;
         double total_time_;
+
+        uint64_t val_buffer_max_size_;
+        ThreadPool *range_io_worker_pool_;
     public:
         static RetCode Open(const std::string &name, Engine **eptr);
 
@@ -97,6 +105,8 @@ namespace polar_race {
                       Visitor &visitor) override;
 
     private:
+        void ReadBucketToBuffer(uint32_t bucket_id);
+
         void FlushTmpFiles(string dir);
 
         void LazyLoadIndex(uint32_t key_par_id);
