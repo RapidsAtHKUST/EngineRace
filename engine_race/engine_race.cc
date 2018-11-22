@@ -171,7 +171,7 @@ namespace polar_race {
                 }
 //                ftruncate(write_value_file_dp_[i], static_cast<uint64_t>(VALUE_SIZE) * (TOTAL_COUNT / VAL_BUCKET_NUM));
                 fallocate(write_value_file_dp_[i], 0, 0,
-                          static_cast<uint64_t>(VALUE_SIZE) * (TOTAL_COUNT / VAL_BUCKET_NUM));
+                          static_cast<uint64_t>(VALUE_SIZE) * (72000000 / VAL_BUCKET_NUM));
 
                 size_t tmp_buffer_value_file_size = VALUE_SIZE * TMP_VALUE_BUFFER_SIZE;
                 write_value_buffer_file_dp_[i] = open(temp_buffer_value.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
