@@ -30,7 +30,7 @@
 #define KEY_BUCKET_NUM (1 << KEY_BUCKET_DIGITS)
 
 #define MAX_BUFFER_NUM (8u)
-#define IO_POOL_SIZE (MAX_BUFFER_NUM)
+#define IO_POOL_SIZE (4u)
 
 namespace polar_race {
     using namespace std;
@@ -87,10 +87,10 @@ namespace polar_race {
         uint64_t val_buffer_max_size_;
         ThreadPool *range_io_worker_pool_;
 
-        mutex* bucket_mutex_arr_;
-        condition_variable* bucket_cond_var_arr_;
-        bool* bucket_is_ready_read_;
-        atomic_int* bucket_consumed_num_;
+        mutex *bucket_mutex_arr_;
+        condition_variable *bucket_cond_var_arr_;
+        bool *bucket_is_ready_read_;
+        atomic_int *bucket_consumed_num_;
         int32_t total_range_num_threads_;
 
     public:
