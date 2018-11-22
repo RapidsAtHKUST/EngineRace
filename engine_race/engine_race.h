@@ -23,13 +23,13 @@
 #define WRITE_BARRIER_NUM (16)
 #define READ_BARRIER_NUM (32)
 
-#define VAL_BUCKET_DIGITS (13)
+#define VAL_BUCKET_DIGITS (10)
 #define VAL_BUCKET_NUM (1 << VAL_BUCKET_DIGITS)
 
 #define KEY_BUCKET_DIGITS (VAL_BUCKET_DIGITS)      // must be the same for the range query
 #define KEY_BUCKET_NUM (1 << KEY_BUCKET_DIGITS)
 
-#define MAX_BUFFER_NUM (2u)
+#define MAX_BUFFER_NUM (3u)
 
 namespace polar_race {
     using namespace std;
@@ -78,13 +78,20 @@ namespace polar_race {
         condition_variable range_init_cond_;
         vector<char *> value_shared_buffers_;
 
-        queue<shared_future<void>> futures_;
+        vector<shared_future<void>> futures_;
         double total_time_;
 
         double wait_get_time_;
         double enqueue_time_;
         uint64_t val_buffer_max_size_;
         ThreadPool *range_io_worker_pool_;
+
+        mutex* bucket_mutex_arr_;
+        condition_variable* bucket_cond_var_arr_;
+        bool* bucket_is_ready_read_;
+        atomic_int* bucket_consumed_num_;
+        int32_t total_range_num_threads_;
+
     public:
         static RetCode Open(const std::string &name, Engine **eptr);
 

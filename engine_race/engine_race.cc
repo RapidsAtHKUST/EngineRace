@@ -119,7 +119,9 @@ namespace polar_race {
             barrier_(WRITE_BARRIER_NUM), read_barrier_(READ_BARRIER_NUM), range_barrier_ptr_(nullptr),
             is_sorted_(nullptr), is_range_init_(false), polar_str_pairs_(NUM_THREADS),
             total_time_(0), wait_get_time_(0), enqueue_time_(0),
-            val_buffer_max_size_(0), range_io_worker_pool_(nullptr) {
+            val_buffer_max_size_(0), range_io_worker_pool_(nullptr),
+            bucket_mutex_arr_(nullptr), bucket_cond_var_arr_(nullptr),
+            bucket_is_ready_read_(nullptr), bucket_consumed_num_(nullptr), total_range_num_threads_(0) {
         clock_end = high_resolution_clock::now();
         log_info("Start init DB, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
@@ -444,9 +446,11 @@ namespace polar_race {
 
     void EngineRace::ReadBucketToBuffer(uint32_t bucket_id) {
         auto range_clock_beg = high_resolution_clock::now();
-        log_info("In bucket %d, ReadBucketToBuffer start ts: %.9lf s", bucket_id,
-                 std::chrono::duration_cast<std::chrono::nanoseconds>(range_clock_beg.time_since_epoch()).count() /
-                 1000000000.0);
+        if (bucket_id % 256 == 0) {
+            log_info("In bucket %d, ReadBucketToBuffer start ts: %.9lf s", bucket_id,
+                     std::chrono::duration_cast<std::chrono::nanoseconds>(range_clock_beg.time_since_epoch()).count() /
+                     1000000000.0);
+        }
         auto buffer_id = static_cast<uint32_t>(bucket_id % MAX_BUFFER_NUM);
 
         auto ret = pread(write_value_file_dp_[bucket_id], value_shared_buffers_[buffer_id],
@@ -457,9 +461,11 @@ namespace polar_race {
         auto range_clock_end = high_resolution_clock::now();
         double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                               static_cast<double>(1000000000);
-        log_info("In bucket %d, ReadBucketToBuffer elapsed read time %.9lf s, ts: %.9lf s", bucket_id, elapsed_time,
-                 std::chrono::duration_cast<std::chrono::nanoseconds>(range_clock_end.time_since_epoch()).count() /
-                 1000000000.0);
+        if (bucket_id % 256 == 0) {
+            log_info("In bucket %d, ReadBucketToBuffer elapsed read time %.9lf s, ts: %.9lf s", bucket_id, elapsed_time,
+                     std::chrono::duration_cast<std::chrono::nanoseconds>(range_clock_end.time_since_epoch()).count() /
+                     1000000000.0);
+        }
         total_time_ += elapsed_time;
     }
 
@@ -485,22 +491,22 @@ namespace polar_race {
                     close(write_value_file_dp_[i]);
                     write_value_file_dp_[i] = open(temp_value.c_str(), O_RDONLY | O_DIRECT, FILE_PRIVILEGE);
                 }
-
-                futures_.emplace(range_io_worker_pool_->enqueue([this]() {
-                    ReadBucketToBuffer(0);
-                }));
-
-                // Sync here
+                // Sleep here
                 auto range_clock_beg = high_resolution_clock::now();
-                futures_.front().get();
+                bucket_mutex_arr_ = new mutex[VAL_BUCKET_NUM];
+                bucket_cond_var_arr_ = new condition_variable[VAL_BUCKET_NUM];
+                bucket_is_ready_read_ = new bool[VAL_BUCKET_NUM];
+                bucket_consumed_num_ = new atomic_int[VAL_BUCKET_NUM];
+                futures_.resize(VAL_BUCKET_NUM);
+                usleep(10000);
                 auto range_clock_end = high_resolution_clock::now();
                 double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                                       static_cast<double>(1000000000);
                 log_info("elapsed read time in first sync, %.9lf s", 0, elapsed_time);
 
-                auto total_num_threads = range_num_threads_count + 1;
-                range_barrier_ptr_ = new Barrier(static_cast<size_t>(total_num_threads));
-                log_info("Total number of range threads: %zu", total_num_threads);
+                total_range_num_threads_ = range_num_threads_count + 1;
+                range_barrier_ptr_ = new Barrier(static_cast<size_t>(total_range_num_threads_));
+                log_info("Total number of range threads: %zu", total_range_num_threads_);
 
                 is_range_init_ = true;
                 range_init_cond_.notify_all();
@@ -510,16 +516,27 @@ namespace polar_race {
                 }
             }
         }
-        // later rounds
+        // Submit All IO Jobs
         if (tid == 0) {
-            for (auto next_bucket_idx = static_cast<uint32_t>(futures_.size());
-                 next_bucket_idx < MAX_BUFFER_NUM; next_bucket_idx++) {
+            memset(bucket_is_ready_read_, VAL_BUCKET_NUM, 0);
+            for (int i = 0; i < MAX_BUFFER_NUM; i++) {
+                bucket_is_ready_read_[i] = true;
+            }
+            for (auto next_bucket_idx = 0; next_bucket_idx < VAL_BUCKET_NUM; next_bucket_idx++) {
+                bucket_consumed_num_[next_bucket_idx].store(0);
                 log_info("next bucket id: %d", next_bucket_idx);
-                futures_.emplace(range_io_worker_pool_->enqueue([this, next_bucket_idx]() {
+                futures_[next_bucket_idx] = range_io_worker_pool_->enqueue([this, next_bucket_idx]() {
+                    unique_lock<mutex> lock(bucket_mutex_arr_[next_bucket_idx]);
+                    if (!bucket_is_ready_read_[next_bucket_idx]) {
+                        bucket_cond_var_arr_[next_bucket_idx].wait(lock, [this, next_bucket_idx]() {
+                            return bucket_is_ready_read_[next_bucket_idx];
+                        });
+                    }
                     ReadBucketToBuffer(next_bucket_idx);
-                }));
+                });
             }
         }
+        range_barrier_ptr_->Wait();
     }
 
 /*
@@ -575,13 +592,14 @@ namespace polar_race {
         uint32_t lower_key_par_id = 0;
         uint32_t upper_key_par_id = KEY_BUCKET_NUM - 1;
         for (uint32_t key_par_id = lower_key_par_id; key_par_id < upper_key_par_id + 1; key_par_id++) {
-            range_barrier_ptr_->Wait();
+#ifdef LOG_BARRIER_STRAGGERLER
             if (key_par_id % 256 == 0) {
                 range_init_start_clock = high_resolution_clock::now();
                 log_info("In bucket: %d, checking straggler in tid %d, ts: %.9lf s", key_par_id, tid,
                          std::chrono::duration_cast<std::chrono::nanoseconds>(
                                  range_init_start_clock.time_since_epoch()).count() / 1000000000.0);
             }
+#endif
             if (tid == 0) {
                 auto wait_start_clock = high_resolution_clock::now();
 #ifdef LOG_WAIT_TIME
@@ -589,7 +607,7 @@ namespace polar_race {
                          std::chrono::duration_cast<std::chrono::nanoseconds>(
                                  wait_start_clock.time_since_epoch()).count() / 1000000000.0);
 #endif
-                futures_.front().get();
+                futures_[key_par_id].get();
                 auto wait_end_clock = high_resolution_clock::now();
                 elapsed_time = duration_cast<nanoseconds>(wait_end_clock - wait_start_clock).count() /
                                static_cast<double>(1000000000);
@@ -599,8 +617,9 @@ namespace polar_race {
                                  wait_end_clock.time_since_epoch()).count() / 1000000000.0);
 #endif
                 wait_get_time_ += elapsed_time;
+            } else {
+                futures_[key_par_id].get();
             }
-            range_barrier_ptr_->Wait();
 
             uint32_t in_par_id_beg = 0;
             uint32_t in_par_id_end = mmap_key_meta_cnt_[key_par_id];
@@ -612,7 +631,7 @@ namespace polar_race {
                 uint64_t big_endian_key = index_[key_par_id][in_par_id].key_;
                 if (in_par_id != in_par_id_beg) {
                     if (big_endian_key == prev_key) {
-                        if (tid == 0 && duplicates_num < 3) {
+                        if (tid == 0 && duplicates_num < 3 && key_par_id % 256 == 0) {
                             log_info("duplicates...%d", duplicates_num);
                             duplicates_num++;
                         }
@@ -643,7 +662,7 @@ namespace polar_race {
                 }
 #endif
             }
-
+#ifdef LOG_BARRIER_STRAGGERLER
             if (key_par_id % 256 == 0) {
                 range_init_end_clock = high_resolution_clock::now();
                 elapsed_time = duration_cast<nanoseconds>(range_init_end_clock - range_init_start_clock).
@@ -652,23 +671,17 @@ namespace polar_race {
                          elapsed_time, std::chrono::duration_cast<std::chrono::nanoseconds>(
                         range_init_end_clock.time_since_epoch()).count() / 1000000000.0);
             }
+#endif
             // End of inner loop, Submit IO Jobs.
-            range_barrier_ptr_->Wait();
-            if (tid == 0) {
-                futures_.pop();
+            int32_t my_order = ++bucket_consumed_num_[key_par_id];
+            if (my_order == total_range_num_threads_) {
                 uint32_t next_bucket_idx = key_par_id + MAX_BUFFER_NUM;
 
-                // Submit
+                // Notify
                 if (next_bucket_idx < upper_key_par_id + 1) {
-                    auto wait_start_clock = high_resolution_clock::now();
-                    futures_.emplace(range_io_worker_pool_->enqueue([this, next_bucket_idx]() {
-                        ReadBucketToBuffer(next_bucket_idx);
-                    }));
-
-                    auto wait_end_clock = high_resolution_clock::now();
-                    elapsed_time = duration_cast<nanoseconds>(wait_end_clock - wait_start_clock).count() /
-                                   static_cast<double>(1000000000);
-                    enqueue_time_ += elapsed_time;
+                    unique_lock<mutex> lock(bucket_mutex_arr_[next_bucket_idx]);
+                    bucket_is_ready_read_[next_bucket_idx] = true;
+                    bucket_cond_var_arr_[next_bucket_idx].notify_all();
                 }
             }
         }
