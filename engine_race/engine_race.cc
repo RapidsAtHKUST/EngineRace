@@ -447,11 +447,23 @@ namespace polar_race {
                  1000000000.0);
         auto buffer_id = static_cast<uint32_t>(bucket_id % MAX_BUFFER_NUM);
 
-        auto ret = pread(write_value_file_dp_[bucket_id], value_shared_buffers_[buffer_id],
+        char *tmp_buff = (char *) memalign(FILESYSTEM_BLOCK_SIZE, val_buffer_max_size_);
+        auto ret = pread(write_value_file_dp_[bucket_id], tmp_buff,
                          static_cast<uint64_t >(VALUE_SIZE) * mmap_val_meta_cnt_[bucket_id], 0);
         if (ret < 0) {
             log_info("in range read err: %s, size: %zu", strerror(errno));
         }
+
+        if (mmap_key_meta_cnt_[bucket_id] > 0) {
+            for (ssize_t idx = 0; idx < mmap_key_meta_cnt_[bucket_id]; idx++) {
+                uint64_t val_off = index_[bucket_id][idx].value_offset_;
+                memcpy(value_shared_buffers_[buffer_id] + VALUE_SIZE * idx, tmp_buff + VALUE_SIZE * val_off,
+                       VALUE_SIZE);
+//                index_[bucket_id][idx].value_offset_ = idx;
+            }
+        }
+        free(tmp_buff);
+
         auto range_clock_end = high_resolution_clock::now();
         double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                               static_cast<double>(1000000000);
@@ -473,7 +485,7 @@ namespace polar_race {
                 val_buffer_max_size_ *= VALUE_SIZE;
                 log_info("Max Buffer Size: %zu", val_buffer_max_size_);
                 value_shared_buffers_ = vector<char *>(MAX_BUFFER_NUM);
-                for (int i = 0; i < MAX_BUFFER_NUM; i++) {
+                for (size_t i = 0; i < MAX_BUFFER_NUM; i++) {
                     value_shared_buffers_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, val_buffer_max_size_);
                 }
                 const string value_file_path = dir_ + "/" + value_file_name;
@@ -602,33 +614,25 @@ namespace polar_race {
 
             uint32_t in_par_id_beg = 0;
             uint32_t in_par_id_end = mmap_key_meta_cnt_[key_par_id];
-            uint64_t prev_key = 0;
-            uint32_t duplicates_num = 0;
             uint32_t inner_loop_buffer_idx = key_par_id % MAX_BUFFER_NUM;
             for (uint32_t in_par_id = in_par_id_beg; in_par_id < in_par_id_end; in_par_id++) {
-                // Skip the equalities.
                 uint64_t big_endian_key = index_[key_par_id][in_par_id].key_;
-                if (in_par_id != in_par_id_beg) {
-                    if (big_endian_key == prev_key) {
-                        if (tid == 0 && duplicates_num < 3) {
-                            log_info("duplicates...%d", duplicates_num);
-                            duplicates_num++;
-                        }
-                        continue;
-                    }
-                }
-                prev_key = big_endian_key;
-
+                uint64_t val_id = in_par_id;
                 // Key (to little endian first).
                 (*(uint64_t *) polar_key_ptr_->data()) = bswap_64(big_endian_key);
 
                 // Value.
-                uint64_t val_id = index_[key_par_id][in_par_id].value_offset_;
+
                 memcpy((char *) polar_val_ptr_->data(),
                        value_shared_buffers_[inner_loop_buffer_idx] + val_id * VALUE_SIZE, VALUE_SIZE);
 
                 // Visit Key/Value.
                 visitor.Visit(*polar_key_ptr_, *polar_val_ptr_);
+
+                while (in_par_id + 1 < in_par_id_end && big_endian_key == index_[key_par_id][in_par_id + 1].key_) {
+                    in_par_id = in_par_id + 1;
+//                    log_warn("skip dup");
+                }
 
 #ifdef BARRIER_FOR_CACHE
                 // L3 Cache Locality (40MB).

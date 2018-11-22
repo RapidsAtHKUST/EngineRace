@@ -19,7 +19,7 @@
 
 #define ENABLE_READ
 
-static const char kEnginePath[] = "test_engine";
+static const char kEnginePath[] = "/mnt/data/test";
 
 using namespace polar_race;
 
