@@ -473,7 +473,7 @@ namespace polar_race {
         if (!is_range_init_) {
             unique_lock<mutex> lock(range_mtx_);
             if (tid == 0) {
-                range_io_worker_pool_ = new ThreadPool(1);
+                range_io_worker_pool_ = new ThreadPool(4);
 
                 for (int i = 0; i < VAL_BUCKET_NUM; i++) {
                     val_buffer_max_size_ = max<uint64_t>(val_buffer_max_size_, mmap_val_meta_cnt_[i]);
