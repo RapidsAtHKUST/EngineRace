@@ -518,8 +518,8 @@ namespace polar_race {
         }
         // Submit All IO Jobs
         if (tid == 0) {
-            memset(bucket_is_ready_read_, VAL_BUCKET_NUM, 0);
-            for (int i = 0; i < MAX_BUFFER_NUM; i++) {
+            memset(bucket_is_ready_read_, 0, VAL_BUCKET_NUM);
+            for (uint32_t i = 0; i < MAX_BUFFER_NUM; i++) {
                 bucket_is_ready_read_[i] = true;
             }
             for (auto next_bucket_idx = 0; next_bucket_idx < VAL_BUCKET_NUM; next_bucket_idx++) {
