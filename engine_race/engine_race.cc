@@ -118,6 +118,7 @@ namespace polar_race {
             mmap_value_aligned_buffer_(nullptr), aligned_read_buffer_(nullptr),
             barrier_(WRITE_BARRIER_NUM), read_barrier_(READ_BARRIER_NUM), range_barrier_ptr_(nullptr),
             is_sorted_(nullptr), is_range_init_(false), polar_str_pairs_(NUM_THREADS),
+            shared_buffer_(nullptr),
             total_time_(0), wait_get_time_(0), enqueue_time_(0),
             val_buffer_max_size_(0), range_io_worker_pool_(nullptr),
             bucket_mutex_arr_(nullptr), bucket_cond_var_arr_(nullptr),
@@ -305,6 +306,7 @@ namespace polar_race {
         for (KeyEntry *index_partition: index_) {
             free(index_partition);
         }
+        free(shared_buffer_);
 
         // Value.
         for (uint32_t i = 0; i < VAL_BUCKET_NUM; ++i) {
@@ -329,7 +331,7 @@ namespace polar_race {
             }
         }
         delete range_barrier_ptr_;
-        for (char *ptr: value_shared_buffers_) {
+        for (char *ptr: io_buffers_) {
             free(ptr);
         }
         delete range_io_worker_pool_;
@@ -453,7 +455,7 @@ namespace polar_race {
         }
         auto buffer_id = static_cast<uint32_t>(bucket_id % MAX_BUFFER_NUM);
 
-        auto ret = pread(write_value_file_dp_[bucket_id], value_shared_buffers_[buffer_id],
+        auto ret = pread(write_value_file_dp_[bucket_id], io_buffers_[buffer_id],
                          static_cast<uint64_t >(VALUE_SIZE) * mmap_val_meta_cnt_[bucket_id], 0);
         if (ret < 0) {
             log_info("in range read err: %s, size: %zu", strerror(errno));
@@ -480,9 +482,10 @@ namespace polar_race {
                 }
                 val_buffer_max_size_ *= VALUE_SIZE;
                 log_info("Max Buffer Size: %zu", val_buffer_max_size_);
-                value_shared_buffers_ = vector<char *>(MAX_BUFFER_NUM);
+                io_buffers_ = vector<char *>(MAX_BUFFER_NUM);
+                shared_buffer_ = (char *) malloc(val_buffer_max_size_);
                 for (int i = 0; i < MAX_BUFFER_NUM; i++) {
-                    value_shared_buffers_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, val_buffer_max_size_);
+                    io_buffers_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, val_buffer_max_size_);
                 }
                 const string value_file_path = dir_ + "/" + value_file_name;
                 // Value Files.
@@ -584,57 +587,57 @@ namespace polar_race {
         auto range_init_end_clock = high_resolution_clock::now();
         double elapsed_time = duration_cast<nanoseconds>(range_init_end_clock - range_init_start_clock).count() /
                               static_cast<double>(1000000000);
-        log_info("Init elapsed time in tid %d, %.9lf s, ts: %.9lf s", tid, elapsed_time,
-                 std::chrono::duration_cast<std::chrono::nanoseconds>(
-                         range_init_end_clock.time_since_epoch()).count() / 1000000000.0);
+        if (tid == 0) {
+            log_info("Init elapsed time in tid %d, %.9lf s, ts: %.9lf s", tid, elapsed_time,
+                     std::chrono::duration_cast<std::chrono::nanoseconds>(
+                             range_init_end_clock.time_since_epoch()).count() / 1000000000.0);
+        }
 
         // 2-level Loop.
         uint32_t lower_key_par_id = 0;
         uint32_t upper_key_par_id = KEY_BUCKET_NUM - 1;
         for (uint32_t key_par_id = lower_key_par_id; key_par_id < upper_key_par_id + 1; key_par_id++) {
-#ifdef LOG_BARRIER_STRAGGERLER
-            if (key_par_id % 256 == 0) {
-                range_init_start_clock = high_resolution_clock::now();
-                log_info("In bucket: %d, checking straggler in tid %d, ts: %.9lf s", key_par_id, tid,
-                         std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                 range_init_start_clock.time_since_epoch()).count() / 1000000000.0);
-            }
-#endif
             if (tid == 0) {
                 auto wait_start_clock = high_resolution_clock::now();
-#ifdef LOG_WAIT_TIME
-                log_info("Start wait io ts: %.9lf s",
-                         std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                 wait_start_clock.time_since_epoch()).count() / 1000000000.0);
-#endif
                 futures_[key_par_id].get();
                 auto wait_end_clock = high_resolution_clock::now();
                 elapsed_time = duration_cast<nanoseconds>(wait_end_clock - wait_start_clock).count() /
                                static_cast<double>(1000000000);
-#ifdef LOG_WAIT_TIME
-                log_info("Elapsed wait io time, %.9lf s, ts: %.9lf s", 0, elapsed_time,
-                         std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                 wait_end_clock.time_since_epoch()).count() / 1000000000.0);
-#endif
                 wait_get_time_ += elapsed_time;
-            } else {
+            }else{
                 futures_[key_par_id].get();
+            }
+            {
+                // Parallel Gathering.
+                uint32_t inner_loop_buffer_idx = key_par_id % MAX_BUFFER_NUM;
+                uint32_t total_gather_cnt = mmap_key_meta_cnt_[key_par_id];
+                uint32_t avg = total_gather_cnt / total_range_num_threads_ + 1;
+                uint32_t my_end = std::min<uint32_t>(total_gather_cnt, avg * (tid + 1));
+                for (uint32_t in_par_id = avg * tid; in_par_id < my_end; in_par_id++) {
+                    uint64_t val_id = index_[key_par_id][in_par_id].value_offset_;
+                    memcpy(shared_buffer_ + VALUE_SIZE * in_par_id,
+                           io_buffers_[inner_loop_buffer_idx] + val_id * VALUE_SIZE, VALUE_SIZE);
+                }
+            }
+            range_barrier_ptr_->Wait();
+            if (tid == 0) {
+                // Notify.
+                uint32_t next_bucket_idx = key_par_id + MAX_BUFFER_NUM;
+                if (next_bucket_idx < upper_key_par_id + 1) {
+                    unique_lock<mutex> lock(bucket_mutex_arr_[next_bucket_idx]);
+                    bucket_is_ready_read_[next_bucket_idx] = true;
+                    bucket_cond_var_arr_[next_bucket_idx].notify_all();
+                }
             }
 
             uint32_t in_par_id_beg = 0;
             uint32_t in_par_id_end = mmap_key_meta_cnt_[key_par_id];
             uint64_t prev_key = 0;
-            uint32_t duplicates_num = 0;
-            uint32_t inner_loop_buffer_idx = key_par_id % MAX_BUFFER_NUM;
-            for (uint32_t in_par_id = in_par_id_beg; in_par_id < in_par_id_end; in_par_id++) {
+            for (uint32_t in_par_id = 0; in_par_id < in_par_id_end; in_par_id++) {
                 // Skip the equalities.
                 uint64_t big_endian_key = index_[key_par_id][in_par_id].key_;
                 if (in_par_id != in_par_id_beg) {
                     if (big_endian_key == prev_key) {
-                        if (tid == 0 && duplicates_num < 3 && key_par_id % 256 == 0) {
-                            log_info("duplicates...%d", duplicates_num);
-                            duplicates_num++;
-                        }
                         continue;
                     }
                 }
@@ -644,45 +647,9 @@ namespace polar_race {
                 (*(uint64_t *) polar_key_ptr_->data()) = bswap_64(big_endian_key);
 
                 // Value.
-                uint64_t val_id = index_[key_par_id][in_par_id].value_offset_;
-                memcpy((char *) polar_val_ptr_->data(),
-                       value_shared_buffers_[inner_loop_buffer_idx] + val_id * VALUE_SIZE, VALUE_SIZE);
-
+                memcpy((char *) polar_val_ptr_->data(), shared_buffer_ + in_par_id * VALUE_SIZE, VALUE_SIZE);
                 // Visit Key/Value.
                 visitor.Visit(*polar_key_ptr_, *polar_val_ptr_);
-
-#ifdef BARRIER_FOR_CACHE
-                // L3 Cache Locality (40MB).
-                local_block_offset++;
-                if (local_block_offset % 10000 == 0) {
-                    if (local_block_offset % 1000000 == 0 && tid == 0) {
-                        log_info("Barrier for Cache tid: %d, local off: %d", tid, local_block_offset);
-                    }
-                    range_barrier_ptr_->Wait();
-                }
-#endif
-            }
-#ifdef LOG_BARRIER_STRAGGERLER
-            if (key_par_id % 256 == 0) {
-                range_init_end_clock = high_resolution_clock::now();
-                elapsed_time = duration_cast<nanoseconds>(range_init_end_clock - range_init_start_clock).
-                        count() / static_cast<double>(1000000000);
-                log_info("In bucket: %d, checking straggler, in tid %d, elapsed time: %.9lf s, ts: %.9lf s", tid,
-                         elapsed_time, std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        range_init_end_clock.time_since_epoch()).count() / 1000000000.0);
-            }
-#endif
-            // End of inner loop, Submit IO Jobs.
-            int32_t my_order = ++bucket_consumed_num_[key_par_id];
-            if (my_order == total_range_num_threads_) {
-                uint32_t next_bucket_idx = key_par_id + MAX_BUFFER_NUM;
-
-                // Notify
-                if (next_bucket_idx < upper_key_par_id + 1) {
-                    unique_lock<mutex> lock(bucket_mutex_arr_[next_bucket_idx]);
-                    bucket_is_ready_read_[next_bucket_idx] = true;
-                    bucket_cond_var_arr_[next_bucket_idx].notify_all();
-                }
             }
         }
         if (tid == 0) { log_info("one round ok..."); }
