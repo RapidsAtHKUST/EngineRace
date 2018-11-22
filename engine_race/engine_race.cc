@@ -524,7 +524,7 @@ namespace polar_race {
             }
             for (auto next_bucket_idx = 0; next_bucket_idx < VAL_BUCKET_NUM; next_bucket_idx++) {
                 bucket_consumed_num_[next_bucket_idx].store(0);
-                log_info("next bucket id: %d", next_bucket_idx);
+//                log_info("next bucket id: %d", next_bucket_idx);
                 futures_[next_bucket_idx] = range_io_worker_pool_->enqueue([this, next_bucket_idx]() {
                     unique_lock<mutex> lock(bucket_mutex_arr_[next_bucket_idx]);
                     if (!bucket_is_ready_read_[next_bucket_idx]) {
