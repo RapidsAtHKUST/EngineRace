@@ -604,9 +604,8 @@ namespace polar_race {
                 elapsed_time = duration_cast<nanoseconds>(wait_end_clock - wait_start_clock).count() /
                                static_cast<double>(1000000000);
                 wait_get_time_ += elapsed_time;
-            }else{
-                futures_[key_par_id].get();
             }
+            range_barrier_ptr_->Wait();
             {
                 // Parallel Gathering.
                 uint32_t inner_loop_buffer_idx = key_par_id % MAX_BUFFER_NUM;
