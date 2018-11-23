@@ -32,6 +32,9 @@
 #define MAX_BUFFER_NUM (3u)
 #define IO_POOL_SIZE (1u)
 
+#define FALLOCATE_MODE (0)
+#define ESTIMATED_COUNT (68000000)
+
 namespace polar_race {
     using namespace std;
 
