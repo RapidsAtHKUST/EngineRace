@@ -789,7 +789,7 @@ namespace polar_race {
                                     (mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry) + 4095) / 4096 * 4096;
                             auto ret = pread(write_key_file_dp_[key_par_id], index_[key_par_id],
                                              (size_t) aligned_size, 0);
-                            if (ret != aligned_size) {
+                            if (ret != mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry)) {
                                 log_info("ret: %d, err: %s", ret, strerror(errno));
                             }
                             assert(ret == mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry));
