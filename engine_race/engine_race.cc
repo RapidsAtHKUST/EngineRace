@@ -122,7 +122,7 @@ namespace polar_race {
             write_value_file_dp_(nullptr), write_value_buffer_file_dp_(nullptr),
             mmap_value_aligned_buffer_(nullptr), aligned_read_buffer_(nullptr),
             barrier_(WRITE_BARRIER_NUM), read_barrier_(READ_BARRIER_NUM), range_barrier_ptr_(nullptr),
-            is_sorted_(nullptr), is_range_init_(false), polar_str_pairs_(NUM_THREADS),
+            is_sorted_(nullptr), is_range_init_(false), polar_keys_(NUM_THREADS),
             total_time_(0), total_io_sleep_time_(0), wait_get_time_(0),
             val_buffer_max_size_(0), range_io_worker_pool_(nullptr), key_io_worker_pool_(nullptr),
             bucket_mutex_arr_(nullptr), bucket_cond_var_arr_(nullptr),
@@ -324,13 +324,10 @@ namespace polar_race {
 
         // Range: Thread.
         if (is_range_init_) {
-            for (auto &kv_pair : polar_str_pairs_) {
-                if (kv_pair.first != nullptr)
-                    delete[] kv_pair.first->data();
-                delete kv_pair.first;
-                if (kv_pair.second != nullptr)
-                    delete[] kv_pair.second->data();
-                delete kv_pair.second;
+            for (auto &kv_pair : polar_keys_) {
+                if (kv_pair != nullptr)
+                    delete[] kv_pair->data();
+                delete kv_pair;
             }
         }
         delete range_barrier_ptr_;
@@ -593,7 +590,7 @@ namespace polar_race {
         static thread_local uint32_t local_block_offset = 0;
         static thread_local uint32_t invocation_num = 0;
         static thread_local PolarString *polar_key_ptr_;
-        static thread_local PolarString *polar_val_ptr_;
+        static thread_local PolarString polar_val_ptr_;
 
         auto range_init_start_clock = high_resolution_clock::now();
 
@@ -605,11 +602,8 @@ namespace polar_race {
         // Thread Local Key/Value Init.
         if (local_block_offset == 0) {
             char *key_chars = new char[sizeof(uint64_t)];
-            char *val_chars = new char[VALUE_SIZE];
-            polar_str_pairs_[tid].first = new PolarString(key_chars, sizeof(uint64_t));
-            polar_key_ptr_ = polar_str_pairs_[tid].first;
-            polar_str_pairs_[tid].second = new PolarString(val_chars, VALUE_SIZE);
-            polar_val_ptr_ = polar_str_pairs_[tid].second;
+            polar_keys_[tid] = new PolarString(key_chars, sizeof(uint64_t));
+            polar_key_ptr_ = polar_keys_[tid];
         }
         uint64_t key_lower_uint64 = polar_str_to_big_endian_uint64(lower);
         uint64_t key_upper_uint64 = polar_str_to_big_endian_uint64(upper);
@@ -673,11 +667,10 @@ namespace polar_race {
 
                 // Value.
                 uint64_t val_id = index_[key_par_id][in_par_id].value_offset_;
-                memcpy((char *) polar_val_ptr_->data(),
-                       value_shared_buffers_[inner_loop_buffer_idx] + val_id * VALUE_SIZE, VALUE_SIZE);
-
+                polar_val_ptr_ = PolarString(value_shared_buffers_[inner_loop_buffer_idx] + val_id * VALUE_SIZE,
+                                             VALUE_SIZE);
                 // Visit Key/Value.
-                visitor.Visit(*polar_key_ptr_, *polar_val_ptr_);
+                visitor.Visit(*polar_key_ptr_, polar_val_ptr_);
             }
             // End of inner loop, Submit IO Jobs.
             int32_t my_order = ++bucket_consumed_num_[key_par_id];

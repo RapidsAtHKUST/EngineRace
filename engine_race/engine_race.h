@@ -77,7 +77,7 @@ namespace polar_race {
         string dir_;
 
         // Range Related
-        vector<pair<PolarString *, PolarString *>> polar_str_pairs_;
+        vector<PolarString *> polar_keys_;
 
         mutex range_mtx_;
         condition_variable range_init_cond_;
