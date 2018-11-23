@@ -27,9 +27,10 @@
 #include "stat.h"
 
 #define STAT
-//#define BARRIER_FOR_CACHE
 
 namespace polar_race {
+    vector<KeyEntry *> index_;
+
     using namespace std::chrono;
     std::chrono::time_point<std::chrono::high_resolution_clock> clock_start;
     std::chrono::time_point<std::chrono::high_resolution_clock> clock_end;
@@ -313,9 +314,9 @@ namespace polar_race {
         delete[] key_mtx_;
         delete[] is_sorted_;
         // Free indices
-        for (KeyEntry *index_partition: index_) {
-            free(index_partition);
-        }
+//        for (KeyEntry *index_partition: index_) {
+//            free(index_partition);
+//        }
 
         // Value.
         for (uint32_t i = 0; i < VAL_BUCKET_NUM; ++i) {
@@ -517,7 +518,7 @@ namespace polar_race {
                 auto range_clock_end = high_resolution_clock::now();
                 double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                                       static_cast<double>(1000000000);
-                log_info("elapsed read time in first sync, %.9lf s", 0, elapsed_time);
+                log_info("Elapsed time in first sync, %.9lf s", 0, elapsed_time);
 
                 total_range_num_threads_ = range_num_threads_count + 1;
                 range_barrier_ptr_ = new Barrier(static_cast<size_t>(total_range_num_threads_));
@@ -599,10 +600,11 @@ namespace polar_race {
         auto range_init_end_clock = high_resolution_clock::now();
         double elapsed_time = duration_cast<nanoseconds>(range_init_end_clock - range_init_start_clock).count() /
                               static_cast<double>(1000000000);
-        log_info("Init elapsed time in tid %d, %.9lf s, ts: %.9lf s", tid, elapsed_time,
-                 std::chrono::duration_cast<std::chrono::nanoseconds>(
-                         range_init_end_clock.time_since_epoch()).count() / 1000000000.0);
-
+        if (tid == 0) {
+            log_info("Init elapsed time in tid %d, %.9lf s, ts: %.9lf s", tid, elapsed_time,
+                     std::chrono::duration_cast<std::chrono::nanoseconds>(
+                             range_init_end_clock.time_since_epoch()).count() / 1000000000.0);
+        }
         // 2-level Loop.
         uint32_t lower_key_par_id = 0;
         uint32_t upper_key_par_id = KEY_BUCKET_NUM - 1;
@@ -734,76 +736,82 @@ namespace polar_race {
         }
     }
 
+#ifdef POSTPONE_READ
     void EngineRace::LazyLoadIndex(uint32_t key_par_id) {
-        if (!is_sorted_[key_par_id] && mmap_key_meta_cnt_[key_par_id] > 0) {
-            unique_lock<mutex> lock(key_mtx_[key_par_id]);
-            if (!is_sorted_[key_par_id]) {
-                auto ret = pread(write_key_file_dp_[key_par_id], index_[key_par_id],
-                                 mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry), 0);
-                if (ret != mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry)) {
-                    log_info("ret: %d, err: %s", ret, strerror(errno));
+            if (!is_sorted_[key_par_id] && mmap_key_meta_cnt_[key_par_id] > 0) {
+                unique_lock<mutex> lock(key_mtx_[key_par_id]);
+                if (!is_sorted_[key_par_id]) {
+                    auto ret = pread(write_key_file_dp_[key_par_id], index_[key_par_id],
+                                     mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry), 0);
+                    if (ret != mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry)) {
+                        log_info("ret: %d, err: %s", ret, strerror(errno));
+                    }
+    //                assert(ret == mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry));
+                    sort(index_[key_par_id], index_[key_par_id] + mmap_key_meta_cnt_[key_par_id],
+                         [](KeyEntry l, KeyEntry r) {
+                             if (l.key_ == r.key_) {
+                                 return l.value_offset_ > r.value_offset_;
+                             } else {
+                                 return l.key_ < r.key_;
+                             }
+                         });
+                    is_sorted_[key_par_id] = true;
                 }
-//                assert(ret == mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry));
-                sort(index_[key_par_id], index_[key_par_id] + mmap_key_meta_cnt_[key_par_id],
-                     [](KeyEntry l, KeyEntry r) {
-                         if (l.key_ == r.key_) {
-                             return l.value_offset_ > r.value_offset_;
-                         } else {
-                             return l.key_ < r.key_;
-                         }
-                     });
-                is_sorted_[key_par_id] = true;
             }
         }
-    }
+#endif
 
     void EngineRace::BuildIndex(string dir) {
         log_info("Begin BI, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
-        // Key Cnt, Index Allocation.
-        is_sorted_ = new bool[KEY_BUCKET_NUM];
-        memset((void *) is_sorted_, 0, KEY_BUCKET_NUM);
-        index_ = vector<KeyEntry *>(KEY_BUCKET_NUM, nullptr);
-        for (int key_par_id = 0; key_par_id < KEY_BUCKET_NUM; key_par_id++) {
-            index_[key_par_id] = static_cast<KeyEntry *>(malloc(mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry)));
-        }
+        if (index_.empty()) {
+            // Key Cnt, Index Allocation.
+            is_sorted_ = new bool[KEY_BUCKET_NUM];
+            memset((void *) is_sorted_, 0, KEY_BUCKET_NUM);
+            index_ = vector<KeyEntry *>(KEY_BUCKET_NUM, nullptr);
+            for (int key_par_id = 0; key_par_id < KEY_BUCKET_NUM; key_par_id++) {
+                index_[key_par_id] = static_cast<KeyEntry *>(malloc(mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry)));
+            }
 
-        // Flush tmp Files
-        FlushTmpFiles(std::move(dir));
+            // Flush tmp Files
+            FlushTmpFiles(std::move(dir));
 
 #ifndef POSTPONE_READ
-        // Read each key file.
-        vector<thread> workers(NUM_THREADS);
-        for (uint32_t tid = 0; tid < NUM_THREADS; ++tid) {
-            workers[tid] = move(thread([tid, this]() {
-                for (uint32_t key_par_id = tid; key_par_id < KEY_BUCKET_NUM; key_par_id += NUM_THREADS) {
-                    if (mmap_key_meta_cnt_[key_par_id] > 0) {
-                        auto ret = pread(write_key_file_dp_[key_par_id], index_[key_par_id],
-                                         mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry), 0);
-                        if (ret != mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry)) {
-                            log_info("ret: %d, err: %s", ret, strerror(errno));
+            // Read each key file.
+            vector<thread> workers(NUM_THREADS);
+            for (uint32_t tid = 0; tid < NUM_THREADS; ++tid) {
+                workers[tid] = move(thread([tid, this]() {
+                    for (uint32_t key_par_id = tid; key_par_id < KEY_BUCKET_NUM; key_par_id += NUM_THREADS) {
+                        if (mmap_key_meta_cnt_[key_par_id] > 0) {
+                            auto ret = pread(write_key_file_dp_[key_par_id], index_[key_par_id],
+                                             mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry), 0);
+                            if (ret != mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry)) {
+                                log_info("ret: %d, err: %s", ret, strerror(errno));
+                            }
+                            assert(ret == mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry));
+                            sort(index_[key_par_id], index_[key_par_id] + mmap_key_meta_cnt_[key_par_id],
+                                 [](KeyEntry l, KeyEntry r) {
+                                     if (l.key_ == r.key_) {
+                                         return l.value_offset_ > r.value_offset_;
+                                     } else {
+                                         return l.key_ < r.key_;
+                                     }
+                                 });
                         }
-                        assert(ret == mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry));
-                        sort(index_[key_par_id], index_[key_par_id] + mmap_key_meta_cnt_[key_par_id],
-                             [](KeyEntry l, KeyEntry r) {
-                                 if (l.key_ == r.key_) {
-                                     return l.value_offset_ > r.value_offset_;
-                                 } else {
-                                     return l.key_ < r.key_;
-                                 }
-                             });
                     }
-                }
-            }));
-        }
-        for (uint32_t i = 0; i < NUM_THREADS; ++i) {
-            workers[i].join();
-        }
+                }));
+            }
+            for (uint32_t i = 0; i < NUM_THREADS; ++i) {
+                workers[i].join();
+            }
 #endif
+        }
         clock_end = high_resolution_clock::now();
         log_info("Finish BI, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
-                 std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
+                 std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() /
+                 1000.0);
+
     }
 }  // namespace polar_race

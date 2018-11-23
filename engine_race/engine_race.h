@@ -29,8 +29,8 @@
 #define KEY_BUCKET_DIGITS (VAL_BUCKET_DIGITS)      // must be the same for the range query
 #define KEY_BUCKET_NUM (1 << KEY_BUCKET_DIGITS)
 
-#define MAX_BUFFER_NUM (5u)
-#define IO_POOL_SIZE (3u)
+#define MAX_BUFFER_NUM (3u)
+#define IO_POOL_SIZE (2u)
 
 namespace polar_race {
     using namespace std;
@@ -61,7 +61,6 @@ namespace polar_race {
         int *write_value_buffer_file_dp_;
         char **mmap_value_aligned_buffer_;
 
-        vector<KeyEntry *> index_;
         char **aligned_read_buffer_;
 
         Barrier barrier_;
@@ -123,8 +122,9 @@ namespace polar_race {
     private:
         void FlushTmpFiles(string dir);
 
+#ifdef POSTPONE_READ
         void LazyLoadIndex(uint32_t key_par_id);
-
+#endif
         void BuildIndex(string dir);
     };
 
