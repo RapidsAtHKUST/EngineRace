@@ -23,14 +23,14 @@
 #define WRITE_BARRIER_NUM (16)
 #define READ_BARRIER_NUM (32)
 
-#define VAL_BUCKET_DIGITS (10)
+#define VAL_BUCKET_DIGITS (9)
 #define VAL_BUCKET_NUM (1 << VAL_BUCKET_DIGITS)
 
 #define KEY_BUCKET_DIGITS (VAL_BUCKET_DIGITS)      // must be the same for the range query
 #define KEY_BUCKET_NUM (1 << KEY_BUCKET_DIGITS)
 
-#define MAX_BUFFER_NUM (4u)
-#define IO_POOL_SIZE (2u)
+#define MAX_BUFFER_NUM (3u)
+#define IO_POOL_SIZE (1u)
 
 namespace polar_race {
     using namespace std;
@@ -68,11 +68,15 @@ namespace polar_race {
         Barrier read_barrier_;
         Barrier *range_barrier_ptr_;
 
+        volatile bool is_read_init_;
+        mutex read_init_mtx_;
         volatile bool *is_sorted_;
         volatile bool is_range_init_;
         string dir_;
 
         // Range Related
+        KeyEntry **mmap_index_;
+
         vector<pair<PolarString *, PolarString *>> polar_str_pairs_;
 
         mutex range_mtx_;

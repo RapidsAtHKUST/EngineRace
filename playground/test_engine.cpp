@@ -17,7 +17,8 @@
 
 #define TO_UINT64(buffer) (*(uint64_t*)(buffer))
 
-#define ENABLE_READ
+//#define ENABLE_READ
+#define ENABLE_RANDOM
 
 static const char kEnginePath[] = "test_engine";
 
@@ -168,6 +169,7 @@ int main() {
     }
 #endif
 
+#ifdef ENABLE_RANDOM
     {
         log_info("range");
         // 3rd: sequential
@@ -196,6 +198,7 @@ int main() {
         }
         delete engine;
     }
+#endif
     log_info("correct...");
     return 0;
 }
