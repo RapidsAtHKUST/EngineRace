@@ -26,4 +26,6 @@ target_link_libraries(test_aio_linux_wrapper PRIVATE rt)
 add_executable(test_aio_linux_simple test_aio_linux_simple.cpp)
 target_link_libraries(test_aio_linux_simple PRIVATE rt)
 
+add_executable(test_cache test_cache.cpp ../engine_race/log.cc)
+
 #target_link_libraries(test_engine_nonoff PRIVATE ${CMAKE_SOURCE_DIR}/engine_race/lib/libengine.a)
