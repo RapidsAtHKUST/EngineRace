@@ -30,10 +30,10 @@
 #define KEY_BUCKET_NUM (1 << KEY_BUCKET_DIGITS)
 
 #define MAX_BUFFER_NUM (4u)
-#define IO_POOL_SIZE (1u)
+#define IO_POOL_SIZE (2u)
 
-#define KEY_IO_POOL_SIZE (8u)
-#define POSTPONE_READ
+//#define KEY_IO_POOL_SIZE (8u)
+//#define POSTPONE_READ
 
 namespace polar_race {
     using namespace std;
