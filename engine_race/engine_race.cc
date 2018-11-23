@@ -170,8 +170,8 @@ namespace polar_race {
                     exit(-1);
                 }
 //                ftruncate(write_value_file_dp_[i], static_cast<uint64_t>(VALUE_SIZE) * (TOTAL_COUNT / VAL_BUCKET_NUM));
-                fallocate(write_value_file_dp_[i], 0, 0,
-                          static_cast<uint64_t>(VALUE_SIZE) * (72000000 / VAL_BUCKET_NUM));
+                fallocate(write_value_file_dp_[i], 1, 0,
+                          static_cast<uint64_t>(VALUE_SIZE) * (68000000 / VAL_BUCKET_NUM));
 
                 size_t tmp_buffer_value_file_size = VALUE_SIZE * TMP_VALUE_BUFFER_SIZE;
                 write_value_buffer_file_dp_[i] = open(temp_buffer_value.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
@@ -466,7 +466,11 @@ namespace polar_race {
                      std::chrono::duration_cast<std::chrono::nanoseconds>(range_clock_end.time_since_epoch()).count() /
                      1000000000.0);
         }
-        total_time_ += elapsed_time;
+
+        {
+            unique_lock<mutex> lock(total_time_mtx_);
+            total_time_ += elapsed_time;
+        }
     }
 
     void EngineRace::InitForRange(int64_t tid) {

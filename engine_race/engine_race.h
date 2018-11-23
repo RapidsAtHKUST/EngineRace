@@ -23,14 +23,14 @@
 #define WRITE_BARRIER_NUM (16)
 #define READ_BARRIER_NUM (32)
 
-#define VAL_BUCKET_DIGITS (11)
+#define VAL_BUCKET_DIGITS (10)
 #define VAL_BUCKET_NUM (1 << VAL_BUCKET_DIGITS)
 
 #define KEY_BUCKET_DIGITS (VAL_BUCKET_DIGITS)      // must be the same for the range query
 #define KEY_BUCKET_NUM (1 << KEY_BUCKET_DIGITS)
 
-#define MAX_BUFFER_NUM (8u)
-#define IO_POOL_SIZE (4u)
+#define MAX_BUFFER_NUM (4u)
+#define IO_POOL_SIZE (2u)
 
 namespace polar_race {
     using namespace std;
@@ -80,6 +80,7 @@ namespace polar_race {
         vector<char *> value_shared_buffers_;
 
         vector<shared_future<void>> futures_;
+        mutex total_time_mtx_;
         double total_time_;
 
         double wait_get_time_;
