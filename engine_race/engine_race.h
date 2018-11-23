@@ -29,8 +29,11 @@
 #define KEY_BUCKET_DIGITS (VAL_BUCKET_DIGITS)      // must be the same for the range query
 #define KEY_BUCKET_NUM (1 << KEY_BUCKET_DIGITS)
 
-#define MAX_BUFFER_NUM (3u)
+#define MAX_BUFFER_NUM (5u)
 #define IO_POOL_SIZE (2u)
+#define KEY_IO_POOL_SIZE (8u)
+
+#define POSTPONE_READ
 
 namespace polar_race {
     using namespace std;
@@ -67,6 +70,8 @@ namespace polar_race {
         Barrier read_barrier_;
         Barrier *range_barrier_ptr_;
 
+        vector<KeyEntry *> index_;
+
         volatile bool *is_sorted_;
         volatile bool is_range_init_;
         string dir_;
@@ -79,6 +84,7 @@ namespace polar_race {
         vector<char *> value_shared_buffers_;
 
         vector<shared_future<void>> futures_;
+        vector<shared_future<void>> key_futures_;
         mutex total_time_mtx_;
         double total_time_;
 
@@ -86,6 +92,7 @@ namespace polar_race {
         double enqueue_time_;
         uint64_t val_buffer_max_size_;
         ThreadPool *range_io_worker_pool_;
+        ThreadPool *key_io_worker_pool_;
 
         mutex *bucket_mutex_arr_;
         condition_variable *bucket_cond_var_arr_;
@@ -123,8 +130,11 @@ namespace polar_race {
         void FlushTmpFiles(string dir);
 
 #ifdef POSTPONE_READ
+
         void LazyLoadIndex(uint32_t key_par_id);
+
 #endif
+
         void BuildIndex(string dir);
     };
 
