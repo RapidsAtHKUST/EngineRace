@@ -19,9 +19,9 @@
 #include "../engine_race/log.h"
 
 #define THREAD_NUM (64u)
-#define BUFF_SIZE (4096 * 1024 * 10)
-#define BUCKET_NUM (1000)
-#define BUCKET_BUFF_NUM (30)
+#define BUFF_SIZE (4096 * 1024 * 128)
+#define BUCKET_NUM (100)
+#define BUCKET_BUFF_NUM (10)
 
 char* global_buff[BUCKET_BUFF_NUM];
 
@@ -43,7 +43,9 @@ void thread_work(int tid){
     for(size_t bucket_idx = 0 ; bucket_idx < BUCKET_NUM; bucket_idx++){
         for(size_t idx = 0; idx < read_offsets[bucket_idx].size(); idx++){
             memcpy(internal_buff, global_buff[bucket_idx % BUCKET_BUFF_NUM] + read_offsets[bucket_idx][idx], 4096);
-            dummy_sum += internal_buff[0];
+            for(size_t i = 0; i < 4096; i+=16) {
+                dummy_sum += internal_buff[i];
+            }
         }
     }
     log_info("thread %d exit, sum: %ld", tid, dummy_sum);
@@ -58,7 +60,7 @@ int main(int argc, char** argv){
     log_info("generate data");
     for(size_t bucket_idx = 0; bucket_idx < BUCKET_BUFF_NUM; bucket_idx++) {
         global_buff[bucket_idx] = (char*)memalign(512, BUFF_SIZE);
-        for (size_t i = 0; i < BUFF_SIZE; i += 4096) {
+        for (size_t i = 0; i < BUFF_SIZE; i += 8) {
             global_buff[bucket_idx][i] = (char) dis(g);
         }
     }
