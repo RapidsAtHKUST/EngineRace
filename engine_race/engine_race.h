@@ -31,8 +31,8 @@
 
 #define MAX_BUFFER_NUM (4u)
 #define IO_POOL_SIZE (1u)
-#define KEY_IO_POOL_SIZE (8u)
 
+#define KEY_IO_POOL_SIZE (8u)
 #define POSTPONE_READ
 
 namespace polar_race {
@@ -87,9 +87,9 @@ namespace polar_race {
         vector<shared_future<void>> key_futures_;
         mutex total_time_mtx_;
         double total_time_;
+        double total_io_sleep_time_;
 
         double wait_get_time_;
-        double enqueue_time_;
         uint64_t val_buffer_max_size_;
         ThreadPool *range_io_worker_pool_;
         ThreadPool *key_io_worker_pool_;

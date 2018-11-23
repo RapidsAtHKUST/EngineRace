@@ -87,6 +87,7 @@ namespace polar_race {
     atomic_int write_num_threads(-1);
     atomic_int read_num_threads_count(-1);
     atomic_int range_num_threads_count(-1);
+    atomic_int io_threads_count(-1);
 
     const string value_meta_file_name = "polar.keymeta";
     const string key_meta_file_name = "polar.valmeta";
@@ -122,7 +123,7 @@ namespace polar_race {
             mmap_value_aligned_buffer_(nullptr), aligned_read_buffer_(nullptr),
             barrier_(WRITE_BARRIER_NUM), read_barrier_(READ_BARRIER_NUM), range_barrier_ptr_(nullptr),
             is_sorted_(nullptr), is_range_init_(false), polar_str_pairs_(NUM_THREADS),
-            total_time_(0), wait_get_time_(0), enqueue_time_(0),
+            total_time_(0), total_io_sleep_time_(0), wait_get_time_(0),
             val_buffer_max_size_(0), range_io_worker_pool_(nullptr), key_io_worker_pool_(nullptr),
             bucket_mutex_arr_(nullptr), bucket_cond_var_arr_(nullptr),
             bucket_is_ready_read_(nullptr), bucket_consumed_num_(nullptr), total_range_num_threads_(0) {
@@ -339,8 +340,8 @@ namespace polar_race {
         delete range_io_worker_pool_;
         delete key_io_worker_pool_;
         if (total_time_ != 0) {
-            log_info("Total Range Time: %.9lf s, wait: %.9lf s, enqueue: %.9lf s", total_time_, wait_get_time_,
-                     enqueue_time_);
+            log_info("Total Range Time: %.9lf s, wait: %.9lf s,  io thread sleep: %.9lf s",
+                     total_time_, wait_get_time_, total_io_sleep_time_);
         }
         clock_end = high_resolution_clock::now();
         log_info("Finish ~EngineRace(), time: %.3lf s, ts: %.3lf s",
@@ -446,8 +447,10 @@ namespace polar_race {
     }
 
     void EngineRace::ReadBucketToBuffer(uint32_t bucket_id) {
+        static thread_local double read_time = 0;
+        static thread_local int tid = ++io_threads_count;
         auto range_clock_beg = high_resolution_clock::now();
-        log_info("In bucket %d, ReadBucketToBuffer start ts: %.9lf s", bucket_id,
+        log_info("In bucket %d, Read in tid: %d, start ts: %.9lf s", bucket_id, tid,
                  std::chrono::duration_cast<std::chrono::nanoseconds>(range_clock_beg.time_since_epoch()).count() /
                  1000000000.0);
         auto buffer_id = static_cast<uint32_t>(bucket_id % MAX_BUFFER_NUM);
@@ -460,13 +463,16 @@ namespace polar_race {
         auto range_clock_end = high_resolution_clock::now();
         double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                               static_cast<double>(1000000000);
-        log_info("In bucket %d, ReadBucketToBuffer elapsed read time %.9lf s, ts: %.9lf s", bucket_id, elapsed_time,
-                 std::chrono::duration_cast<std::chrono::nanoseconds>(range_clock_end.time_since_epoch()).count() /
-                 1000000000.0);
+
         {
             unique_lock<mutex> lock(total_time_mtx_);
             total_time_ += elapsed_time;
         }
+        read_time += elapsed_time;
+        log_info("In bucket %d, Read time %.9lf s, ts: %.9lf s, tid: %d, acc-time: %.6lf s",
+                 bucket_id, elapsed_time,
+                 duration_cast<nanoseconds>(range_clock_end.time_since_epoch()).count() /
+                 1000000000.0, tid, read_time);
     }
 
     void EngineRace::InitForRange(int64_t tid) {
@@ -474,7 +480,6 @@ namespace polar_race {
             unique_lock<mutex> lock(range_mtx_);
             if (tid == 0) {
                 range_io_worker_pool_ = new ThreadPool(IO_POOL_SIZE);
-                key_io_worker_pool_ = new ThreadPool(KEY_IO_POOL_SIZE);
                 for (int i = 0; i < VAL_BUCKET_NUM; i++) {
                     val_buffer_max_size_ = max<uint64_t>(val_buffer_max_size_, mmap_val_meta_cnt_[i]);
                 }
@@ -500,6 +505,7 @@ namespace polar_race {
                 futures_.resize(VAL_BUCKET_NUM);
 
 #ifdef POSTPONE_READ
+                key_io_worker_pool_ = new ThreadPool(KEY_IO_POOL_SIZE);
                 key_futures_.resize(VAL_BUCKET_NUM);
                 for (auto next_bucket_idx = 0; next_bucket_idx < VAL_BUCKET_NUM; next_bucket_idx++) {
                     key_futures_[next_bucket_idx] = key_io_worker_pool_->enqueue([this, next_bucket_idx]() {
@@ -548,9 +554,20 @@ namespace polar_race {
                 futures_[next_bucket_idx] = range_io_worker_pool_->enqueue([this, next_bucket_idx]() {
                     unique_lock<mutex> lock(bucket_mutex_arr_[next_bucket_idx]);
                     if (!bucket_is_ready_read_[next_bucket_idx]) {
+                        auto range_clock_beg = high_resolution_clock::now();
+
                         bucket_cond_var_arr_[next_bucket_idx].wait(lock, [this, next_bucket_idx]() {
                             return bucket_is_ready_read_[next_bucket_idx];
                         });
+                        auto range_clock_end = high_resolution_clock::now();
+                        double sleep_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
+                                            static_cast<double>(1000000000);
+                        log_info("IO sleep in bucket :%d，elapsed time: %.9lf", next_bucket_idx, sleep_time);
+
+                        {
+                            unique_lock<mutex> lock_time(total_time_mtx_);
+                            total_io_sleep_time_ += sleep_time;
+                        }
                     }
                     ReadBucketToBuffer(next_bucket_idx);
                 });
