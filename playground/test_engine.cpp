@@ -17,7 +17,7 @@
 
 #define TO_UINT64(buffer) (*(uint64_t*)(buffer))
 
-//#define ENABLE_READ
+#define ENABLE_READ
 #define ENABLE_RANDOM
 
 static const char kEnginePath[] = "test_engine";

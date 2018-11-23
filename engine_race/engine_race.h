@@ -32,8 +32,8 @@
 #define MAX_BUFFER_NUM (3u)
 #define IO_POOL_SIZE (1u)
 
-#define FALLOCATE_MODE (0)
-#define ESTIMATED_COUNT (68000000)
+//#define FALLOCATE_MODE (0)
+//#define ESTIMATED_COUNT (68000000)
 
 namespace polar_race {
     using namespace std;
@@ -131,6 +131,8 @@ namespace polar_race {
         void FlushTmpFiles(string dir);
 
         void LazyLoadIndex(uint32_t key_par_id);
+
+        void InitIndex();
 
         void BuildIndex(string dir);
     };
