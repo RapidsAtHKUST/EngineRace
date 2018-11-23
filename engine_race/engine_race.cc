@@ -447,11 +447,9 @@ namespace polar_race {
 
     void EngineRace::ReadBucketToBuffer(uint32_t bucket_id) {
         auto range_clock_beg = high_resolution_clock::now();
-        if (bucket_id % 256 == 0) {
-            log_info("In bucket %d, ReadBucketToBuffer start ts: %.9lf s", bucket_id,
-                     std::chrono::duration_cast<std::chrono::nanoseconds>(range_clock_beg.time_since_epoch()).count() /
-                     1000000000.0);
-        }
+        log_info("In bucket %d, ReadBucketToBuffer start ts: %.9lf s", bucket_id,
+                 std::chrono::duration_cast<std::chrono::nanoseconds>(range_clock_beg.time_since_epoch()).count() /
+                 1000000000.0);
         auto buffer_id = static_cast<uint32_t>(bucket_id % MAX_BUFFER_NUM);
 
         auto ret = pread(write_value_file_dp_[bucket_id], value_shared_buffers_[buffer_id],
@@ -462,12 +460,9 @@ namespace polar_race {
         auto range_clock_end = high_resolution_clock::now();
         double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                               static_cast<double>(1000000000);
-        if (bucket_id % 256 == 0) {
-            log_info("In bucket %d, ReadBucketToBuffer elapsed read time %.9lf s, ts: %.9lf s", bucket_id, elapsed_time,
-                     std::chrono::duration_cast<std::chrono::nanoseconds>(range_clock_end.time_since_epoch()).count() /
-                     1000000000.0);
-        }
-
+        log_info("In bucket %d, ReadBucketToBuffer elapsed read time %.9lf s, ts: %.9lf s", bucket_id, elapsed_time,
+                 std::chrono::duration_cast<std::chrono::nanoseconds>(range_clock_end.time_since_epoch()).count() /
+                 1000000000.0);
         {
             unique_lock<mutex> lock(total_time_mtx_);
             total_time_ += elapsed_time;
@@ -585,9 +580,11 @@ namespace polar_race {
 
         auto range_init_start_clock = high_resolution_clock::now();
 
-        log_info("Start range ts: %.9lf s in tid %d",
-                 std::chrono::duration_cast<std::chrono::nanoseconds>(
-                         range_init_start_clock.time_since_epoch()).count() / 1000000000.0, tid);
+        if (tid == 0) {
+            log_info("Start range ts: %.9lf s in tid %d",
+                     std::chrono::duration_cast<std::chrono::nanoseconds>(
+                             range_init_start_clock.time_since_epoch()).count() / 1000000000.0, tid);
+        }
         // Thread Local Key/Value Init.
         if (local_block_offset == 0) {
             char *key_chars = new char[sizeof(uint64_t)];
