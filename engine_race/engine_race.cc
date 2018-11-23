@@ -29,7 +29,7 @@
 #define STAT
 
 namespace polar_race {
-    vector<KeyEntry *> index_;
+    KeyEntry **index_ = nullptr;
 
     using namespace std::chrono;
     std::chrono::time_point<std::chrono::high_resolution_clock> clock_start;
@@ -218,16 +218,16 @@ namespace polar_race {
             val_meta_file_dp_ = open(val_meta_file_path.c_str(), O_RDONLY, FILE_PRIVILEGE);
             mmap_val_meta_cnt_ = (uint32_t *) mmap(nullptr, sizeof(uint32_t) * (VAL_BUCKET_NUM),
                                                    PROT_READ, MAP_PRIVATE | MAP_POPULATE, val_meta_file_dp_, 0);
-            key_meta_file_dp_ = open(key_meta_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
+            key_meta_file_dp_ = open(key_meta_file_path.c_str(), O_RDONLY, FILE_PRIVILEGE);
             mmap_key_meta_cnt_ = (uint32_t *) mmap(nullptr, sizeof(uint32_t) * (KEY_BUCKET_NUM),
-                                                   PROT_READ | PROT_WRITE, MAP_SHARED, key_meta_file_dp_, 0);
+                                                   PROT_READ, MAP_PRIVATE | MAP_POPULATE, key_meta_file_dp_, 0);
 
             // Value.
             for (int i = 0; i < VAL_BUCKET_NUM; ++i) {
                 string temp_value = value_file_path + to_string(i);
                 string temp_buffer_value = tmp_value_file_path + to_string(i);
 
-                write_value_file_dp_[i] = open(temp_value.c_str(), O_RDWR | O_DIRECT, FILE_PRIVILEGE);
+                write_value_file_dp_[i] = open(temp_value.c_str(), O_RDONLY | O_DIRECT, FILE_PRIVILEGE);
                 write_value_buffer_file_dp_[i] = open(temp_buffer_value.c_str(), O_RDWR, FILE_PRIVILEGE);
 
                 size_t tmp_buffer_value_file_size = VALUE_SIZE * TMP_VALUE_BUFFER_SIZE;
@@ -240,9 +240,9 @@ namespace polar_race {
             for (int i = 0; i < KEY_BUCKET_NUM; ++i) {
                 string temp_key = key_file_path + to_string(i);
                 string temp_buffer_key = tmp_key_file_path + to_string(i);
-                write_key_file_dp_[i] = open(temp_key.c_str(), O_RDWR, FILE_PRIVILEGE);
+                write_key_file_dp_[i] = open(temp_key.c_str(), O_RDONLY | O_DIRECT, FILE_PRIVILEGE);
 
-                write_key_buffer_file_dp_[i] = open(temp_buffer_key.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
+                write_key_buffer_file_dp_[i] = open(temp_buffer_key.c_str(), O_RDWR, FILE_PRIVILEGE);
                 constexpr size_t tmp_buffer_key_file_size = sizeof(KeyEntry) * (size_t) TMP_KEY_BUFFER_SIZE;
                 mmap_key_aligned_buffer_[i] = (KeyEntry *) mmap(nullptr, tmp_buffer_key_file_size, \
                         PROT_READ | PROT_WRITE, MAP_SHARED, write_key_buffer_file_dp_[i], 0);
@@ -765,13 +765,14 @@ namespace polar_race {
         log_info("Begin BI, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
-        if (index_.empty()) {
+        if (index_ == nullptr) {
             // Key Cnt, Index Allocation.
             is_sorted_ = new bool[KEY_BUCKET_NUM];
             memset((void *) is_sorted_, 0, KEY_BUCKET_NUM);
-            index_ = vector<KeyEntry *>(KEY_BUCKET_NUM, nullptr);
+            index_ = new KeyEntry *[KEY_BUCKET_NUM];
             for (int key_par_id = 0; key_par_id < KEY_BUCKET_NUM; key_par_id++) {
-                index_[key_par_id] = static_cast<KeyEntry *>(malloc(mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry)));
+                size_t aligned_size = (mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry) + 4095) / 4096 * 4096;
+                index_[key_par_id] = static_cast<KeyEntry *>(memalign(FILESYSTEM_BLOCK_SIZE, aligned_size));
             }
 
             // Flush tmp Files
@@ -784,9 +785,11 @@ namespace polar_race {
                 workers[tid] = move(thread([tid, this]() {
                     for (uint32_t key_par_id = tid; key_par_id < KEY_BUCKET_NUM; key_par_id += NUM_THREADS) {
                         if (mmap_key_meta_cnt_[key_par_id] > 0) {
+                            long aligned_size =
+                                    (mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry) + 4095) / 4096 * 4096;
                             auto ret = pread(write_key_file_dp_[key_par_id], index_[key_par_id],
-                                             mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry), 0);
-                            if (ret != mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry)) {
+                                             (size_t) aligned_size, 0);
+                            if (ret != aligned_size) {
                                 log_info("ret: %d, err: %s", ret, strerror(errno));
                             }
                             assert(ret == mmap_key_meta_cnt_[key_par_id] * sizeof(KeyEntry));
