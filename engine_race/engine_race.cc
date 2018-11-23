@@ -3,6 +3,10 @@
 // Copyright [2018] Alibaba Cloud All rights reserved
 #include "engine_race.h"
 
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/mman.h>
@@ -143,6 +147,11 @@ namespace polar_race {
         write_value_buffer_file_dp_ = new int[VAL_BUCKET_NUM];
         mmap_value_aligned_buffer_ = new char *[VAL_BUCKET_NUM];
 
+#ifndef FALLOC_FL_KEEP_SIZE
+#define FALLOC_FL_KEEP_SIZE 1
+        log_info("Redifine FALLOC_FL_KEEP_SIZE");
+#endif
+
         if (!file_exists(val_meta_file_path.c_str())) {
             log_info("Initialize the database...");
             // Meta.
@@ -170,8 +179,10 @@ namespace polar_race {
                     exit(-1);
                 }
 //                ftruncate(write_value_file_dp_[i], static_cast<uint64_t>(VALUE_SIZE) * (TOTAL_COUNT / VAL_BUCKET_NUM));
-                fallocate(write_value_file_dp_[i], 1, 0,
-                          static_cast<uint64_t>(VALUE_SIZE) * (68000000 / VAL_BUCKET_NUM));
+
+                auto ret = fallocate(write_value_file_dp_[i], FALLOC_FL_KEEP_SIZE, 0,
+                          static_cast<uint64_t>(VALUE_SIZE) * (TOTAL_COUNT * 1.03 / VAL_BUCKET_NUM));
+                log_info("Fallocate return value %d", ret);
 
                 size_t tmp_buffer_value_file_size = VALUE_SIZE * TMP_VALUE_BUFFER_SIZE;
                 write_value_buffer_file_dp_[i] = open(temp_buffer_value.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
@@ -190,8 +201,8 @@ namespace polar_race {
                 string temp_key = key_file_path + to_string(i);
                 string temp_buffer_key = tmp_key_file_path + to_string(i);
                 write_key_file_dp_[i] = open(temp_key.c_str(), O_RDWR | O_CREAT | O_DIRECT, FILE_PRIVILEGE);
-                ftruncate(write_key_file_dp_[i],
-                          static_cast<uint64_t>(sizeof(KeyEntry)) * (TOTAL_COUNT / KEY_BUCKET_NUM));
+                fallocate(write_key_file_dp_[i], FALLOC_FL_KEEP_SIZE, 0,
+                          static_cast<uint64_t>(sizeof(KeyEntry)) * (TOTAL_COUNT * 1.03 / KEY_BUCKET_NUM));
 
                 constexpr size_t tmp_buffer_key_file_size = sizeof(KeyEntry) * (size_t) TMP_KEY_BUFFER_SIZE;
                 write_key_buffer_file_dp_[i] = open(temp_buffer_key.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
@@ -359,9 +370,9 @@ namespace polar_race {
             first_write_clk = high_resolution_clock::now();
         }
 #endif
-        if (local_block_offset % 10000 == 0 && tid < WRITE_BARRIER_NUM) {
-            barrier_.Wait();
-        }
+//        if (local_block_offset % 10000 == 0 && tid < WRITE_BARRIER_NUM) {
+//            barrier_.Wait();
+//        }
 
         // Value.
         uint32_t val_offset_get;
