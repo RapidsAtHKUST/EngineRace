@@ -29,7 +29,7 @@
 #define NUM_READ_KEY_THREADS (NUM_THREADS)
 #define NUM_FLUSH_TMP_THREADS (8u)
 
-#define MAX_BUFFER_NUM (5u)
+#define MAX_BUFFER_NUM (4u)
 #define IO_POOL_SIZE (3u)
 
 #define KEY_READ_BLOCK_COUNT (8192u)

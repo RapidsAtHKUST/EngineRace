@@ -323,7 +323,7 @@ namespace polar_race {
             first_write_clk = high_resolution_clock::now();
         }
 #endif
-        if (local_block_offset % 50000 == 0 && tid < WRITE_BARRIER_NUM) {
+        if (local_block_offset % 100000 == 0 && local_block_offset < 900000 && tid < WRITE_BARRIER_NUM) {
             write_barrier_.Wait();
         }
         // Value.
