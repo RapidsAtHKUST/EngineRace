@@ -30,7 +30,7 @@
 #define NUM_FLUSH_TMP_THREADS (8u)
 
 #define MAX_BUFFER_NUM (5u)
-#define IO_POOL_SIZE (1u)
+#define IO_POOL_SIZE (2u)
 
 #define KEY_READ_BLOCK_COUNT (8192u)
 
@@ -114,6 +114,8 @@ namespace polar_race {
                       Visitor &visitor) override;
 
     private:
+        void TestReadToBuckets(uint32_t bucket_id);
+
         void TestDevice();
 
         void TestDeviceMultiThreading();
