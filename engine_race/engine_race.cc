@@ -242,12 +242,6 @@ namespace polar_race {
         log_info("Start ~EngineRace(), time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
-        // Meta.
-        if (mmap_meta_cnt_ != nullptr) {
-            munmap(mmap_meta_cnt_, sizeof(uint32_t) * (BUCKET_NUM));
-        }
-        close(meta_cnt_file_dp_);
-
         // Thread.
         for (uint32_t i = 0; i < NUM_THREADS; ++i) {
             if (aligned_read_buffer_ != nullptr) {
@@ -258,6 +252,17 @@ namespace polar_race {
 
         // Key.
         for (uint32_t i = 0; i < BUCKET_NUM; ++i) {
+            if (index_.empty()) {
+                if ((mmap_meta_cnt_[i] % TMP_KEY_BUFFER_SIZE) != 0) {
+                    log_info("Flush Key in bucket: %d", i);
+                    size_t write_length = TMP_KEY_BUFFER_SIZE * sizeof(uint64_t);
+                    size_t write_offset =
+                            static_cast<uint64_t>(mmap_meta_cnt_[i] / TMP_KEY_BUFFER_SIZE *
+                                                  TMP_KEY_BUFFER_SIZE) * sizeof(uint64_t);
+                    pwrite(key_file_dp_[i], mmap_key_aligned_buffer_[i], write_length, write_offset);
+                }
+                ftruncate(key_buffer_file_dp_[i], 0);
+            }
             if (mmap_key_aligned_buffer_[i] != nullptr) {
                 munmap(mmap_key_aligned_buffer_[i], sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE);
             }
@@ -275,6 +280,20 @@ namespace polar_race {
 
         // Value.
         for (uint32_t i = 0; i < BUCKET_NUM; ++i) {
+            if (index_.empty()) {
+                if ((mmap_meta_cnt_[i] % TMP_VALUE_BUFFER_SIZE) != 0) {
+                    size_t write_length = (mmap_meta_cnt_[i] % TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
+                    size_t write_offset =
+                            static_cast<uint64_t>(mmap_meta_cnt_[i] / TMP_VALUE_BUFFER_SIZE *
+                                                  TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
+                    log_info("Flush Value in bucket: %d", i);
+                    pwrite(key_file_dp_[i], mmap_value_aligned_buffer_[i], write_length, write_offset);
+                    int ret = ftruncate(key_buffer_file_dp_[i], 0);
+                    if (ret < 0) {
+                        log_info("Flush ftruncate Err: %d, %s", ret, strerror(errno));
+                    }
+                }
+            }
             if (mmap_value_aligned_buffer_[i] != nullptr) {
                 munmap(mmap_value_aligned_buffer_[i], VALUE_SIZE * (size_t) TMP_VALUE_BUFFER_SIZE);
             }
@@ -285,6 +304,12 @@ namespace polar_race {
         }
         delete[] value_file_dp_;
         delete[] mmap_value_aligned_buffer_;
+
+        // Meta.
+        if (mmap_meta_cnt_ != nullptr) {
+            munmap(mmap_meta_cnt_, sizeof(uint32_t) * (BUCKET_NUM));
+        }
+        close(meta_cnt_file_dp_);
 
         // Range: Thread.
         if (is_range_init_) {
@@ -401,9 +426,10 @@ namespace polar_race {
         static thread_local int tid = ++io_threads_count;
         auto range_clock_beg = high_resolution_clock::now();
 #ifdef STAT
-        log_info("In bucket %d, Read in tid: %d, start ts: %.9lf s", bucket_id, tid,
-                 std::chrono::duration_cast<std::chrono::nanoseconds>(range_clock_beg.time_since_epoch()).count() /
-                 1000000000.0);
+        if (bucket_id % 64 == 63)
+            log_info("In bucket %d, Read in tid: %d, start ts: %.9lf s", bucket_id, tid,
+                     std::chrono::duration_cast<std::chrono::nanoseconds>(range_clock_beg.time_since_epoch()).count() /
+                     1000000000.0);
 #endif
         auto buffer_id = static_cast<uint32_t>(bucket_id % MAX_BUFFER_NUM);
 
@@ -422,10 +448,11 @@ namespace polar_race {
         }
 #ifdef STAT
         read_time += elapsed_time;
-        log_info("In bucket %d, Read time %.9lf s, ts: %.9lf s, tid: %d, acc-time: %.6lf s",
-                 bucket_id, elapsed_time,
-                 duration_cast<nanoseconds>(range_clock_end.time_since_epoch()).count() /
-                 1000000000.0, tid, read_time);
+        if (bucket_id % 64 == 63)
+            log_info("In bucket %d, Read time %.9lf s, ts: %.9lf s, tid: %d, acc-time: %.6lf s",
+                     bucket_id, elapsed_time,
+                     duration_cast<nanoseconds>(range_clock_end.time_since_epoch()).count() /
+                     1000000000.0, tid, read_time);
 #endif
     }
 
@@ -647,9 +674,7 @@ namespace polar_race {
                                     static_cast<uint64_t>(mmap_meta_cnt_[bucket_id] / TMP_VALUE_BUFFER_SIZE *
                                                           TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
                             auto tmp_fd = open(temp_value.c_str(), O_RDWR, FILE_PRIVILEGE);
-#ifdef DEBUG
                             log_info("Flush Val in bucket: %d", bucket_id);
-#endif
                             pwrite(tmp_fd, mmap_value_aligned_buffer_[bucket_id], write_length, write_offset);
                             close(tmp_fd);
                         }
@@ -667,9 +692,7 @@ namespace polar_race {
                                     key_buffer_file_dp_[bucket_id], 0);
 
                             string temp_key = key_file_path + to_string(bucket_id);
-#ifdef DEBUG
                             log_info("Flush Key in bucket: %d", bucket_id);
-#endif
                             size_t write_length = (mmap_meta_cnt_[bucket_id] % TMP_KEY_BUFFER_SIZE) * sizeof(uint64_t);
                             size_t write_offset =
                                     static_cast<uint64_t>(mmap_meta_cnt_[bucket_id] / TMP_KEY_BUFFER_SIZE *
