@@ -13,27 +13,20 @@
 #include "thread_pool.h"
 
 #define NUM_THREADS (64)
-#define TOTAL_COUNT (64000000)
 #define VALUE_SIZE (4096)
 #define FILESYSTEM_BLOCK_SIZE (4096)
 #define FILE_PRIVILEGE (0644)
 #define TMP_KEY_BUFFER_SIZE (1024)
 #define TMP_VALUE_BUFFER_SIZE (4)
 #define TO_UINT64(buffer) (*(uint64_t*)(buffer))
-#define WRITE_BARRIER_NUM (16)
+
 #define READ_BARRIER_NUM (32)
 
-#define VAL_BUCKET_DIGITS (10)
-#define VAL_BUCKET_NUM (1 << VAL_BUCKET_DIGITS)
+#define BUCKET_DIGITS (10)      // must be the same for the range query
+#define BUCKET_NUM (1 << BUCKET_DIGITS)
 
-#define KEY_BUCKET_DIGITS (VAL_BUCKET_DIGITS)      // must be the same for the range query
-#define KEY_BUCKET_NUM (1 << KEY_BUCKET_DIGITS)
-
-#define MAX_BUFFER_NUM (4u)
-#define IO_POOL_SIZE (2u)
-
-//#define KEY_IO_POOL_SIZE (8u)
-//#define POSTPONE_READ
+#define MAX_BUFFER_NUM (3u)
+#define IO_POOL_SIZE (3u)
 
 namespace polar_race {
     using namespace std;
@@ -48,35 +41,29 @@ namespace polar_race {
     class EngineRace : public Engine {
     public:
         int key_meta_file_dp_;
-        uint32_t *mmap_key_meta_cnt_;
-
-        int val_meta_file_dp_;
-        uint32_t *mmap_val_meta_cnt_;
+        uint32_t *mmap_meta_cnt_;
 
         int *write_key_file_dp_;
         int *write_key_buffer_file_dp_;
         KeyEntry **mmap_key_aligned_buffer_;
 
-        mutex *key_mtx_;
-        mutex *val_mtx_;
-
         int *write_value_file_dp_;
         int *write_value_buffer_file_dp_;
         char **mmap_value_aligned_buffer_;
 
-        char **aligned_read_buffer_;
+        // Write.
+        mutex *partition_mtx_;
 
-        Barrier barrier_;
+        // Read.
+        string dir_;
+        char **aligned_read_buffer_;
         Barrier read_barrier_;
-        Barrier *range_barrier_ptr_;
 
         vector<KeyEntry *> index_;
 
-        volatile bool *is_sorted_;
+        // Range.
         volatile bool is_range_init_;
-        string dir_;
-
-        // Range Related
+        Barrier *range_barrier_ptr_;
         vector<PolarString *> polar_keys_;
 
         mutex range_mtx_;
@@ -84,7 +71,6 @@ namespace polar_race {
         vector<char *> value_shared_buffers_;
 
         vector<shared_future<void>> futures_;
-        vector<shared_future<void>> key_futures_;
         mutex total_time_mtx_;
         double total_time_;
         double total_io_sleep_time_;
@@ -92,14 +78,13 @@ namespace polar_race {
         double wait_get_time_;
         uint64_t val_buffer_max_size_;
         ThreadPool *range_io_worker_pool_;
-        ThreadPool *key_io_worker_pool_;
 
+        // Range Sequential IO.
         mutex *bucket_mutex_arr_;
         condition_variable *bucket_cond_var_arr_;
         bool *bucket_is_ready_read_;
         atomic_int *bucket_consumed_num_;
         int32_t total_range_num_threads_;
-
     public:
         static RetCode Open(const std::string &name, Engine **eptr);
 
