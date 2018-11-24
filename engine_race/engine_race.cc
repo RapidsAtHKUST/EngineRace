@@ -254,7 +254,7 @@ namespace polar_race {
         for (uint32_t i = 0; i < BUCKET_NUM; ++i) {
             if (index_.empty()) {
                 if ((mmap_meta_cnt_[i] % TMP_KEY_BUFFER_SIZE) != 0) {
-                    log_info("Flush Key in bucket: %d", i);
+//                    log_info("Flush Key in bucket: %d", i);
                     size_t write_length = TMP_KEY_BUFFER_SIZE * sizeof(uint64_t);
                     size_t write_offset =
                             static_cast<uint64_t>(mmap_meta_cnt_[i] / TMP_KEY_BUFFER_SIZE *
@@ -289,7 +289,7 @@ namespace polar_race {
                     size_t write_offset =
                             static_cast<uint64_t>(mmap_meta_cnt_[i] / TMP_VALUE_BUFFER_SIZE *
                                                   TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
-                    log_info("Flush Value in bucket: %d", i);
+//                    log_info("Flush Value in bucket: %d", i);
                     pwrite(value_file_dp_[i], mmap_value_aligned_buffer_[i], write_length, write_offset);
                     int ret = ftruncate(value_buffer_file_dp_[i], 0);
                     if (ret < 0) {
@@ -571,6 +571,7 @@ namespace polar_race {
             polar_keys_[tid] = new PolarString(key_chars, sizeof(uint64_t));
             polar_key_ptr_ = polar_keys_[tid];
         }
+#ifdef RANGE_STAT
         uint64_t key_lower_uint64 = polar_str_to_big_endian_uint64(lower);
         uint64_t key_upper_uint64 = polar_str_to_big_endian_uint64(upper);
         if (invocation_num < 10) {
@@ -578,6 +579,7 @@ namespace polar_race {
             log_info("tid: %d, [%zu, %zu), sizes: %zu, %zu, invocation times: %d", tid, key_lower_uint64,
                      key_upper_uint64, lower.size(), upper.size(), invocation_num);
         }
+#endif
         InitForRange(tid);
 
         auto range_init_end_clock = high_resolution_clock::now();
