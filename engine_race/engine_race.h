@@ -20,6 +20,7 @@
 #define TMP_VALUE_BUFFER_SIZE (4)
 #define TO_UINT64(buffer) (*(uint64_t*)(buffer))
 
+#define WRITE_BARRIER_NUM (16)
 #define READ_BARRIER_NUM (32)
 
 #define BUCKET_DIGITS (10)      // must be the same for the range query
@@ -28,7 +29,7 @@
 #define NUM_READ_KEY_THREADS (NUM_THREADS)
 #define NUM_FLUSH_TMP_THREADS (8u)
 
-#define MAX_BUFFER_NUM (4u)
+#define MAX_BUFFER_NUM (5u)
 #define IO_POOL_SIZE (3u)
 
 #define KEY_READ_BLOCK_COUNT (8192u)
@@ -45,19 +46,20 @@ namespace polar_race {
 
     class EngineRace : public Engine {
     public:
-        int key_meta_file_dp_;
+        int meta_cnt_file_dp_;
         uint32_t *mmap_meta_cnt_;
 
-        int *write_key_file_dp_;
-        int *write_key_buffer_file_dp_;
+        int *key_file_dp_;
+        int *key_buffer_file_dp_;
         uint64_t **mmap_key_aligned_buffer_;
 
-        int *write_value_file_dp_;
-        int *write_value_buffer_file_dp_;
+        int *value_file_dp_;
+        int *value_buffer_file_dp_;
         char **mmap_value_aligned_buffer_;
 
         // Write.
         mutex *partition_mtx_;
+        Barrier write_barrier_;
 
         // Read.
         string dir_;

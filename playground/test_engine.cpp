@@ -100,6 +100,7 @@ int main() {
     exec(("rm -r " + std::string(kEnginePath)).c_str());
 
     uint64_t round_size = 255 * NUM_THREADS;
+//    uint64_t round_size = 837 * NUM_THREADS;
     uint64_t iter_num = 1;   // switch this to test different settings
 
     for (uint64_t iter = 0; iter < iter_num; iter++) {
