@@ -33,6 +33,7 @@
 #define IO_POOL_SIZE (3u)
 
 #define KEY_READ_BLOCK_COUNT (8192u)
+#define FALLOCATE_SIZE (32 * 1024 * 1024)
 
 namespace polar_race {
     using namespace std;

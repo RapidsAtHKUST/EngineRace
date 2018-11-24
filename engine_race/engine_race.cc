@@ -351,9 +351,9 @@ namespace polar_race {
             first_write_clk = high_resolution_clock::now();
         }
 #endif
-        if (local_block_offset % 100000 == 0 && local_block_offset < 900000 && tid < WRITE_BARRIER_NUM) {
-            write_barrier_.Wait();
-        }
+//        if (local_block_offset % 100000 == 0 && local_block_offset < 900000 && tid < WRITE_BARRIER_NUM) {
+//            write_barrier_.Wait();
+//        }
         // Value.
         {
             unique_lock<mutex> lock(partition_mtx_[key_par_id]);
@@ -364,8 +364,8 @@ namespace polar_race {
             if ((mmap_meta_cnt_[key_par_id] + 1) % TMP_VALUE_BUFFER_SIZE == 0) {
                 uint64_t write_offset =
                         ((uint64_t) mmap_meta_cnt_[key_par_id] - (TMP_VALUE_BUFFER_SIZE - 1)) * VALUE_SIZE;
-                if (write_offset % (4 * 1024 * 1024) == 0) {
-                    fallocate(value_file_dp_[key_par_id], 0, write_offset, 4 * 1024 * 1024);
+                if (write_offset % (FALLOCATE_SIZE) == 0) {
+                    fallocate(value_file_dp_[key_par_id], 0, write_offset, FALLOCATE_SIZE);
                 }
                 pwrite(value_file_dp_[key_par_id], value_buffer, VALUE_SIZE * TMP_VALUE_BUFFER_SIZE, write_offset);
             }
