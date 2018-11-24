@@ -238,6 +238,11 @@ namespace polar_race {
     }
 
     EngineRace::~EngineRace() {
+        if (is_range_init_) {
+            TestDevice();
+            TestDeviceMultiThreading();
+        }
+
         clock_end = high_resolution_clock::now();
         log_info("Start ~EngineRace(), time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
@@ -307,6 +312,7 @@ namespace polar_race {
         log_info("Finish ~EngineRace(), time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
+
 
     }
 
@@ -401,9 +407,10 @@ namespace polar_race {
         static thread_local int tid = ++io_threads_count;
         auto range_clock_beg = high_resolution_clock::now();
 #ifdef STAT
-        log_info("In bucket %d, Read in tid: %d, start ts: %.9lf s", bucket_id, tid,
-                 std::chrono::duration_cast<std::chrono::nanoseconds>(range_clock_beg.time_since_epoch()).count() /
-                 1000000000.0);
+        if (bucket_id % 64 == 0)
+            log_info("In bucket %d, Read in tid: %d, start ts: %.9lf s", bucket_id, tid,
+                     std::chrono::duration_cast<std::chrono::nanoseconds>(range_clock_beg.time_since_epoch()).count() /
+                     1000000000.0);
 #endif
         auto buffer_id = static_cast<uint32_t>(bucket_id % MAX_BUFFER_NUM);
 
@@ -422,10 +429,11 @@ namespace polar_race {
         }
 #ifdef STAT
         read_time += elapsed_time;
-        log_info("In bucket %d, Read time %.9lf s, ts: %.9lf s, tid: %d, acc-time: %.6lf s",
-                 bucket_id, elapsed_time,
-                 duration_cast<nanoseconds>(range_clock_end.time_since_epoch()).count() /
-                 1000000000.0, tid, read_time);
+        if (bucket_id % 64 == 0)
+            log_info("In bucket %d, Read time %.9lf s, ts: %.9lf s, tid: %d, acc-time: %.6lf s",
+                     bucket_id, elapsed_time,
+                     duration_cast<nanoseconds>(range_clock_end.time_since_epoch()).count() /
+                     1000000000.0, tid, read_time);
 #endif
     }
 
@@ -777,5 +785,48 @@ namespace polar_race {
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() /
                  1000.0);
 
+    }
+
+    void EngineRace::TestDevice() {
+        clock_end = high_resolution_clock::now();
+        log_info("Start TestRead(), time: %.3lf s, ts: %.3lf s",
+                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
+                 std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() /
+                 1000.0);
+        for (uint32_t i = 0; i < BUCKET_NUM; i++) {
+            ReadBucketToBuffer(i);
+        }
+        auto clock_end2 = high_resolution_clock::now();
+        log_info("End TestRead(), time: %.3lf s, ts: %.3lf s",
+                 duration_cast<milliseconds>(clock_end2 - clock_end).count() / 1000.0,
+                 std::chrono::duration_cast<std::chrono::milliseconds>(clock_end2.time_since_epoch()).count() /
+                 1000.0);
+    }
+
+    void EngineRace::TestDeviceMultiThreading() {
+        vector<size_t> num_threads_arr = {2, 4, 8, 16, 32, 64};
+        clock_end = high_resolution_clock::now();
+        for (auto num_threads: num_threads_arr) {
+            vector<thread> workers(num_threads);
+            for (uint32_t tid = 0; tid < num_threads; tid++) {
+                workers[tid] = thread([this, num_threads, tid]() {
+                    log_info("Start TestM-%d, time: %.3lf s, ts: %.3lf s",
+                             num_threads,
+                             duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
+                             duration_cast<milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
+                    for (uint32_t i = tid; i < BUCKET_NUM; i += num_threads) {
+                        ReadBucketToBuffer(i);
+                    }
+                    auto clock_end2 = high_resolution_clock::now();
+                    log_info("End TestM-%d, time: %.3lf s, ts: %.3lf s",
+                             num_threads,
+                             duration_cast<milliseconds>(clock_end2 - clock_end).count() / 1000.0,
+                             duration_cast<milliseconds>(clock_end2.time_since_epoch()).count() / 1000.0);
+                });
+            }
+            for (auto &t: workers) {
+                t.join();
+            }
+        }
     }
 }  // namespace polar_race

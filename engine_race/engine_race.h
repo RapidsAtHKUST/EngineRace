@@ -30,7 +30,7 @@
 #define NUM_FLUSH_TMP_THREADS (8u)
 
 #define MAX_BUFFER_NUM (5u)
-#define IO_POOL_SIZE (3u)
+#define IO_POOL_SIZE (1u)
 
 #define KEY_READ_BLOCK_COUNT (8192u)
 
@@ -112,6 +112,11 @@ namespace polar_race {
         RetCode Range(const PolarString &lower,
                       const PolarString &upper,
                       Visitor &visitor) override;
+
+    private:
+        void TestDevice();
+
+        void TestDeviceMultiThreading();
 
     private:
         void ReadBucketToBuffer(uint32_t bucket_id);
