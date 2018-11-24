@@ -362,8 +362,12 @@ namespace polar_race {
             char *value_buffer = mmap_value_aligned_buffer_[key_par_id];
             memcpy(value_buffer + val_buffer_offset, value.data(), VALUE_SIZE);
             if ((mmap_meta_cnt_[key_par_id] + 1) % TMP_VALUE_BUFFER_SIZE == 0) {
-                pwrite(value_file_dp_[key_par_id], value_buffer, VALUE_SIZE * TMP_VALUE_BUFFER_SIZE,
-                       ((uint64_t) mmap_meta_cnt_[key_par_id] - (TMP_VALUE_BUFFER_SIZE - 1)) * VALUE_SIZE);
+                uint64_t write_offset =
+                        ((uint64_t) mmap_meta_cnt_[key_par_id] - (TMP_VALUE_BUFFER_SIZE - 1)) * VALUE_SIZE;
+                if (write_offset % (4 * 1024 * 1024) == 0) {
+                    fallocate(value_file_dp_[key_par_id], 0, write_offset, 4 * 1024 * 1024);
+                }
+                pwrite(value_file_dp_[key_par_id], value_buffer, VALUE_SIZE * TMP_VALUE_BUFFER_SIZE, write_offset);
             }
             // Write key to the key file.
             uint32_t key_buffer_offset = (mmap_meta_cnt_[key_par_id] % TMP_KEY_BUFFER_SIZE);
@@ -431,7 +435,8 @@ namespace polar_race {
 #ifdef STAT
         if (bucket_id % 64 == 63)
             log_info("In bucket %d, Read in tid: %d, start ts: %.9lf s", bucket_id, tid,
-                     std::chrono::duration_cast<std::chrono::nanoseconds>(range_clock_beg.time_since_epoch()).count() /
+                     std::chrono::duration_cast<std::chrono::nanoseconds>(
+                             range_clock_beg.time_since_epoch()).count() /
                      1000000000.0);
 #endif
         auto buffer_id = static_cast<uint32_t>(bucket_id % MAX_BUFFER_NUM);
