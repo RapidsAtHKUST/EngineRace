@@ -261,7 +261,10 @@ namespace polar_race {
                                                   TMP_KEY_BUFFER_SIZE) * sizeof(uint64_t);
                     pwrite(key_file_dp_[i], mmap_key_aligned_buffer_[i], write_length, write_offset);
                 }
-                ftruncate(key_buffer_file_dp_[i], 0);
+                int ret = ftruncate(key_buffer_file_dp_[i], 0);
+                if (ret < 0) {
+                    log_info("Flush ftruncate Err: %d, %s", ret, strerror(errno));
+                }
             }
             if (mmap_key_aligned_buffer_[i] != nullptr) {
                 munmap(mmap_key_aligned_buffer_[i], sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE);
@@ -287,10 +290,10 @@ namespace polar_race {
                             static_cast<uint64_t>(mmap_meta_cnt_[i] / TMP_VALUE_BUFFER_SIZE *
                                                   TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
                     log_info("Flush Value in bucket: %d", i);
-                    pwrite(key_file_dp_[i], mmap_value_aligned_buffer_[i], write_length, write_offset);
-                    int ret = ftruncate(key_buffer_file_dp_[i], 0);
+                    pwrite(value_file_dp_[i], mmap_value_aligned_buffer_[i], write_length, write_offset);
+                    int ret = ftruncate(value_buffer_file_dp_[i], 0);
                     if (ret < 0) {
-                        log_info("Flush ftruncate Err: %d, %s", ret, strerror(errno));
+                        log_info("Flush Val ftruncate Err: %d, %s", ret, strerror(errno));
                     }
                 }
             }
@@ -522,7 +525,7 @@ namespace polar_race {
                         auto range_clock_end = high_resolution_clock::now();
                         double sleep_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                                             static_cast<double>(1000000000);
-                        log_info("IO sleep in bucket :%d，elapsed time: %.9lf", next_bucket_idx, sleep_time);
+//                        log_info("IO sleep in bucket :%d，elapsed time: %.9lf", next_bucket_idx, sleep_time);
 
                         {
                             unique_lock<mutex> lock_time(total_time_mtx_);
@@ -769,7 +772,7 @@ namespace polar_race {
                                                FILESYSTEM_BLOCK_SIZE * FILESYSTEM_BLOCK_SIZE;
                             auto ret = pread(key_file_dp_[key_par_id], local_buffer,
                                              num_bytes, read_offset);
-                            if (ret != remain_entries_count * sizeof(uint64_t)) {
+                            if (ret < remain_entries_count * sizeof(uint64_t)) {
                                 log_info("ret: %d, err: %s", ret, strerror(errno));
                             }
                             for (uint32_t k = 0; k < remain_entries_count; k++) {
