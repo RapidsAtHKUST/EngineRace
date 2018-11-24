@@ -25,8 +25,12 @@
 #define BUCKET_DIGITS (10)      // must be the same for the range query
 #define BUCKET_NUM (1 << BUCKET_DIGITS)
 
+#define NUM_READ_KEY_THREADS (1)
+
 #define MAX_BUFFER_NUM (3u)
 #define IO_POOL_SIZE (3u)
+
+#define KEY_READ_BLOCK_COUNT (8192u)
 
 namespace polar_race {
     using namespace std;
@@ -45,7 +49,7 @@ namespace polar_race {
 
         int *write_key_file_dp_;
         int *write_key_buffer_file_dp_;
-        KeyEntry **mmap_key_aligned_buffer_;
+        uint64_t **mmap_key_aligned_buffer_;
 
         int *write_value_file_dp_;
         int *write_value_buffer_file_dp_;

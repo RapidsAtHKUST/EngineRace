@@ -84,8 +84,6 @@ namespace polar_race {
 
     const string key_file_name = "polar.keys";
     const string value_file_name = "polar.values";
-    const string value_buffer_file_name = "polar.valbuffers";
-    const string key_buffer_file_name = "polar.keybuffers";
 
     RetCode Engine::Open(const std::string &name, Engine **eptr) {
         clock_start = high_resolution_clock::now();
@@ -124,14 +122,14 @@ namespace polar_race {
         const string meta_file_path = dir + "/polar.meta";
 
         const string key_file_path = dir + "/" + key_file_name;
-        const string tmp_key_file_path = dir + "/" + key_buffer_file_name;
+        const string tmp_key_file_path = dir + "/polar.keybuffers";
 
         const string value_file_path = dir + "/" + value_file_name;
-        const string tmp_value_file_path = dir + "/" + value_buffer_file_name;
+        const string tmp_value_file_path = dir + "/polar.valbuffers";
 
         write_key_file_dp_ = new int[BUCKET_NUM];
         write_key_buffer_file_dp_ = new int[BUCKET_NUM];
-        mmap_key_aligned_buffer_ = new KeyEntry *[BUCKET_NUM];
+        mmap_key_aligned_buffer_ = new uint64_t *[BUCKET_NUM];
 
         write_value_file_dp_ = new int[BUCKET_NUM];
         write_value_buffer_file_dp_ = new int[BUCKET_NUM];
@@ -175,10 +173,10 @@ namespace polar_race {
                 string temp_buffer_key = tmp_key_file_path + to_string(i);
                 write_key_file_dp_[i] = open(temp_key.c_str(), O_RDWR | O_CREAT | O_DIRECT, FILE_PRIVILEGE);
 
-                constexpr size_t tmp_buffer_key_file_size = sizeof(KeyEntry) * (size_t) TMP_KEY_BUFFER_SIZE;
+                constexpr size_t tmp_buffer_key_file_size = sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE;
                 write_key_buffer_file_dp_[i] = open(temp_buffer_key.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
                 ftruncate(write_key_buffer_file_dp_[i], tmp_buffer_key_file_size);
-                mmap_key_aligned_buffer_[i] = (KeyEntry *) mmap(nullptr, tmp_buffer_key_file_size, \
+                mmap_key_aligned_buffer_[i] = (uint64_t *) mmap(nullptr, tmp_buffer_key_file_size, \
                         PROT_READ | PROT_WRITE, MAP_SHARED, write_key_buffer_file_dp_[i], 0);
             }
             log_info("Create the database successfully.");
@@ -208,8 +206,8 @@ namespace polar_race {
                 write_key_file_dp_[i] = open(temp_key.c_str(), O_RDONLY, FILE_PRIVILEGE);
 
                 write_key_buffer_file_dp_[i] = open(temp_buffer_key.c_str(), O_RDWR, FILE_PRIVILEGE);
-                constexpr size_t tmp_buffer_key_file_size = sizeof(KeyEntry) * (size_t) TMP_KEY_BUFFER_SIZE;
-                mmap_key_aligned_buffer_[i] = (KeyEntry *) mmap(nullptr, tmp_buffer_key_file_size, \
+                constexpr size_t tmp_buffer_key_file_size = sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE;
+                mmap_key_aligned_buffer_[i] = (uint64_t *) mmap(nullptr, tmp_buffer_key_file_size, \
                         PROT_READ | PROT_WRITE, MAP_SHARED, write_key_buffer_file_dp_[i], 0);
 
             }
@@ -327,11 +325,9 @@ namespace polar_race {
 #endif
 
         // Value.
-        uint32_t val_offset_get;
         {
             unique_lock<mutex> lock(partition_mtx_[key_par_id]);
             // Write value to the value file, with a tmp file as value_buffer.
-            val_offset_get = mmap_meta_cnt_[key_par_id];
             uint32_t val_buffer_offset = (mmap_meta_cnt_[key_par_id] % TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
             char *value_buffer = mmap_value_aligned_buffer_[key_par_id];
             memcpy(value_buffer + val_buffer_offset, value.data(), VALUE_SIZE);
@@ -341,12 +337,11 @@ namespace polar_race {
             }
             // Write key to the key file.
             uint32_t key_buffer_offset = (mmap_meta_cnt_[key_par_id] % TMP_KEY_BUFFER_SIZE);
-            KeyEntry *key_buffer = mmap_key_aligned_buffer_[key_par_id];
-            key_buffer[key_buffer_offset].key_ = key_int_big_endian;
-            key_buffer[key_buffer_offset].value_offset_ = val_offset_get;
+            uint64_t *key_buffer = mmap_key_aligned_buffer_[key_par_id];
+            key_buffer[key_buffer_offset] = key_int_big_endian;
             if (((mmap_meta_cnt_[key_par_id] + 1) % TMP_KEY_BUFFER_SIZE) == 0) {
-                pwrite(write_key_file_dp_[key_par_id], key_buffer, sizeof(KeyEntry) * TMP_KEY_BUFFER_SIZE,
-                       ((uint64_t) mmap_meta_cnt_[key_par_id] - (TMP_KEY_BUFFER_SIZE - 1)) * sizeof(KeyEntry));
+                pwrite(write_key_file_dp_[key_par_id], key_buffer, sizeof(uint64_t) * TMP_KEY_BUFFER_SIZE,
+                       ((uint64_t) mmap_meta_cnt_[key_par_id] - (TMP_KEY_BUFFER_SIZE - 1)) * sizeof(uint64_t));
             }
             // Update the meta data.
             mmap_meta_cnt_[key_par_id]++;
@@ -384,6 +379,7 @@ namespace polar_race {
         }
         if (it == index_[key_par_id] + mmap_meta_cnt_[key_par_id] || it->key_ != big_endian_key_uint) {
             if (is_first_not_found) {
+                log_info("par: %d, key: %zu, %zu", key_par_id, big_endian_key_uint, bswap_64(big_endian_key_uint));
                 log_info("not found in tid: %d\n", tid);
                 is_first_not_found = false;
             }
@@ -637,9 +633,9 @@ namespace polar_race {
             const string key_file_path = dir + "/" + key_file_name;
             string temp_key = key_file_path + to_string(i);
             if ((mmap_meta_cnt_[i] % TMP_KEY_BUFFER_SIZE) != 0) {
-                size_t write_length = (mmap_meta_cnt_[i] % TMP_KEY_BUFFER_SIZE) * sizeof(KeyEntry);
+                size_t write_length = (mmap_meta_cnt_[i] % TMP_KEY_BUFFER_SIZE) * sizeof(uint64_t);
                 size_t write_offset = static_cast<uint64_t>(mmap_meta_cnt_[i] / TMP_KEY_BUFFER_SIZE *
-                                                            TMP_KEY_BUFFER_SIZE) * sizeof(KeyEntry);
+                                                            TMP_KEY_BUFFER_SIZE) * sizeof(uint64_t);
                 auto tmp_fd = open(temp_key.c_str(), O_RDWR, FILE_PRIVILEGE);
                 pwrite(tmp_fd, mmap_key_aligned_buffer_[i], write_length, write_offset);
                 close(tmp_fd);
@@ -666,32 +662,65 @@ namespace polar_race {
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
 
         // Read each key file.
-        vector<thread> workers(NUM_THREADS);
-        for (uint32_t tid = 0; tid < NUM_THREADS; ++tid) {
-            workers[tid] = thread([tid, this]() {
-                for (uint32_t key_par_id = tid; key_par_id < BUCKET_NUM; key_par_id += NUM_THREADS) {
-                    if (mmap_meta_cnt_[key_par_id] > 0) {
-                        auto ret = pread(write_key_file_dp_[key_par_id], index_[key_par_id],
-                                         (size_t) mmap_meta_cnt_[key_par_id] * sizeof(KeyEntry), 0);
-                        if (ret != mmap_meta_cnt_[key_par_id] * sizeof(KeyEntry)) {
-                            log_info("ret: %d, err: %s", ret, strerror(errno));
+        auto **local_buffers_g = new uint64_t *[NUM_READ_KEY_THREADS];
+        for (uint32_t tid = 0; tid < NUM_READ_KEY_THREADS; ++tid) {
+            local_buffers_g[tid] = new uint64_t[KEY_READ_BLOCK_COUNT];
+        }
+        vector<thread> workers(NUM_READ_KEY_THREADS);
+        for (uint32_t tid = 0; tid < NUM_READ_KEY_THREADS; ++tid) {
+            workers[tid] = move(thread([tid, local_buffers_g, this]() {
+                uint64_t *local_buffer = local_buffers_g[tid];
+                for (uint32_t key_par_id = tid; key_par_id < BUCKET_NUM; key_par_id += NUM_READ_KEY_THREADS) {
+                    uint32_t entry_count = mmap_meta_cnt_[key_par_id];
+                    if (entry_count > 0) {
+                        log_info("entry count: %d", entry_count);
+                        uint32_t passes = entry_count / KEY_READ_BLOCK_COUNT;
+                        uint32_t remain_entries_count = entry_count - passes * KEY_READ_BLOCK_COUNT;
+                        uint32_t file_offset = 0;
+                        size_t read_offset = 0;
+
+                        for (uint32_t j = 0; j < passes; ++j) {
+                            auto ret = pread(write_key_file_dp_[key_par_id], local_buffer,
+                                             KEY_READ_BLOCK_COUNT * sizeof(uint64_t), read_offset);
+                            if (ret != KEY_READ_BLOCK_COUNT * sizeof(uint64_t)) {
+                                log_info("ret: %d, err: %s", ret, strerror(errno));
+                            }
+                            for (uint32_t k = 0; k < KEY_READ_BLOCK_COUNT; k++) {
+                                index_[key_par_id][file_offset].key_ = local_buffer[k];
+                                index_[key_par_id][file_offset].value_offset_ = file_offset;
+                                file_offset++;
+                            }
+                            read_offset += KEY_READ_BLOCK_COUNT * sizeof(uint64_t);
                         }
-                        sort(index_[key_par_id], index_[key_par_id] + mmap_meta_cnt_[key_par_id],
-                             [](KeyEntry l, KeyEntry r) {
-                                 if (l.key_ == r.key_) {
-                                     return l.value_offset_ > r.value_offset_;
-                                 } else {
-                                     return l.key_ < r.key_;
-                                 }
-                             });
+
+                        if (remain_entries_count != 0) {
+                            auto ret = pread(write_key_file_dp_[key_par_id], local_buffer,
+                                             remain_entries_count * sizeof(uint64_t), read_offset);
+                            if (ret != remain_entries_count * sizeof(uint64_t)) {
+                                log_info("ret: %d, err: %s", ret, strerror(errno));
+                            }
+                            for (uint32_t k = 0; k < remain_entries_count; k++) {
+                                index_[key_par_id][file_offset].key_ = local_buffer[k];
+                                index_[key_par_id][file_offset].value_offset_ = file_offset;
+                                file_offset++;
+                            }
+                        }
+                        sort(index_[key_par_id], index_[key_par_id] + entry_count, [](KeyEntry l, KeyEntry r) {
+                            if (l.key_ == r.key_) {
+                                return l.value_offset_ > r.value_offset_;
+                            } else {
+                                return l.key_ < r.key_;
+                            }
+                        });
                     }
                 }
-                return;
-            });
+            }));
         }
-        for (uint32_t i = 0; i < NUM_THREADS; ++i) {
+        for (uint32_t i = 0; i < NUM_READ_KEY_THREADS; ++i) {
             workers[i].join();
+            delete[]local_buffers_g[i];
         }
+        delete[]local_buffers_g;
         clock_end = high_resolution_clock::now();
         log_info("Finish BI, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
