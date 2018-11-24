@@ -16,7 +16,7 @@
 #define VALUE_SIZE (4096)
 #define FILESYSTEM_BLOCK_SIZE (4096)
 #define FILE_PRIVILEGE (0644)
-#define TMP_KEY_BUFFER_SIZE (1024)
+#define TMP_KEY_BUFFER_SIZE (512)
 #define TMP_VALUE_BUFFER_SIZE (4)
 #define TO_UINT64(buffer) (*(uint64_t*)(buffer))
 
@@ -25,9 +25,10 @@
 #define BUCKET_DIGITS (10)      // must be the same for the range query
 #define BUCKET_NUM (1 << BUCKET_DIGITS)
 
-#define NUM_READ_KEY_THREADS (1)
+#define NUM_READ_KEY_THREADS (NUM_THREADS)
+#define NUM_FLUSH_TMP_THREADS (8u)
 
-#define MAX_BUFFER_NUM (3u)
+#define MAX_BUFFER_NUM (4u)
 #define IO_POOL_SIZE (3u)
 
 #define KEY_READ_BLOCK_COUNT (8192u)
