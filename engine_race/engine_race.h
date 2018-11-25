@@ -7,6 +7,9 @@
 #include <vector>
 #include <atomic>
 #include <list>
+#include <linux/aio_abi.h>
+#include <sys/syscall.h>
+#include <list>
 
 #include "sparsepp/spp.h"
 #include "include/engine.h"
@@ -104,6 +107,18 @@ namespace polar_race {
         bool *bucket_is_ready_read_;
         atomic_int *bucket_consumed_num_;
         int32_t total_range_num_threads_;
+
+        // Test device.
+        bool is_read;
+        uint32_t total_cnt;
+        uint32_t max_cnt_in_single_bucket;
+
+        iocb** iocb_ptrs;
+        iocb* iocbs;
+        io_event* io_events;
+        aio_context_t aio_ctx;
+        uint32_t queue_depth;
+        uint32_t buffer_cnt;
     public:
         static RetCode Open(const std::string &name, Engine **eptr);
 
@@ -134,6 +149,9 @@ namespace polar_race {
         void FlushTmpFiles(string dir);
 
         void BuildIndex(string dir);
+
+        void TestDevice();
+        void TestAio(uint32_t value_agg_num, char **buffers);
     };
 
 }  // namespace polar_race

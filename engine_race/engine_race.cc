@@ -31,6 +31,44 @@ namespace polar_race {
     std::chrono::time_point<std::chrono::high_resolution_clock> clock_start;
     std::chrono::time_point<std::chrono::high_resolution_clock> clock_end;
 
+    struct AioNode {
+        char *value_buffer_ptr_;
+        iocb *iocb_ptr_;
+    };
+
+    static inline long
+    io_setup(unsigned maxevents, aio_context_t *ctx) {
+        return syscall(SYS_io_setup, maxevents, ctx);
+    }
+
+    static inline long
+    io_submit(aio_context_t ctx, long nr, struct iocb **iocbpp) {
+        return syscall(SYS_io_submit, ctx, nr, iocbpp);
+    }
+
+    static inline long
+    io_getevents(aio_context_t ctx, long min_nr, long nr,
+                 struct io_event *events, struct timespec *timeout) {
+        return syscall(SYS_io_getevents, ctx, min_nr, nr, events, timeout);
+    }
+
+    static inline long
+    io_destroy(aio_context_t ctx) {
+        return syscall(SYS_io_destroy, ctx);
+    }
+
+    static inline void
+    fill_aio_node(int fd, iocb* iocb_ptr, char* buffer, size_t offset, size_t buffer_size, uint16_t operation) {
+        memset(iocb_ptr, 0, sizeof(iocb));
+        iocb_ptr->aio_buf = (uintptr_t) buffer;
+        iocb_ptr->aio_data = (uintptr_t) iocb_ptr;
+        iocb_ptr->aio_fildes = fd;
+        iocb_ptr->aio_lio_opcode = operation;
+        iocb_ptr->aio_reqprio = 0;
+        iocb_ptr->aio_nbytes = buffer_size;
+        iocb_ptr->aio_offset = offset;
+    }
+
     bool operator<(KeyEntry l, KeyEntry r) {
         return l.key_ < r.key_;
     }
@@ -187,6 +225,9 @@ namespace polar_race {
                         PROT_READ | PROT_WRITE, MAP_SHARED, key_buffer_file_dp_[i], 0);
             }
             log_info("Create the database successfully.");
+
+            is_read = false;
+            total_cnt = 0;
         } else {
             log_info("Reload the database.");
             meta_cnt_file_dp_ = open(meta_file_path.c_str(), O_RDONLY, FILE_PRIVILEGE);
@@ -195,8 +236,6 @@ namespace polar_race {
 
             // Value.
             for (int i = 0; i < BUCKET_NUM; ++i) {
-                string temp_value = value_file_path + to_string(i);
-                value_file_dp_[i] = open(temp_value.c_str(), O_RDONLY | O_DIRECT, FILE_PRIVILEGE);
                 value_buffer_file_dp_[i] = -1;
                 mmap_value_aligned_buffer_[i] = nullptr;
             }
@@ -215,6 +254,21 @@ namespace polar_race {
             BuildIndex(dir);
             dir_ = dir;
             log_info("Reload the database successfully.");
+
+            is_read = true;
+            total_cnt = 0;
+            max_cnt_in_single_bucket = 0;
+            for (uint32_t i = 0; i < BUCKET_NUM; ++i) {
+                total_cnt += mmap_meta_cnt_[i];
+                if (mmap_meta_cnt_[i] > max_cnt_in_single_bucket) {
+                    max_cnt_in_single_bucket = mmap_meta_cnt_[i];
+                }
+            }
+
+            for (int i = 0; i < BUCKET_NUM; ++i) {
+                string temp_value = value_file_path + to_string(i);
+                value_file_dp_[i] = open(temp_value.c_str(), O_RDONLY | O_DIRECT, FILE_PRIVILEGE);
+            }
         }
         clock_end = high_resolution_clock::now();
         log_info("After init DB, time: %.3lf s, ts: %.3lf s",
@@ -238,6 +292,11 @@ namespace polar_race {
     }
 
     EngineRace::~EngineRace() {
+        if (is_read && total_cnt > 5000000) {
+            log_info("start test");
+            TestDevice();
+            exit(-1);
+        }
         clock_end = high_resolution_clock::now();
         log_info("Start ~EngineRace(), time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
@@ -587,6 +646,7 @@ namespace polar_race {
                     range_init_start_clock.time_since_epoch()).count() / 1000000000.0, tid);
         }
 #endif
+
         // Thread Local Key/Value Init.
         if (local_block_offset == 0) {
             char *key_chars = new char[sizeof(uint64_t)];
@@ -704,7 +764,7 @@ namespace polar_race {
                             size_t write_offset =
                                     static_cast<uint64_t>(mmap_meta_cnt_[bucket_id] / TMP_VALUE_BUFFER_SIZE *
                                                           TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
-                            auto tmp_fd = open(temp_value.c_str(), O_RDWR, FILE_PRIVILEGE);
+                            auto tmp_fd = open(temp_value.c_str(), O_RDWR | O_DIRECT, FILE_PRIVILEGE);
                             log_info("Flush Val in bucket: %d", bucket_id);
                             pwrite(tmp_fd, mmap_value_aligned_buffer_[bucket_id], write_length, write_offset);
                             close(tmp_fd);
@@ -831,5 +891,141 @@ namespace polar_race {
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() /
                  1000.0);
 
+    }
+
+    void EngineRace::TestDevice() {
+        log_info("Test 1");
+        buffer_cnt = 4;
+        char** buffers = new char*[buffer_cnt];
+        for (uint32_t i = 0; i < buffer_cnt; ++i) {
+            buffers[i] = (char*)memalign(FILESYSTEM_BLOCK_SIZE, max_cnt_in_single_bucket * VALUE_SIZE);
+        }
+
+        double total_time = 0;
+        for (uint i = 0; i < BUCKET_NUM; ++i) {
+            uint32_t buffer_id = i % buffer_cnt;
+            auto read_begin = high_resolution_clock::now();
+
+            auto ret = pread(value_file_dp_[i], buffers[buffer_id], VALUE_SIZE * mmap_meta_cnt_[i], 0);
+            if (ret < 0) {
+                log_info("Test Device: fail to read.");
+                exit(-1);
+            }
+
+            auto read_end = high_resolution_clock::now();
+            double read_time =
+                    duration_cast<nanoseconds>(read_end - read_begin).count() /
+                    static_cast<double>(1000000000);
+            total_time += read_time;
+            log_info("Read Bucket %d: %.6lf seconds.", i, read_time);
+        }
+
+        log_info("Total time: %.6lf seconds.", total_time);
+
+        // Init aio context.
+        queue_depth = 32;
+        aio_ctx = 0;
+        iocb_ptrs = new iocb*[queue_depth];
+        iocbs = new iocb[queue_depth];
+        io_events = new io_event[queue_depth];
+
+        if (io_setup(queue_depth, &aio_ctx) < 0) {
+            log_info("Setup fail\n");
+            exit(-1);
+        }
+
+        log_info("BT: %d, QD: %d, BS: %d", BUCKET_NUM, queue_depth, 128 * VALUE_SIZE / 1024);
+
+        TestAio(128, buffers);
+
+        for (uint32_t i = 0; i < buffer_cnt; ++i) {
+            free(buffers[i]);
+        }
+        delete[] buffers;
+        delete[] iocb_ptrs;
+        delete[] iocbs;
+        delete[] io_events;
+    }
+
+    void EngineRace::TestAio(uint32_t value_agg_num, char **buffers) {
+        list<iocb*> free_nodes;
+        for (uint32_t i = 0; i < queue_depth; ++i) {
+            free_nodes.push_back(&iocbs[i]);
+        }
+        double total_time = 0;
+        for (uint32_t bucket_id = 0; bucket_id < BUCKET_NUM; ++bucket_id) {
+            auto read_begin = high_resolution_clock::now();
+            int file_dp = value_file_dp_[bucket_id];
+            int buffer_id = bucket_id % buffer_cnt;
+            uint32_t value_num = mmap_meta_cnt_[bucket_id];
+
+            uint32_t remain_value_num = value_num % value_agg_num;
+            uint32_t total_block_num = (remain_value_num == 0 ? (value_num / value_agg_num) : (value_num / value_agg_num + 1));
+            uint32_t submitted_block_num = 0;
+            uint32_t completed_block_num = 0;
+            uint32_t last_block_size = (remain_value_num == 0 ? (VALUE_SIZE * value_agg_num) : (remain_value_num * VALUE_SIZE));
+            while (completed_block_num < total_block_num) {
+                uint32_t free_nodes_num = (uint32_t)free_nodes.size();
+                uint32_t remain_block_num = total_block_num - submitted_block_num;
+                uint32_t to_submit = min(free_nodes_num, remain_block_num);
+
+                if (to_submit > 0) {
+                    for (uint32_t i = 0; i < to_submit; ++i) {
+                        uint32_t block_id = i + submitted_block_num;
+
+                        iocb* iocb_ptr = free_nodes.front();
+                        free_nodes.pop_front();
+
+                        size_t offset = block_id * (size_t) value_agg_num * VALUE_SIZE;
+                        size_t size = (block_id == (total_block_num - 1) ? last_block_size : (value_agg_num * VALUE_SIZE));
+                        fill_aio_node(file_dp, iocb_ptr, buffers[buffer_id], offset, size, IOCB_CMD_PREAD);
+
+                        iocb_ptrs[i] = iocb_ptr;
+                    }
+
+                    auto ret = io_submit(aio_ctx, to_submit, iocb_ptrs);
+
+                    if (ret != to_submit) {
+                        log_info("Commit error %d", ret);
+                        exit(-1);
+                    }
+
+                    submitted_block_num += to_submit;
+                }
+
+                uint32_t in_flight = submitted_block_num - completed_block_num;
+                uint32_t expected = (2 <= in_flight ? 2 : in_flight);
+
+                auto ret = io_getevents(aio_ctx, expected, in_flight, io_events, NULL);
+
+                if (ret < 0) {
+                    log_info("Get error.");
+                    exit(-1);
+                }
+
+                uint32_t to_complete = ret;
+                if (to_complete > 0) {
+                    for (uint32_t j = 0; j < to_complete; ++j) {
+                        io_event *complete_event = &io_events[j];
+                        if (complete_event->res2 != 0 || complete_event->res < VALUE_SIZE) {
+                            log_info("Return error.\n");
+                            exit(-1);
+                        }
+
+                        iocb *iocb_ptr = (iocb*) complete_event->data;
+                        free_nodes.push_back(iocb_ptr);
+                    }
+
+                    completed_block_num += to_complete;
+                }
+            }
+            auto read_end = high_resolution_clock::now();
+            double read_time =
+                    duration_cast<nanoseconds>(read_end - read_begin).count() /
+                    static_cast<double>(1000000000);
+            total_time += read_time;
+            log_info("Read Bucket %d: %.6lf seconds.", bucket_id, read_time);
+        }
+        log_info("Total time: %.6lf seconds.", total_time);
     }
 }  // namespace polar_race
