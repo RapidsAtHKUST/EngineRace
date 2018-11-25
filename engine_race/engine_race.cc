@@ -934,9 +934,13 @@ namespace polar_race {
             exit(-1);
         }
 
-        log_info("BT: %d, QD: %d, BS: %d", BUCKET_NUM, queue_depth, 128 * VALUE_SIZE / 1024);
+        vector<uint32_t> value_agg_num_configurations = {64, 128, 256, 512, 1024};
 
-        TestAio(128, buffers);
+        for (uint32_t value_agg_num : value_agg_num_configurations) {
+            log_info("BT: %d, QD: %d, BS: %d", BUCKET_NUM, queue_depth, value_agg_num * VALUE_SIZE / 1024);
+
+            TestAio(value_agg_num, buffers);
+        }
 
         for (uint32_t i = 0; i < buffer_cnt; ++i) {
             free(buffers[i]);
