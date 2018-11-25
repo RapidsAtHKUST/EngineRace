@@ -122,8 +122,8 @@ void log_log(int level, const char *file, int line, const char *fmt, ...) {
                     buf, level_colors[level], level_names[level], file, line);
 #else
             fprintf(stderr, "%s %-5s (ts: %.6lf) %s:%d: ", buf, level_names[level],
-                    duration_cast<milliseconds>(clock_now.time_since_epoch()).count() /
-                    1000.0, file, line);
+                    duration_cast<nanoseconds>(clock_now.time_since_epoch()).count() /
+                    1000000000.0, file, line);
 #endif
             va_start(args, fmt);
             vfprintf(stderr, fmt, args);
