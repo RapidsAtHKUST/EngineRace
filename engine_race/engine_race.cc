@@ -923,7 +923,7 @@ namespace polar_race {
         log_info("Total time: %.6lf seconds.", total_time);
 
         // Init aio context.
-        queue_depth = 32;
+        queue_depth = 64;
         aio_ctx = 0;
         iocb_ptrs = new iocb*[queue_depth];
         iocbs = new iocb[queue_depth];
@@ -934,7 +934,7 @@ namespace polar_race {
             exit(-1);
         }
 
-        vector<uint32_t> value_agg_num_configurations = {8, 16, 32};
+        vector<uint32_t> value_agg_num_configurations = {8, 16, 32, 64, 128};
 
 
         for (uint32_t value_agg_num : value_agg_num_configurations) {
