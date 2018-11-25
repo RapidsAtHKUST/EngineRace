@@ -439,17 +439,20 @@ namespace polar_race {
                              range_clock_beg.time_since_epoch()).count() /
                      1000000000.0);
 #endif
-        auto buffer_id = static_cast<uint32_t>(bucket_id % MAX_BUFFER_NUM);
-        uint32_t avg_cnt = mmap_meta_cnt_[buffer_id] / SLICE_NUM + 1;
+        uint32_t bucket_cnt = mmap_meta_cnt_[bucket_id];
+        uint32_t avg_cnt = bucket_cnt / SLICE_NUM;
         uint32_t slice_beg = slice_id * avg_cnt;
-        uint32_t slice_len = (slice_id == SLICE_NUM - 1 ? mmap_meta_cnt_[buffer_id] - slice_beg : avg_cnt) * VALUE_SIZE;
+        uint32_t slice_len = (slice_id == SLICE_NUM - 1 ? bucket_cnt - slice_beg : avg_cnt) * VALUE_SIZE;
 
+        auto buffer_id = static_cast<uint32_t>(bucket_id % MAX_BUFFER_NUM);
         auto ret = pread(value_file_dp_[bucket_id], value_shared_buffers_[buffer_id] + VALUE_SIZE * slice_beg,
                          slice_len, VALUE_SIZE * slice_beg);
+        if (bucket_id % 64 == 0)
+            log_info("bucket %d, slice id: %d, slice cnt: %d", bucket_id, slice_id, slice_len);
         if (ret < 0) {
             log_info("in range read err: %s, size: %zu, slice-beg: %zu, slice-len:%zu, "
                      "avg cnt: %zu, mmap size: %zu", strerror(errno), slice_beg,
-                     slice_len, avg_cnt, mmap_meta_cnt_[buffer_id]);
+                     slice_len, avg_cnt, bucket_cnt);
         }
         auto range_clock_end = high_resolution_clock::now();
         double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
