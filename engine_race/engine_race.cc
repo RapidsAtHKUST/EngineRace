@@ -12,6 +12,8 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <malloc.h>
+#include <linux/aio_abi.h>
+#include <sys/syscall.h>
 
 #include <atomic>
 #include <iostream>
@@ -30,6 +32,44 @@ namespace polar_race {
     using namespace std::chrono;
     std::chrono::time_point<std::chrono::high_resolution_clock> clock_start;
     std::chrono::time_point<std::chrono::high_resolution_clock> clock_end;
+
+    struct AioNode {
+        char *value_buffer_ptr_;
+        iocb *iocb_ptr_;
+    };
+
+    static inline long
+    io_setup(unsigned maxevents, aio_context_t *ctx) {
+        return syscall(SYS_io_setup, maxevents, ctx);
+    }
+
+    static inline long
+    io_submit(aio_context_t ctx, long nr, struct iocb **iocbpp) {
+        return syscall(SYS_io_submit, ctx, nr, iocbpp);
+    }
+
+    static inline long
+    io_getevents(aio_context_t ctx, long min_nr, long nr,
+                 struct io_event *events, struct timespec *timeout) {
+        return syscall(SYS_io_getevents, ctx, min_nr, nr, events, timeout);
+    }
+
+    static inline long
+    io_destroy(aio_context_t ctx) {
+        return syscall(SYS_io_destroy, ctx);
+    }
+
+    static inline void
+    fill_aio_node(int fd, iocb *iocb_ptr, char *buffer, size_t offset, size_t buffer_size, uint16_t operation) {
+        memset(iocb_ptr, 0, sizeof(iocb));
+        iocb_ptr->aio_buf = (uintptr_t) buffer;
+        iocb_ptr->aio_data = (uintptr_t) iocb_ptr;
+        iocb_ptr->aio_fildes = fd;
+        iocb_ptr->aio_lio_opcode = operation;
+        iocb_ptr->aio_reqprio = 0;
+        iocb_ptr->aio_nbytes = buffer_size;
+        iocb_ptr->aio_offset = offset;
+    }
 
     bool operator<(KeyEntry l, KeyEntry r) {
         return l.key_ < r.key_;
@@ -441,21 +481,91 @@ namespace polar_race {
                              range_clock_beg.time_since_epoch()).count() /
                      1000000000.0);
 #endif
-        uint32_t bucket_cnt = mmap_meta_cnt_[bucket_id];
-        uint32_t avg_cnt = bucket_cnt / SLICE_NUM;
-        uint32_t slice_beg = slice_id * avg_cnt;
-        uint32_t slice_len = (slice_id == SLICE_NUM - 1 ? bucket_cnt - slice_beg : avg_cnt) * VALUE_SIZE;
+//        uint32_t bucket_cnt = mmap_meta_cnt_[bucket_id];
+//        uint32_t avg_cnt = bucket_cnt / SLICE_NUM;
+//        uint32_t slice_beg = slice_id * avg_cnt;
+//        uint32_t slice_len = (slice_id == SLICE_NUM - 1 ? bucket_cnt - slice_beg : avg_cnt);
 
         auto buffer_id = static_cast<uint32_t>(bucket_id % MAX_BUFFER_NUM);
-        auto ret = pread(value_file_dp_[bucket_id], value_shared_buffers_[buffer_id] + VALUE_SIZE * slice_beg,
-                         slice_len, VALUE_SIZE * slice_beg);
-        if (bucket_id % 64 == 0)
-            log_info("bucket %d, slice id: %d, slice cnt: %d", bucket_id, slice_id, slice_len);
-        if (ret < 0) {
-            log_info("in range read err: %s, size: %zu, slice-beg: %zu, slice-len:%zu, "
-                     "avg cnt: %zu, mmap size: %zu", strerror(errno), slice_beg,
-                     slice_len, avg_cnt, bucket_cnt);
+
+        // Replace with AIO
+        uint32_t value_agg_num = 32;
+        uint32_t value_num = mmap_meta_cnt_[bucket_id];
+        uint32_t remain_value_num = value_num % value_agg_num;
+        uint32_t total_block_num = (remain_value_num == 0 ? (value_num / value_agg_num) :
+                                    (value_num / value_agg_num + 1));
+        uint32_t submitted_block_num = 0;
+        uint32_t completed_block_num = 0;
+        uint32_t last_block_size = (remain_value_num == 0 ? (VALUE_SIZE * value_agg_num) :
+                                    (remain_value_num * VALUE_SIZE));
+
+        while (completed_block_num < total_block_num) {
+            uint32_t free_nodes_num = (uint32_t) free_nodes.size();
+            uint32_t remain_block_num = total_block_num - submitted_block_num;
+            uint32_t to_submit = min(free_nodes_num, remain_block_num);
+
+            if (to_submit > 0) {
+                for (uint32_t i = 0; i < to_submit; ++i) {
+                    uint32_t block_id = i + submitted_block_num;
+
+                    iocb *iocb_ptr = free_nodes.front();
+                    free_nodes.pop_front();
+
+                    size_t offset = block_id * (size_t) value_agg_num * VALUE_SIZE;
+                    size_t size = (block_id == (total_block_num - 1) ? last_block_size : (value_agg_num * VALUE_SIZE));
+                    fill_aio_node(value_file_dp_[bucket_id], iocb_ptr,
+                                  value_shared_buffers_[buffer_id] + offset, offset, size, IOCB_CMD_PREAD);
+
+                    iocb_ptrs[i] = iocb_ptr;
+                }
+
+                auto ret = io_submit(aio_ctx, to_submit, iocb_ptrs);
+
+                if (ret != to_submit) {
+                    log_info("Commit error %d", ret);
+                    exit(-1);
+                }
+
+                submitted_block_num += to_submit;
+            }
+
+            uint32_t in_flight = submitted_block_num - completed_block_num;
+            uint32_t expected = (2 <= in_flight ? 2 : in_flight);
+
+            auto ret = io_getevents(aio_ctx, expected, in_flight, io_events, NULL);
+
+            if (ret < 0) {
+                log_info("Get error.");
+                exit(-1);
+            }
+
+            uint32_t to_complete = ret;
+            if (to_complete > 0) {
+                for (uint32_t j = 0; j < to_complete; ++j) {
+                    io_event *complete_event = &io_events[j];
+                    if (complete_event->res2 != 0 || complete_event->res < VALUE_SIZE) {
+                        log_info("Return error.\n");
+                        exit(-1);
+                    }
+
+                    iocb *iocb_ptr = (iocb *) complete_event->data;
+                    free_nodes.push_back(iocb_ptr);
+                }
+
+                completed_block_num += to_complete;
+            }
         }
+
+
+//        auto ret = pread(value_file_dp_[bucket_id], value_shared_buffers_[buffer_id] + VALUE_SIZE * slice_beg,
+//                         slice_len, VALUE_SIZE * slice_beg);
+//        if (bucket_id % 64 == 0)
+//            log_info("bucket %d, slice id: %d, slice cnt: %d", bucket_id, slice_id, slice_len);
+//        if (ret < 0) {
+//            log_info("in range read err: %s, size: %zu, slice-beg: %zu, slice-len:%zu, "
+//                     "avg cnt: %zu, mmap size: %zu", strerror(errno), slice_beg,
+//                     slice_len, avg_cnt, bucket_cnt);
+//        }
         auto range_clock_end = high_resolution_clock::now();
         double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                               static_cast<double>(1000000000);
@@ -502,6 +612,22 @@ namespace polar_race {
                 bucket_is_ready_read_ = new bool[BUCKET_NUM];
                 bucket_consumed_num_ = new atomic_int[BUCKET_NUM];
                 futures_.resize(BUCKET_NUM * SLICE_NUM);
+
+                // AIO
+                // Init aio context.
+                queue_depth = 32;
+                aio_ctx = 0;
+                iocb_ptrs = new iocb *[queue_depth];
+                iocbs = new iocb[queue_depth];
+                io_events = new io_event[queue_depth];
+                for (uint32_t i = 0; i < queue_depth; ++i) {
+                    free_nodes.push_back(&iocbs[i]);
+                }
+
+                if (io_setup(queue_depth, &aio_ctx) < 0) {
+                    log_info("Setup fail\n");
+                    exit(-1);
+                }
 
                 usleep(10000);
                 auto range_clock_end = high_resolution_clock::now();
