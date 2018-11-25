@@ -420,6 +420,9 @@ namespace polar_race {
             return kNotFound;
         }
 
+        if (local_block_offset < 200) {
+            log_info("tid: %d, bucket: %d, value off: %d", tid, key_par_id, it->value_offset_);
+        }
         uint64_t val_par_id = get_key_par_id(big_endian_key_uint);
         pread(value_file_dp_[val_par_id], value_buffer, VALUE_SIZE,
               static_cast<uint64_t>(it->value_offset_) * VALUE_SIZE);

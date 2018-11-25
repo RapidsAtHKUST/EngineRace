@@ -8,6 +8,7 @@
 #include <atomic>
 #include <list>
 
+#include "sparsepp/spp.h"
 #include "include/engine.h"
 #include "barrier.h"
 #include "thread_pool.h"
@@ -37,6 +38,8 @@
 #define KEY_READ_BLOCK_COUNT (8192u)
 #define FALLOCATE_SIZE (512 * 1024)
 
+//#define MAX_READ_BUFFER_SIZE (200)
+
 namespace polar_race {
     using namespace std;
 
@@ -65,6 +68,13 @@ namespace polar_race {
         Barrier write_barrier_;
 
         // Read.
+//        volatile bool is_read_init_;
+//        mutex read_mutex;
+//        mutex *read_bucket_mutex_arr_;
+//        vector<vector<bool>> is_accessed_flag_;
+//        vector<uint32_t> bucket_size_;
+//        vector<spp::sparse_hash_map<uint64_t, char *>> buffers_;
+
         string dir_;
         char **aligned_read_buffer_;
         Barrier read_barrier_;
