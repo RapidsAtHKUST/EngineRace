@@ -29,6 +29,10 @@
 #include <cstdarg>
 #include <ctime>
 
+#include <mutex>
+
+using namespace std;
+std::mutex global_log_mutex;
 
 static struct {
     void *udata;
@@ -96,45 +100,52 @@ void log_log(int level, const char *file, int line, const char *fmt, ...) {
         return;
     }
 
-    /* Acquire lock */
-    lock();
+    using namespace std::chrono;
+    time_point<high_resolution_clock> clock_now = high_resolution_clock::now();
+    {
+        unique_lock<mutex> lock_global(global_log_mutex);
+        /* Acquire lock */
+        lock();
 
-    /* Get current time */
-    time_t t = time(nullptr);
-    struct tm *lt = localtime(&t);
+        /* Get current time */
+        time_t t = time(nullptr);
+        struct tm *lt = localtime(&t);
 
-    /* Log to stderr */
-    if (!L.quiet) {
-        va_list args;
-        char buf[16];
-        buf[strftime(buf, sizeof(buf), "%H:%M:%S", lt)] = '\0';
+        /* Log to stderr */
+        if (!L.quiet) {
+            va_list args;
+            char buf[16];
+            buf[strftime(buf, sizeof(buf), "%H:%M:%S", lt)] = '\0';
 #ifdef LOG_USE_COLOR
-        fprintf(
-                stderr, "%s %s%-5s\x1b[0m \x1b[90m%s:%d:\x1b[0m ",
-                buf, level_colors[level], level_names[level], file, line);
+            fprintf(
+                    stderr, "%s %s%-5s\x1b[0m \x1b[90m%s:%d:\x1b[0m ",
+                    buf, level_colors[level], level_names[level], file, line);
 #else
-        fprintf(stderr, "%s %-5s %s:%d: ", buf, level_names[level], file, line);
+            fprintf(stderr, "%s %-5s (ts: %.6lf) %s:%d: ", buf, level_names[level],
+                    duration_cast<milliseconds>(clock_now.time_since_epoch()).count() /
+                    1000.0, file, line);
 #endif
-        va_start(args, fmt);
-        vfprintf(stderr, fmt, args);
-        va_end(args);
-        fprintf(stderr, "\n");
-    }
+            va_start(args, fmt);
+            vfprintf(stderr, fmt, args);
+            va_end(args);
+            fprintf(stderr, "\n");
+        }
 
-    /* Log to file */
-    if (L.fp) {
-        va_list args;
-        char buf[32];
-        buf[strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", lt)] = '\0';
-        fprintf(L.fp, "%s %-5s %s:%d: ", buf, level_names[level], file, line);
-        va_start(args, fmt);
-        vfprintf(L.fp, fmt, args);
-        va_end(args);
-        fprintf(L.fp, "\n");
-    }
+        /* Log to file */
+        if (L.fp) {
+            va_list args;
+            char buf[32];
+            buf[strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", lt)] = '\0';
+            fprintf(L.fp, "%s %-5s %s:%d: ", buf, level_names[level], file, line);
+            va_start(args, fmt);
+            vfprintf(L.fp, fmt, args);
+            va_end(args);
+            fprintf(L.fp, "\n");
+        }
 
-    /* Release lock */
-    unlock();
+        /* Release lock */
+        unlock();
+    }
 }
 
 #endif

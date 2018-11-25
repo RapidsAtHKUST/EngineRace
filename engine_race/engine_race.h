@@ -30,10 +30,9 @@
 #define NUM_READ_KEY_THREADS (NUM_THREADS)
 #define NUM_FLUSH_TMP_THREADS (8u)
 
-
-#define SLICE_NUM (4u)
+#define SLICE_NUM (2u)
+#define IO_POOL_SIZE (6u)       // each one for a slice
 #define MAX_BUFFER_NUM (5u)
-#define IO_POOL_SIZE (12u)
 
 #define KEY_READ_BLOCK_COUNT (8192u)
 #define FALLOCATE_SIZE (512 * 1024)
@@ -69,7 +68,7 @@ namespace polar_race {
 
         // Read.
 //        volatile bool is_read_init_;
-        mutex read_mutex;
+//        mutex read_mutex;
 //        mutex *read_bucket_mutex_arr_;
 //        vector<vector<bool>> is_accessed_flag_;
 //        vector<uint32_t> bucket_size_;
@@ -133,12 +132,6 @@ namespace polar_race {
 
     private:
         void FlushTmpFiles(string dir);
-
-#ifdef POSTPONE_READ
-
-        void LazyLoadIndex(uint32_t key_par_id);
-
-#endif
 
         void BuildIndex(string dir);
     };

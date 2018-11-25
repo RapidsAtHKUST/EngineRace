@@ -403,29 +403,27 @@ namespace polar_race {
 
         KeyEntry tmp{};
         tmp.key_ = big_endian_key_uint;
-        auto key_par_id = get_key_par_id(big_endian_key_uint);
+        auto bucket_id = get_key_par_id(big_endian_key_uint);
 
-        auto it = index_[key_par_id] + branchfree_search(index_[key_par_id], mmap_meta_cnt_[key_par_id], tmp);
+        auto it = index_[bucket_id] + branchfree_search(index_[bucket_id], mmap_meta_cnt_[bucket_id], tmp);
         local_block_offset++;
 
         if (local_block_offset % 100000 == 0 && tid < READ_BARRIER_NUM) {
             read_barrier_.Wait();
         }
-        if (it == index_[key_par_id] + mmap_meta_cnt_[key_par_id] || it->key_ != big_endian_key_uint) {
+        if (it == index_[bucket_id] + mmap_meta_cnt_[bucket_id] || it->key_ != big_endian_key_uint) {
             if (is_first_not_found) {
-                log_info("par: %d, key: %zu, %zu", key_par_id, big_endian_key_uint, bswap_64(big_endian_key_uint));
+                log_info("par: %d, key: %zu, %zu", bucket_id, big_endian_key_uint, bswap_64(big_endian_key_uint));
                 log_info("not found in tid: %d\n", tid);
                 is_first_not_found = false;
             }
             return kNotFound;
         }
 
-        if (local_block_offset < 500) {
-            unique_lock<mutex> lock(read_mutex);
-            log_info("tid: %d, bucket: %d, value off: %d", tid, key_par_id, it->value_offset_);
-        }
-        uint64_t val_par_id = get_key_par_id(big_endian_key_uint);
-        pread(value_file_dp_[val_par_id], value_buffer, VALUE_SIZE,
+//        if (local_block_offset < 100) {
+//            log_info("tid: %d, bucket: %d, value off: %d", tid, bucket_id, it->value_offset_);
+//        }
+        pread(value_file_dp_[bucket_id], value_buffer, VALUE_SIZE,
               static_cast<uint64_t>(it->value_offset_) * VALUE_SIZE);
 
         value->assign(value_buffer, VALUE_SIZE);
@@ -576,16 +574,19 @@ namespace polar_race {
                               Visitor &visitor) {
         static thread_local int64_t tid = (++range_num_threads_count) % NUM_THREADS;
         static thread_local uint32_t local_block_offset = 0;
+#ifdef RANGE_STAT
         static thread_local uint32_t invocation_num = 0;
+#endif
         static thread_local PolarString *polar_key_ptr_;
         static thread_local PolarString polar_val_ptr_;
 
         auto range_init_start_clock = high_resolution_clock::now();
-
+#ifdef RANGE_STAT
         if (tid == 0) {
             log_info("Start range ts: %.9lf s in tid %d", duration_cast<nanoseconds>(
                     range_init_start_clock.time_since_epoch()).count() / 1000000000.0, tid);
         }
+#endif
         // Thread Local Key/Value Init.
         if (local_block_offset == 0) {
             char *key_chars = new char[sizeof(uint64_t)];
