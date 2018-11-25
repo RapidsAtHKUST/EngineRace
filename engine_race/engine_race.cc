@@ -984,7 +984,7 @@ namespace polar_race {
 
                         size_t offset = block_id * (size_t) value_agg_num * VALUE_SIZE;
                         size_t size = (block_id == (total_block_num - 1) ? last_block_size : (value_agg_num * VALUE_SIZE));
-                        fill_aio_node(file_dp, iocb_ptr, buffers[buffer_id], offset, size, IOCB_CMD_PREAD);
+                        fill_aio_node(file_dp, iocb_ptr, buffers[buffer_id] + offset, offset, size, IOCB_CMD_PREAD);
 
                         iocb_ptrs[i] = iocb_ptr;
                     }
@@ -1000,7 +1000,7 @@ namespace polar_race {
                 }
 
                 uint32_t in_flight = submitted_block_num - completed_block_num;
-                uint32_t expected = (2 <= in_flight ? 2 : in_flight);
+                uint32_t expected = (0 <= in_flight ? 0 : in_flight);
 
                 auto ret = io_getevents(aio_ctx, expected, in_flight, io_events, NULL);
 
