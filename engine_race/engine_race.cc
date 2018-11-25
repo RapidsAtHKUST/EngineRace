@@ -420,7 +420,8 @@ namespace polar_race {
             return kNotFound;
         }
 
-        if (local_block_offset < 200) {
+        if (local_block_offset < 500) {
+            unique_lock<mutex> lock(read_mutex);
             log_info("tid: %d, bucket: %d, value off: %d", tid, key_par_id, it->value_offset_);
         }
         uint64_t val_par_id = get_key_par_id(big_endian_key_uint);
