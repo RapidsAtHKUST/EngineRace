@@ -428,7 +428,7 @@ namespace polar_race {
         return kSucc;
     }
 
-    void EngineRace::ReadBucketToBuffer(uint32_t bucket_id) {
+    void EngineRace::ReadBucketToBuffer(uint32_t bucket_id, uint32_t slice_id) {
         static thread_local double read_time = 0;
         static thread_local int tid = ++io_threads_count;
         auto range_clock_beg = high_resolution_clock::now();
@@ -440,11 +440,16 @@ namespace polar_race {
                      1000000000.0);
 #endif
         auto buffer_id = static_cast<uint32_t>(bucket_id % MAX_BUFFER_NUM);
+        uint32_t avg_cnt = mmap_meta_cnt_[buffer_id] / SLICE_NUM + 1;
+        uint32_t slice_beg = slice_id * avg_cnt;
+        uint32_t slice_len = (slice_id == SLICE_NUM - 1 ? mmap_meta_cnt_[buffer_id] - slice_beg : avg_cnt) * VALUE_SIZE;
 
-        auto ret = pread(value_file_dp_[bucket_id], value_shared_buffers_[buffer_id],
-                         static_cast<uint64_t >(VALUE_SIZE) * mmap_meta_cnt_[bucket_id], 0);
+        auto ret = pread(value_file_dp_[bucket_id], value_shared_buffers_[buffer_id] + VALUE_SIZE * slice_beg,
+                         slice_len, VALUE_SIZE * slice_beg);
         if (ret < 0) {
-            log_info("in range read err: %s, size: %zu", strerror(errno));
+            log_info("in range read err: %s, size: %zu, slice-beg: %zu, slice-len:%zu, "
+                     "avg cnt: %zu, mmap size: %zu", strerror(errno), slice_beg,
+                     slice_len, avg_cnt, mmap_meta_cnt_[buffer_id]);
         }
         auto range_clock_end = high_resolution_clock::now();
         double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
@@ -491,7 +496,7 @@ namespace polar_race {
                 bucket_cond_var_arr_ = new condition_variable[BUCKET_NUM];
                 bucket_is_ready_read_ = new bool[BUCKET_NUM];
                 bucket_consumed_num_ = new atomic_int[BUCKET_NUM];
-                futures_.resize(BUCKET_NUM);
+                futures_.resize(BUCKET_NUM * SLICE_NUM);
 
                 usleep(10000);
                 auto range_clock_end = high_resolution_clock::now();
@@ -519,27 +524,31 @@ namespace polar_race {
             }
             for (uint32_t next_bucket_idx = 0; next_bucket_idx < BUCKET_NUM; next_bucket_idx++) {
                 bucket_consumed_num_[next_bucket_idx].store(0);
-                futures_[next_bucket_idx] = range_io_worker_pool_->enqueue([this, next_bucket_idx]() {
-                    unique_lock<mutex> lock(bucket_mutex_arr_[next_bucket_idx]);
-                    if (!bucket_is_ready_read_[next_bucket_idx]) {
-                        auto range_clock_beg = high_resolution_clock::now();
+                for (uint32_t slice_id = 0; slice_id < SLICE_NUM; slice_id++) {
+                    futures_[next_bucket_idx * SLICE_NUM + slice_id] = range_io_worker_pool_->enqueue(
+                            [this, next_bucket_idx, slice_id]() {
+                                unique_lock<mutex> lock(bucket_mutex_arr_[next_bucket_idx]);
+                                if (!bucket_is_ready_read_[next_bucket_idx]) {
+                                    auto range_clock_beg = high_resolution_clock::now();
 
-                        bucket_cond_var_arr_[next_bucket_idx].wait(lock, [this, next_bucket_idx]() {
-                            return bucket_is_ready_read_[next_bucket_idx];
-                        });
-                        auto range_clock_end = high_resolution_clock::now();
-                        double sleep_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
+                                    bucket_cond_var_arr_[next_bucket_idx].wait(lock, [this, next_bucket_idx]() {
+                                        return bucket_is_ready_read_[next_bucket_idx];
+                                    });
+                                    auto range_clock_end = high_resolution_clock::now();
+                                    double sleep_time =
+                                            duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                                             static_cast<double>(1000000000);
 //                        log_info("IO sleep in bucket :%d，elapsed time: %.9lf", next_bucket_idx, sleep_time);
 
-                        {
-                            unique_lock<mutex> lock_time(total_time_mtx_);
-                            total_io_sleep_time_ += sleep_time;
-                        }
-                    }
-                    ReadBucketToBuffer(next_bucket_idx);
-                    return;
-                });
+                                    {
+                                        unique_lock<mutex> lock_time(total_time_mtx_);
+                                        total_io_sleep_time_ += sleep_time;
+                                    }
+                                }
+                                ReadBucketToBuffer(next_bucket_idx, slice_id);
+                                return;
+                            });
+                }
             }
         }
         range_barrier_ptr_->Wait();
@@ -601,13 +610,17 @@ namespace polar_race {
         for (uint32_t key_par_id = lower_key_par_id; key_par_id < upper_key_par_id + 1; key_par_id++) {
             if (tid == 0) {
                 auto wait_start_clock = high_resolution_clock::now();
-                futures_[key_par_id].get();
+                for (uint32_t slice_id = 0; slice_id < SLICE_NUM; slice_id++) {
+                    futures_[key_par_id * SLICE_NUM + slice_id].get();
+                }
                 auto wait_end_clock = high_resolution_clock::now();
                 elapsed_time = duration_cast<nanoseconds>(wait_end_clock - wait_start_clock).count() /
                                static_cast<double>(1000000000);
                 wait_get_time_ += elapsed_time;
             } else {
-                futures_[key_par_id].get();
+                for (uint32_t slice_id = 0; slice_id < SLICE_NUM; slice_id++) {
+                    futures_[key_par_id * SLICE_NUM + slice_id].get();
+                }
             }
 
             uint32_t in_par_id_beg = 0;

@@ -29,8 +29,10 @@
 #define NUM_READ_KEY_THREADS (NUM_THREADS)
 #define NUM_FLUSH_TMP_THREADS (8u)
 
-#define MAX_BUFFER_NUM (5u)
-#define IO_POOL_SIZE (3u)
+
+#define SLICE_NUM (8u)
+#define MAX_BUFFER_NUM (4u)
+#define IO_POOL_SIZE (16u)
 
 #define KEY_READ_BLOCK_COUNT (8192u)
 #define FALLOCATE_SIZE (512 * 1024)
@@ -115,7 +117,7 @@ namespace polar_race {
                       Visitor &visitor) override;
 
     private:
-        void ReadBucketToBuffer(uint32_t bucket_id);
+        void ReadBucketToBuffer(uint32_t bucket_id, uint32_t slice_id);
 
         void InitForRange(int64_t tid);
 
