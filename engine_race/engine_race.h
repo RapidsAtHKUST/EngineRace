@@ -34,8 +34,8 @@
 #define NUM_FLUSH_TMP_THREADS (8u)
 
 #define SLICE_NUM (1u)
-#define IO_POOL_SIZE (3u)       // each one for a slice
-#define MAX_BUFFER_NUM (4u)
+#define IO_POOL_SIZE (1u)       // each one for a slice
+#define MAX_BUFFER_NUM (3u)
 
 #define KEY_READ_BLOCK_COUNT (8192u)
 #define FALLOCATE_SIZE (512 * 1024)

@@ -265,7 +265,7 @@ namespace polar_race {
 // 1. Open engine
     RetCode EngineRace::Open(const std::string &name, Engine **eptr) {
 //        log_info("Consumption: %d KB, Free Mem (KB): \n%s", getValue(), exec("free -m").c_str());
-        dstat_corountine();
+//        dstat_corountine();
         if (!file_exists(name.c_str())) {
             int ret = mkdir(name.c_str(), 0755);
             if (ret != 0) {
@@ -628,7 +628,7 @@ namespace polar_race {
                                           16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
                                           32, 33, 34, 35, 36, 37, 38, 39, 0, 1, 2, 3, 4, 5, 6, 7,
                                           48, 49, 50, 51, 52, 53, 54, 55, 48, 49, 50, 51, 52, 53, 54, 55};
-                assert(thread_logical_cpu_id_.size() == 64);
+//                assert(thread_logical_cpu_id_.size() == 64);
                 // AIO
                 // Init aio context.
                 queue_depth = 32;
@@ -664,7 +664,7 @@ namespace polar_race {
             }
         }
 
-        setThreadSelfAffinity(thread_logical_cpu_id_[tid]);
+//        setThreadSelfAffinity(thread_logical_cpu_id_[tid]);
         // Submit All IO Jobs
         if (tid == 0) {
             memset(bucket_is_ready_read_, 0, BUCKET_NUM);
