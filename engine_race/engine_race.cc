@@ -265,7 +265,7 @@ namespace polar_race {
 // 1. Open engine
     RetCode EngineRace::Open(const std::string &name, Engine **eptr) {
 //        log_info("Consumption: %d KB, Free Mem (KB): \n%s", getValue(), exec("free -m").c_str());
-        dstat_corountine();
+//        dstat_corountine();
         if (!file_exists(name.c_str())) {
             int ret = mkdir(name.c_str(), 0755);
             if (ret != 0) {
@@ -540,7 +540,7 @@ namespace polar_race {
             }
 
             uint32_t in_flight = submitted_block_num - completed_block_num;
-            uint32_t expected = (0 <= in_flight ? 0 : in_flight);
+            uint32_t expected = (1 <= in_flight ? 1 : in_flight);
 
             auto ret = io_getevents(aio_ctx, expected, in_flight, io_events, NULL);
 
@@ -631,7 +631,7 @@ namespace polar_race {
                 assert(thread_logical_cpu_id_.size() == 64);
                 // AIO
                 // Init aio context.
-                queue_depth = 32;
+                queue_depth = 4;
                 aio_ctx = 0;
                 iocb_ptrs = new iocb *[queue_depth];
                 iocbs = new iocb[queue_depth];
