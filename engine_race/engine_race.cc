@@ -540,7 +540,7 @@ namespace polar_race {
             }
 
             uint32_t in_flight = submitted_block_num - completed_block_num;
-            uint32_t expected = (1 <= in_flight ? 1 : in_flight);
+            uint32_t expected = (0 <= in_flight ? 0 : in_flight);
 
             auto ret = io_getevents(aio_ctx, expected, in_flight, io_events, NULL);
 
