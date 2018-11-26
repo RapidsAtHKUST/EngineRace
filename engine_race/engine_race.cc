@@ -25,6 +25,7 @@
 
 #include "log.h"
 #include "stat.h"
+#include "util.h"
 
 #define STAT
 
@@ -264,6 +265,7 @@ namespace polar_race {
 
 // 1. Open engine
     RetCode EngineRace::Open(const std::string &name, Engine **eptr) {
+        log_info("Consumption: %d KB, Free Mem (KB): \n%s", getValue(), exec("free -m").c_str());
         if (!file_exists(name.c_str())) {
             int ret = mkdir(name.c_str(), 0755);
             if (ret != 0) {
@@ -282,6 +284,8 @@ namespace polar_race {
         log_info("Start ~EngineRace(), time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
+        log_info("Consumption: %d KB, Free Mem (KB): \n%s", getValue(), exec("free -m").c_str());
+
         // Thread.
         for (uint32_t i = 0; i < NUM_THREADS; ++i) {
             if (aligned_read_buffer_ != nullptr) {
@@ -316,6 +320,12 @@ namespace polar_race {
         }
         delete[] key_file_dp_;
         delete[] mmap_key_aligned_buffer_;
+
+        // Recovery Stage, Output Topology
+        if (!index_.empty() && mmap_meta_cnt_[0] < 40000) {
+            log_info("Topology: %s", exec("lscpu -p").c_str());
+        }
+
         // Free indices
         for (KeyEntry *index_partition: index_) {
             free(index_partition);
@@ -530,7 +540,7 @@ namespace polar_race {
             }
 
             uint32_t in_flight = submitted_block_num - completed_block_num;
-            uint32_t expected = (2 <= in_flight ? 2 : in_flight);
+            uint32_t expected = (0 <= in_flight ? 0 : in_flight);
 
             auto ret = io_getevents(aio_ctx, expected, in_flight, io_events, NULL);
 
@@ -613,6 +623,12 @@ namespace polar_race {
                 bucket_consumed_num_ = new atomic_int[BUCKET_NUM];
                 futures_.resize(BUCKET_NUM * SLICE_NUM);
 
+                // reserve some for aio threads
+                thread_logical_cpu_id_ = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+                                          16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+                                          32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 0, 1, 2, 3,
+                                          48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 4, 5, 6, 7};
+//                assert(thread_logical_cpu_id_.size()==64);
                 // AIO
                 // Init aio context.
                 queue_depth = 32;
@@ -647,6 +663,8 @@ namespace polar_race {
                 }
             }
         }
+
+        setThreadSelfAffinity(thread_logical_cpu_id_[tid]);
         // Submit All IO Jobs
         if (tid == 0) {
             memset(bucket_is_ready_read_, 0, BUCKET_NUM);

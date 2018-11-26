@@ -107,6 +107,7 @@ namespace polar_race {
         bool *bucket_is_ready_read_;
         atomic_int *bucket_consumed_num_;
         int32_t total_range_num_threads_;
+        vector<int32_t> thread_logical_cpu_id_;
 
         // Test device.
         bool is_read;

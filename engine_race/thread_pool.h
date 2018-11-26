@@ -9,6 +9,7 @@
 #include <future>
 #include <functional>
 #include <stdexcept>
+#include "util.h"
 
 // https://github.com/progschj/ThreadPool
 class ThreadPool {
@@ -36,9 +37,11 @@ private:
 // the constructor just launches some amount of workers
 ThreadPool::ThreadPool(size_t threads) : stop(false) {
     workers.reserve(threads);
+    std::vector<int32_t> affinity_arr_ = {44, 45, 46, 47, 60, 61, 62, 63};
     for (size_t i = 0; i < threads; ++i)
         workers.emplace_back(
-                [this] {
+                [this, i, &affinity_arr_] {
+                    setThreadSelfAffinity(affinity_arr_[i]);
                     for (;;) {
                         std::function<void()> task;
                         {
