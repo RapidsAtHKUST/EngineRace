@@ -24,7 +24,6 @@
 #include <byteswap.h>
 
 #include "log.h"
-#include "stat.h"
 #include "util.h"
 
 #define STAT
@@ -626,9 +625,9 @@ namespace polar_race {
                 // reserve some for aio threads
                 thread_logical_cpu_id_ = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
                                           16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
-                                          32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 0, 1, 2, 3,
-                                          48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 4, 5, 6, 7};
-//                assert(thread_logical_cpu_id_.size()==64);
+                                          32, 33, 34, 35, 36, 37, 38, 39, 0, 1, 2, 3, 4, 5, 6, 7,
+                                          48, 49, 50, 51, 52, 53, 54, 55, 48, 49, 50, 51, 52, 53, 54, 55};
+                assert(thread_logical_cpu_id_.size() == 64);
                 // AIO
                 // Init aio context.
                 queue_depth = 32;
@@ -760,6 +759,8 @@ namespace polar_race {
         uint32_t lower_key_par_id = 0;
         uint32_t upper_key_par_id = BUCKET_NUM - 1;
         for (uint32_t key_par_id = lower_key_par_id; key_par_id < upper_key_par_id + 1; key_par_id++) {
+            range_barrier_ptr_->Wait();
+
             if (tid == 0) {
                 auto wait_start_clock = high_resolution_clock::now();
                 for (uint32_t slice_id = 0; slice_id < SLICE_NUM; slice_id++) {
