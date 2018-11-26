@@ -264,7 +264,8 @@ namespace polar_race {
 
 // 1. Open engine
     RetCode EngineRace::Open(const std::string &name, Engine **eptr) {
-        log_info("Consumption: %d KB, Free Mem (KB): \n%s", getValue(), exec("free -m").c_str());
+//        log_info("Consumption: %d KB, Free Mem (KB): \n%s", getValue(), exec("free -m").c_str());
+        dstat_corountine();
         if (!file_exists(name.c_str())) {
             int ret = mkdir(name.c_str(), 0755);
             if (ret != 0) {
@@ -283,7 +284,7 @@ namespace polar_race {
         log_info("Start ~EngineRace(), time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
-        log_info("Consumption: %d KB, Free Mem (KB): \n%s", getValue(), exec("free -m").c_str());
+//        log_info("Consumption: %d KB, Free Mem (KB): \n%s", getValue(), exec("free -m").c_str());
 
         // Thread.
         for (uint32_t i = 0; i < NUM_THREADS; ++i) {
@@ -321,9 +322,9 @@ namespace polar_race {
         delete[] mmap_key_aligned_buffer_;
 
         // Recovery Stage, Output Topology
-        if (!index_.empty() && mmap_meta_cnt_[0] < 40000) {
-            log_info("Topology: %s", exec("lscpu -p").c_str());
-        }
+//        if (!index_.empty() && mmap_meta_cnt_[0] < 40000) {
+//            log_info("Topology: %s", exec("lscpu -p").c_str());
+//        }
 
         // Free indices
         for (KeyEntry *index_partition: index_) {

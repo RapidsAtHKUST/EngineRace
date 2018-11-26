@@ -9,6 +9,8 @@
 
 #include "log.h"
 
+using namespace std;
+
 inline void setThreadSelfAffinity(int core_id) {
 //    long num_cores = sysconf(_SC_NPROCESSORS_ONLN);
 //    assert(core_id >= 0 && core_id < num_cores);
@@ -37,6 +39,30 @@ inline std::string exec(const char *cmd) {
             result += buffer.data();
     }
     return result;
+}
+
+inline std::string dstat() {
+    std::array<char, 512> buffer;
+    std::string result;
+    std::shared_ptr<FILE> pipe(popen("dstat -tcdrlmgy --fs", "r"), pclose);
+    if (!pipe) throw std::runtime_error("popen() failed!");
+    while (!feof(pipe.get())) {
+        if (fgets(buffer.data(), 512, pipe.get()) != nullptr) {
+            log_debug(
+                    "\n----system---- --total-cpu-usage-- -dsk/total- --io/total- ---load-avg---"
+                    " ------memory-usage----- ---paging-- ---system-- --filesystem-"
+                    "\n     time     |usr sys idl wai stl| read  writ| read  writ| 1m   5m  15m "
+                    "| used  free  buff  cach|  in   out | int   csw |files  inodes\n%s", buffer.data());
+        }
+    }
+    return result;
+}
+
+inline void dstat_corountine() {
+    thread my_coroutine = thread([]() {
+        dstat();
+    });
+    my_coroutine.detach();
 }
 
 inline int parseLine(char *line) {
