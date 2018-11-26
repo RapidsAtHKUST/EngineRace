@@ -26,17 +26,12 @@
 #include "log.h"
 #include "util.h"
 
-#define STAT
+//#define STAT
 
 namespace polar_race {
     using namespace std::chrono;
     std::chrono::time_point<std::chrono::high_resolution_clock> clock_start;
     std::chrono::time_point<std::chrono::high_resolution_clock> clock_end;
-
-    struct AioNode {
-        char *value_buffer_ptr_;
-        iocb *iocb_ptr_;
-    };
 
     static inline long
     io_setup(unsigned maxevents, aio_context_t *ctx) {
