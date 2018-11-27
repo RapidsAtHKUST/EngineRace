@@ -81,7 +81,6 @@ namespace polar_race {
     atomic_int write_num_threads(-1);
     atomic_int read_num_threads_count(-1);
     atomic_int range_num_threads_count(-1);
-    atomic_int io_threads_count(-1);
 
     const string key_file_name = "polar.keys";
     const string value_file_name = "polar.values";
@@ -89,8 +88,6 @@ namespace polar_race {
     RetCode Engine::Open(const std::string &name, Engine **eptr) {
         clock_start = high_resolution_clock::now();
         log_info("sizeof %d, %d, %d", sizeof(off_t), sizeof(off64_t), sizeof(KeyEntry));
-        log_info("ts: %.3lf s",
-                 std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
         auto ret = EngineRace::Open(name, eptr);
         clock_end = high_resolution_clock::now();
         log_info("After open DB, time: %.3lf s, ts: %.3lf s",
@@ -225,7 +222,6 @@ namespace polar_race {
                 aligned_read_buffer_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, VALUE_SIZE);
             }
             BuildIndex(dir);
-            dir_ = dir;
             log_info("Reload the database successfully.");
         }
         clock_end = high_resolution_clock::now();
@@ -352,7 +348,9 @@ namespace polar_race {
             log_info("Total Range Time: %.9lf s, wait: %.9lf s,  io thread sleep: %.9lf s",
                      total_time_, wait_get_time_, total_io_sleep_time_);
         }
+#ifdef DSTAT_TESTING
         PrintMemFree();
+#endif
         clock_end = high_resolution_clock::now();
         log_info("Finish ~EngineRace(), time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
@@ -464,8 +462,6 @@ namespace polar_race {
     }
 
     void EngineRace::ReadBucketToBuffer(uint32_t bucket_id) {
-        static thread_local double read_time = 0;
-        static thread_local int tid = ++io_threads_count;
         auto range_clock_beg = high_resolution_clock::now();
 #ifdef STAT
         if (bucket_id % 64 == 63)
@@ -547,11 +543,7 @@ namespace polar_race {
         auto range_clock_end = high_resolution_clock::now();
         double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                               static_cast<double>(1000000000);
-
-        {
-            unique_lock<mutex> lock(total_time_mtx_);
-            total_time_ += elapsed_time;
-        }
+        total_time_ += elapsed_time;
 #ifdef STAT
         read_time += elapsed_time;
         if (bucket_id % 64 == 63)
@@ -562,62 +554,61 @@ namespace polar_race {
 #endif
     }
 
+    void EngineRace::InitAIOContext() {
+        // AIO
+        // Init aio context.
+        queue_depth = 32;
+        aio_ctx = 0;
+        iocb_ptrs = new iocb *[queue_depth];
+        iocbs = new iocb[queue_depth];
+        io_events = new io_event[queue_depth];
+        for (uint32_t i = 0; i < queue_depth; ++i) {
+            free_nodes.push_back(&iocbs[i]);
+        }
+
+        if (io_setup(queue_depth, &aio_ctx) < 0) {
+            log_info("Setup fail\n");
+            exit(-1);
+        }
+    }
+
+    void EngineRace::InitRangeReader() {
+        range_io_worker_pool_ = new ThreadPool(IO_POOL_SIZE);
+        for (int i = 0; i < BUCKET_NUM; i++) {
+            val_buffer_max_size_ = max<uint64_t>(val_buffer_max_size_, mmap_meta_cnt_[i]);
+        }
+        val_buffer_max_size_ *= VALUE_SIZE;
+        log_info("Max Buffer Size: %zu", val_buffer_max_size_);
+        value_shared_buffers_ = vector<char *>(MAX_TOTAL_BUFFER_NUM);
+        for (uint32_t i = 0; i < MAX_TOTAL_BUFFER_NUM; i++) {
+            value_shared_buffers_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, val_buffer_max_size_);
+        }
+        // Value Files.
+        bucket_mutex_arr_ = new mutex[BUCKET_NUM];
+        bucket_cond_var_arr_ = new condition_variable[BUCKET_NUM];
+        bucket_is_ready_read_ = new bool[BUCKET_NUM];
+        bucket_consumed_num_ = new atomic_int[BUCKET_NUM];
+        futures_.resize(BUCKET_NUM);
+    }
+
     void EngineRace::InitForRange(int64_t tid) {
         static thread_local bool is_first = true;
         if (!is_range_init_) {
             unique_lock<mutex> lock(range_mtx_);
             if (tid == 0) {
-                range_io_worker_pool_ = new ThreadPool(IO_POOL_SIZE);
-                for (int i = 0; i < BUCKET_NUM; i++) {
-                    val_buffer_max_size_ = max<uint64_t>(val_buffer_max_size_, mmap_meta_cnt_[i]);
-                }
-                val_buffer_max_size_ *= VALUE_SIZE;
-                log_info("Max Buffer Size: %zu", val_buffer_max_size_);
-                value_shared_buffers_ = vector<char *>(MAX_TOTAL_BUFFER_NUM);
-                for (uint32_t i = 0; i < MAX_TOTAL_BUFFER_NUM; i++) {
-                    value_shared_buffers_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, val_buffer_max_size_);
-                }
-                const string value_file_path = dir_ + "/" + value_file_name;
-                // Value Files.
-                for (int i = 0; i < BUCKET_NUM; i++) {
-                    string temp_value = value_file_path + to_string(i);
-                    close(value_file_dp_[i]);
-                    value_file_dp_[i] = open(temp_value.c_str(), O_RDONLY | O_DIRECT, FILE_PRIVILEGE);
-                }
-                // Sleep here
                 auto range_clock_beg = high_resolution_clock::now();
-                bucket_mutex_arr_ = new mutex[BUCKET_NUM];
-                bucket_cond_var_arr_ = new condition_variable[BUCKET_NUM];
-                bucket_is_ready_read_ = new bool[BUCKET_NUM];
-                bucket_consumed_num_ = new atomic_int[BUCKET_NUM];
-                futures_.resize(BUCKET_NUM);
-
-                // AIO
-                // Init aio context.
-                queue_depth = 32;
-                aio_ctx = 0;
-                iocb_ptrs = new iocb *[queue_depth];
-                iocbs = new iocb[queue_depth];
-                io_events = new io_event[queue_depth];
-                for (uint32_t i = 0; i < queue_depth; ++i) {
-                    free_nodes.push_back(&iocbs[i]);
-                }
-
-                if (io_setup(queue_depth, &aio_ctx) < 0) {
-                    log_info("Setup fail\n");
-                    exit(-1);
-                }
-
+                InitRangeReader();
+                InitAIOContext();
                 usleep(10000);
                 auto range_clock_end = high_resolution_clock::now();
                 double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                                       static_cast<double>(1000000000);
                 log_info("Elapsed time in first sync, %.9lf s", 0, elapsed_time);
 
+                // Init Barrier, Notify All.
                 total_range_num_threads_ = range_num_threads_count + 1;
                 range_barrier_ptr_ = new Barrier(static_cast<size_t>(total_range_num_threads_));
                 log_info("Total number of range threads: %zu", total_range_num_threads_);
-
                 is_range_init_ = true;
                 range_init_cond_.notify_all();
             } else {
@@ -646,14 +637,12 @@ namespace polar_race {
                                 bucket_cond_var_arr_[next_bucket_idx].wait(lock, [this, next_bucket_idx]() {
                                     return bucket_is_ready_read_[next_bucket_idx];
                                 });
+
                                 auto range_clock_end = high_resolution_clock::now();
                                 double sleep_time =
                                         duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                                         static_cast<double>(1000000000);
-                                {
-                                    unique_lock<mutex> lock_time(total_time_mtx_);
-                                    total_io_sleep_time_ += sleep_time;
-                                }
+                                total_io_sleep_time_ += sleep_time;
                             }
                             ReadBucketToBuffer(next_bucket_idx);
                             return;
@@ -743,7 +732,9 @@ namespace polar_race {
             uint32_t in_par_id_beg = 0;
             uint32_t in_par_id_end = mmap_meta_cnt_[par_bucket_id];
             uint64_t prev_key = 0;
+#ifdef STAT
             uint32_t duplicates_num = 0;
+#endif
             uint32_t buffer_id = get_buffer_id(par_bucket_id);
             for (uint32_t in_par_id = in_par_id_beg; in_par_id < in_par_id_end; in_par_id++) {
                 // Skip the equalities.

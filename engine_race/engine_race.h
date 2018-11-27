@@ -39,7 +39,7 @@
 #define MAX_TOTAL_BUFFER_NUM (MAX_RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
 
 #define KEY_READ_BLOCK_COUNT (8192u)
-#define FALLOCATE_SIZE (4 * 1024 * 1024)
+#define FALLOCATE_SIZE (8 * 1024 * 1024)
 
 //#define MAX_READ_BUFFER_SIZE (200)
 #define FALLOCATE_POOL_SIZE (32u)
@@ -83,7 +83,6 @@ namespace polar_race {
 //        vector<uint32_t> bucket_size_;
 //        vector<spp::sparse_hash_map<uint64_t, char *>> buffers_;
 
-        string dir_;
         char **aligned_read_buffer_;
         Barrier read_barrier_;
 
@@ -99,7 +98,6 @@ namespace polar_race {
         vector<char *> value_shared_buffers_;
 
         vector<shared_future<void>> futures_;
-        mutex total_time_mtx_;
         double total_time_;
         double total_io_sleep_time_;
 
@@ -146,6 +144,10 @@ namespace polar_race {
 
     private:
         void ReadBucketToBuffer(uint32_t bucket_id);
+
+        void InitRangeReader();
+
+        void InitAIOContext();
 
         void InitForRange(int64_t tid);
 
