@@ -21,8 +21,8 @@
 #include "util.h"
 #include "file_util.h"
 
-#define STAT
-#define DSTAT_TESTING
+//#define STAT
+//#define DSTAT_TESTING
 
 namespace polar_race {
     using namespace std;
