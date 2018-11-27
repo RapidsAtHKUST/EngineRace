@@ -7,13 +7,7 @@
 #define _GNU_SOURCE
 #endif
 
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
 #include <malloc.h>
-#include <linux/aio_abi.h>
-#include <sys/syscall.h>
 
 #include <atomic>
 #include <iostream>
@@ -25,42 +19,15 @@
 
 #include "log.h"
 #include "util.h"
+#include "file_util.h"
 
 #define STAT
+#define DSTAT_TESTING
 
 namespace polar_race {
     using namespace std::chrono;
     std::chrono::time_point<std::chrono::high_resolution_clock> clock_start;
     std::chrono::time_point<std::chrono::high_resolution_clock> clock_end;
-
-    static inline long io_setup(unsigned maxevents, aio_context_t *ctx) {
-        return syscall(SYS_io_setup, maxevents, ctx);
-    }
-
-    static inline long io_submit(aio_context_t ctx, long nr, struct iocb **iocbpp) {
-        return syscall(SYS_io_submit, ctx, nr, iocbpp);
-    }
-
-    static inline long io_getevents(aio_context_t ctx, long min_nr, long nr,
-                                    struct io_event *events, struct timespec *timeout) {
-        return syscall(SYS_io_getevents, ctx, min_nr, nr, events, timeout);
-    }
-
-    static inline long io_destroy(aio_context_t ctx) {
-        return syscall(SYS_io_destroy, ctx);
-    }
-
-    static inline void fill_aio_node(int fd, iocb *iocb_ptr, char *buffer,
-                                     size_t offset, size_t buffer_size, uint16_t operation) {
-        memset(iocb_ptr, 0, sizeof(iocb));
-        iocb_ptr->aio_buf = (uintptr_t) buffer;
-        iocb_ptr->aio_data = (uintptr_t) iocb_ptr;
-        iocb_ptr->aio_fildes = fd;
-        iocb_ptr->aio_lio_opcode = operation;
-        iocb_ptr->aio_reqprio = 0;
-        iocb_ptr->aio_nbytes = buffer_size;
-        iocb_ptr->aio_offset = offset;
-    }
 
     bool operator<(KeyEntry l, KeyEntry r) {
         return l.key_ < r.key_;
@@ -79,19 +46,7 @@ namespace polar_race {
         return (*base < x) + base - a;
     }
 
-    inline bool file_exists(const char *file_name) {
-        struct stat buffer;
-        return (stat(file_name, &buffer) == 0);
-    }
-
-    inline size_t file_size(const char *file_name) {
-        struct stat st;
-        stat(file_name, &st);
-        size_t size = st.st_size;
-        return size;
-    }
-
-    inline uint32_t get_key_par_id(uint64_t key) {
+    inline uint32_t get_par_bucket_id(uint64_t key) {
         return static_cast<uint32_t >((key >> (NUM_THREADS - BUCKET_DIGITS)) & 0xffffffu);
     }
 
@@ -144,17 +99,16 @@ namespace polar_race {
         return ret;
     }
 
-    Engine::~Engine() {
+    Engine::~Engine() = default;
 
-    }
-
-/*
+    /*
  * Complete the functions below to implement you own engine
  */
     EngineRace::EngineRace(const std::string &dir) :
             mmap_meta_cnt_(nullptr), key_file_dp_(nullptr), key_buffer_file_dp_(nullptr),
             mmap_key_aligned_buffer_(nullptr), value_file_dp_(nullptr), value_buffer_file_dp_(nullptr),
-            mmap_value_aligned_buffer_(nullptr), partition_mtx_(nullptr), write_barrier_(WRITE_BARRIER_NUM),
+            mmap_value_aligned_buffer_(nullptr),
+            fallocate_pool_(nullptr), partition_mtx_(nullptr), write_barrier_(WRITE_BARRIER_NUM),
             aligned_read_buffer_(nullptr), read_barrier_(READ_BARRIER_NUM),
             is_range_init_(false), range_barrier_ptr_(nullptr), polar_keys_(NUM_THREADS),
             total_time_(0), total_io_sleep_time_(0), wait_get_time_(0),
@@ -165,10 +119,12 @@ namespace polar_race {
         log_info("Start init DB, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
+
+#ifdef DSTAT_TESTING
         log_info("Sleep For Wait.");
         sleep(5);
         log_info("Sleep For Wait End.");
-
+#endif
         const string meta_file_path = dir + "/polar.meta";
 
         const string key_file_path = dir + "/" + key_file_name;
@@ -187,12 +143,18 @@ namespace polar_race {
 
         if (!file_exists(meta_file_path.c_str())) {
             log_info("Initialize the database...");
+
             // Meta.
             meta_cnt_file_dp_ = open(meta_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
             ftruncate(meta_cnt_file_dp_, sizeof(uint32_t) * BUCKET_NUM);
             mmap_meta_cnt_ = (uint32_t *) mmap(nullptr, sizeof(uint32_t) * (BUCKET_NUM),
                                                PROT_READ | PROT_WRITE, MAP_SHARED, meta_cnt_file_dp_, 0);
             memset(mmap_meta_cnt_, 0, sizeof(uint32_t) * (BUCKET_NUM));
+
+            // Fallocate Value File Jobs
+            fallocate_pool_ = new ThreadPool(FALLOCATE_POOL_SIZE);
+            fallocate_futures_per_bucket_.resize(BUCKET_NUM);
+            fallocate_slice_id_end_.resize(BUCKET_NUM, 0);
 
             // Value.
             partition_mtx_ = new mutex[BUCKET_NUM];
@@ -215,6 +177,13 @@ namespace polar_race {
                 ftruncate(value_buffer_file_dp_[i], tmp_buffer_value_file_size);
                 mmap_value_aligned_buffer_[i] = (char *) mmap(nullptr, tmp_buffer_value_file_size, \
                         PROT_READ | PROT_WRITE, MAP_SHARED, value_buffer_file_dp_[i], 0);
+
+                for (int j = 0; j < MAX_FALLOCATE_RESERVE_SLICE_NUM; j++) {
+                    fallocate_futures_per_bucket_[i].push(fallocate_pool_->enqueue([this, i]() {
+                        fallocate(value_file_dp_[i], 0, FALLOCATE_SIZE, fallocate_slice_id_end_[i] * FALLOCATE_SIZE);
+                    }));
+                    fallocate_slice_id_end_[i]++;
+                }
             }
 
             // Key.
@@ -267,8 +236,10 @@ namespace polar_race {
 
 // 1. Open engine
     RetCode EngineRace::Open(const std::string &name, Engine **eptr) {
+#ifdef DSTAT_TESTING
         PrintMemFree();
         DstatCorountine();
+#endif
         if (!file_exists(name.c_str())) {
             int ret = mkdir(name.c_str(), 0755);
             if (ret != 0) {
@@ -287,8 +258,10 @@ namespace polar_race {
         log_info("Start ~EngineRace(), time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
+#ifdef DSTAT_TESTING
         PrintMemFree();
-
+#endif
+        delete fallocate_pool_;
         // Thread.
         for (uint32_t i = 0; i < NUM_THREADS; ++i) {
             if (aligned_read_buffer_ != nullptr) {
@@ -391,7 +364,7 @@ namespace polar_race {
         static thread_local uint32_t tid = (uint32_t) (++write_num_threads) % NUM_THREADS;
         static thread_local uint32_t local_block_offset = 0;
         uint64_t key_int_big_endian = bswap_64(TO_UINT64(key.data()));
-        uint64_t key_par_id = get_key_par_id(key_int_big_endian);
+        uint64_t par_bucket_id = get_par_bucket_id(key_int_big_endian);
 #ifdef STAT
         static thread_local std::chrono::time_point<std::chrono::high_resolution_clock> first_write_clk;
         static thread_local std::chrono::time_point<std::chrono::high_resolution_clock> last_write_clk;
@@ -404,29 +377,41 @@ namespace polar_race {
 //        }
         // Value.
         {
-            unique_lock<mutex> lock(partition_mtx_[key_par_id]);
+            unique_lock<mutex> lock(partition_mtx_[par_bucket_id]);
             // Write value to the value file, with a tmp file as value_buffer.
-            uint32_t val_buffer_offset = (mmap_meta_cnt_[key_par_id] % TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
-            char *value_buffer = mmap_value_aligned_buffer_[key_par_id];
+            uint32_t val_buffer_offset = (mmap_meta_cnt_[par_bucket_id] % TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
+            char *value_buffer = mmap_value_aligned_buffer_[par_bucket_id];
             memcpy(value_buffer + val_buffer_offset, value.data(), VALUE_SIZE);
-            if ((mmap_meta_cnt_[key_par_id] + 1) % TMP_VALUE_BUFFER_SIZE == 0) {
+            if ((mmap_meta_cnt_[par_bucket_id] + 1) % TMP_VALUE_BUFFER_SIZE == 0) {
                 uint64_t write_offset =
-                        ((uint64_t) mmap_meta_cnt_[key_par_id] - (TMP_VALUE_BUFFER_SIZE - 1)) * VALUE_SIZE;
+                        ((uint64_t) mmap_meta_cnt_[par_bucket_id] - (TMP_VALUE_BUFFER_SIZE - 1)) * VALUE_SIZE;
                 if (write_offset % (FALLOCATE_SIZE) == 0) {
-                    fallocate(value_file_dp_[key_par_id], 0, write_offset, FALLOCATE_SIZE);
+                    fallocate_futures_per_bucket_[par_bucket_id].front().get();
+                    fallocate_futures_per_bucket_[par_bucket_id].pop();
+
+                    // Submit Fallocate Job
+                    fallocate_futures_per_bucket_[par_bucket_id].push(fallocate_pool_->enqueue([this, par_bucket_id]() {
+                        int ret = fallocate(value_file_dp_[par_bucket_id], 0, FALLOCATE_SIZE,
+                                            fallocate_slice_id_end_[par_bucket_id] * FALLOCATE_SIZE);
+                        if (ret < 0) {
+                            log_info("Fallocate Err For Bucket %d, slice id: %d, Ret: %d, Err: %s", par_bucket_id,
+                                     fallocate_slice_id_end_[par_bucket_id], ret, strerror(errno));
+                        }
+                    }));
+                    fallocate_slice_id_end_[par_bucket_id]++;
                 }
-                pwrite(value_file_dp_[key_par_id], value_buffer, VALUE_SIZE * TMP_VALUE_BUFFER_SIZE, write_offset);
+                pwrite(value_file_dp_[par_bucket_id], value_buffer, VALUE_SIZE * TMP_VALUE_BUFFER_SIZE, write_offset);
             }
             // Write key to the key file.
-            uint32_t key_buffer_offset = (mmap_meta_cnt_[key_par_id] % TMP_KEY_BUFFER_SIZE);
-            uint64_t *key_buffer = mmap_key_aligned_buffer_[key_par_id];
+            uint32_t key_buffer_offset = (mmap_meta_cnt_[par_bucket_id] % TMP_KEY_BUFFER_SIZE);
+            uint64_t *key_buffer = mmap_key_aligned_buffer_[par_bucket_id];
             key_buffer[key_buffer_offset] = key_int_big_endian;
-            if (((mmap_meta_cnt_[key_par_id] + 1) % TMP_KEY_BUFFER_SIZE) == 0) {
-                pwrite(key_file_dp_[key_par_id], key_buffer, sizeof(uint64_t) * TMP_KEY_BUFFER_SIZE,
-                       ((uint64_t) mmap_meta_cnt_[key_par_id] - (TMP_KEY_BUFFER_SIZE - 1)) * sizeof(uint64_t));
+            if (((mmap_meta_cnt_[par_bucket_id] + 1) % TMP_KEY_BUFFER_SIZE) == 0) {
+                pwrite(key_file_dp_[par_bucket_id], key_buffer, sizeof(uint64_t) * TMP_KEY_BUFFER_SIZE,
+                       ((uint64_t) mmap_meta_cnt_[par_bucket_id] - (TMP_KEY_BUFFER_SIZE - 1)) * sizeof(uint64_t));
             }
             // Update the meta data.
-            mmap_meta_cnt_[key_par_id]++;
+            mmap_meta_cnt_[par_bucket_id]++;
         }
         local_block_offset++;
 #ifdef STAT
@@ -451,7 +436,7 @@ namespace polar_race {
 
         KeyEntry tmp{};
         tmp.key_ = big_endian_key_uint;
-        auto bucket_id = get_key_par_id(big_endian_key_uint);
+        auto bucket_id = get_par_bucket_id(big_endian_key_uint);
 
         auto it = index_[bucket_id] + branchfree_search(index_[bucket_id], mmap_meta_cnt_[bucket_id], tmp);
         local_block_offset++;
@@ -468,9 +453,6 @@ namespace polar_race {
             return kNotFound;
         }
 
-//        if (local_block_offset < 100) {
-//            log_info("tid: %d, bucket: %d, value off: %d", tid, bucket_id, it->value_offset_);
-//        }
         pread(value_file_dp_[bucket_id], value_buffer, VALUE_SIZE,
               static_cast<uint64_t>(it->value_offset_) * VALUE_SIZE);
 

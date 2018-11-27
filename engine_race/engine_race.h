@@ -42,6 +42,8 @@
 #define FALLOCATE_SIZE (4 * 1024 * 1024)
 
 //#define MAX_READ_BUFFER_SIZE (200)
+#define FALLOCATE_POOL_SIZE (32u)
+#define MAX_FALLOCATE_RESERVE_SLICE_NUM (2)
 
 namespace polar_race {
     using namespace std;
@@ -67,6 +69,9 @@ namespace polar_race {
         char **mmap_value_aligned_buffer_;
 
         // Write.
+        ThreadPool* fallocate_pool_;
+        vector<queue<shared_future<void>>> fallocate_futures_per_bucket_;
+        vector<uint32_t> fallocate_slice_id_end_;
         mutex *partition_mtx_;
         Barrier write_barrier_;
 
