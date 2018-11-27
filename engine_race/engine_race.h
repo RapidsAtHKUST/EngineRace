@@ -33,9 +33,10 @@
 #define NUM_READ_KEY_THREADS (NUM_THREADS)
 #define NUM_FLUSH_TMP_THREADS (8u)
 
-#define SLICE_NUM (1u)
-#define IO_POOL_SIZE (1u)       // each one for a slice
-#define MAX_BUFFER_NUM (3u)
+#define IO_POOL_SIZE (1u)       // have to be one for aio
+#define MAX_RECYCLE_BUFFER_NUM (2u)
+#define KEEP_REUSE_BUFFER_NUM (3u)
+#define MAX_TOTAL_BUFFER_NUM (MAX_RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
 
 #define KEY_READ_BLOCK_COUNT (8192u)
 #define FALLOCATE_SIZE (512 * 1024)
@@ -107,20 +108,15 @@ namespace polar_race {
         bool *bucket_is_ready_read_;
         atomic_int *bucket_consumed_num_;
         int32_t total_range_num_threads_;
-        vector<int32_t> thread_logical_cpu_id_;
 
-        // Test device.
-        bool is_read;
-        uint32_t max_cnt_in_single_bucket;
-
-        iocb** iocb_ptrs;
-        iocb* iocbs;
-        io_event* io_events;
+        // AIO.
+        iocb **iocb_ptrs;
+        iocb *iocbs;
+        io_event *io_events;
         aio_context_t aio_ctx;
         uint32_t queue_depth;
-        uint32_t buffer_cnt;
 
-        list<iocb*> free_nodes;
+        list<iocb *> free_nodes;
 
     public:
         static RetCode Open(const std::string &name, Engine **eptr);
@@ -144,7 +140,7 @@ namespace polar_race {
                       Visitor &visitor) override;
 
     private:
-        void ReadBucketToBuffer(uint32_t bucket_id, uint32_t slice_id);
+        void ReadBucketToBuffer(uint32_t bucket_id);
 
         void InitForRange(int64_t tid);
 

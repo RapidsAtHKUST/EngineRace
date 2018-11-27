@@ -26,36 +26,32 @@
 #include "log.h"
 #include "util.h"
 
-//#define STAT
+#define STAT
 
 namespace polar_race {
     using namespace std::chrono;
     std::chrono::time_point<std::chrono::high_resolution_clock> clock_start;
     std::chrono::time_point<std::chrono::high_resolution_clock> clock_end;
 
-    static inline long
-    io_setup(unsigned maxevents, aio_context_t *ctx) {
+    static inline long io_setup(unsigned maxevents, aio_context_t *ctx) {
         return syscall(SYS_io_setup, maxevents, ctx);
     }
 
-    static inline long
-    io_submit(aio_context_t ctx, long nr, struct iocb **iocbpp) {
+    static inline long io_submit(aio_context_t ctx, long nr, struct iocb **iocbpp) {
         return syscall(SYS_io_submit, ctx, nr, iocbpp);
     }
 
-    static inline long
-    io_getevents(aio_context_t ctx, long min_nr, long nr,
-                 struct io_event *events, struct timespec *timeout) {
+    static inline long io_getevents(aio_context_t ctx, long min_nr, long nr,
+                                    struct io_event *events, struct timespec *timeout) {
         return syscall(SYS_io_getevents, ctx, min_nr, nr, events, timeout);
     }
 
-    static inline long
-    io_destroy(aio_context_t ctx) {
+    static inline long io_destroy(aio_context_t ctx) {
         return syscall(SYS_io_destroy, ctx);
     }
 
-    static inline void
-    fill_aio_node(int fd, iocb *iocb_ptr, char *buffer, size_t offset, size_t buffer_size, uint16_t operation) {
+    static inline void fill_aio_node(int fd, iocb *iocb_ptr, char *buffer,
+                                     size_t offset, size_t buffer_size, uint16_t operation) {
         memset(iocb_ptr, 0, sizeof(iocb));
         iocb_ptr->aio_buf = (uintptr_t) buffer;
         iocb_ptr->aio_data = (uintptr_t) iocb_ptr;
@@ -97,6 +93,14 @@ namespace polar_race {
 
     inline uint32_t get_key_par_id(uint64_t key) {
         return static_cast<uint32_t >((key >> (NUM_THREADS - BUCKET_DIGITS)) & 0xffffffu);
+    }
+
+    inline uint32_t get_buffer_id(uint32_t bucket_id) {
+        if (bucket_id >= KEEP_REUSE_BUFFER_NUM) {
+            return (bucket_id % MAX_RECYCLE_BUFFER_NUM) + KEEP_REUSE_BUFFER_NUM;
+        } else {
+            return bucket_id;
+        }
     }
 
     inline uint64_t polar_str_to_big_endian_uint64(const PolarString &polar_str) {
@@ -316,11 +320,6 @@ namespace polar_race {
         delete[] key_file_dp_;
         delete[] mmap_key_aligned_buffer_;
 
-        // Recovery Stage, Output Topology
-//        if (!index_.empty() && mmap_meta_cnt_[0] < 40000) {
-//            log_info("Topology: %s", exec("lscpu -p").c_str());
-//        }
-
         // Free indices
         for (KeyEntry *index_partition: index_) {
             free(index_partition);
@@ -475,7 +474,7 @@ namespace polar_race {
         return kSucc;
     }
 
-    void EngineRace::ReadBucketToBuffer(uint32_t bucket_id, uint32_t slice_id) {
+    void EngineRace::ReadBucketToBuffer(uint32_t bucket_id) {
         static thread_local double read_time = 0;
         static thread_local int tid = ++io_threads_count;
         auto range_clock_beg = high_resolution_clock::now();
@@ -486,12 +485,8 @@ namespace polar_race {
                              range_clock_beg.time_since_epoch()).count() /
                      1000000000.0);
 #endif
-//        uint32_t bucket_cnt = mmap_meta_cnt_[bucket_id];
-//        uint32_t avg_cnt = bucket_cnt / SLICE_NUM;
-//        uint32_t slice_beg = slice_id * avg_cnt;
-//        uint32_t slice_len = (slice_id == SLICE_NUM - 1 ? bucket_cnt - slice_beg : avg_cnt);
 
-        auto buffer_id = static_cast<uint32_t>(bucket_id % MAX_BUFFER_NUM);
+        auto buffer_id = get_buffer_id(bucket_id);
 
         // Replace with AIO
         uint32_t value_agg_num = 32;
@@ -560,17 +555,6 @@ namespace polar_race {
                 completed_block_num += to_complete;
             }
         }
-
-
-//        auto ret = pread(value_file_dp_[bucket_id], value_shared_buffers_[buffer_id] + VALUE_SIZE * slice_beg,
-//                         slice_len, VALUE_SIZE * slice_beg);
-//        if (bucket_id % 64 == 0)
-//            log_info("bucket %d, slice id: %d, slice cnt: %d", bucket_id, slice_id, slice_len);
-//        if (ret < 0) {
-//            log_info("in range read err: %s, size: %zu, slice-beg: %zu, slice-len:%zu, "
-//                     "avg cnt: %zu, mmap size: %zu", strerror(errno), slice_beg,
-//                     slice_len, avg_cnt, bucket_cnt);
-//        }
         auto range_clock_end = high_resolution_clock::now();
         double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                               static_cast<double>(1000000000);
@@ -590,6 +574,7 @@ namespace polar_race {
     }
 
     void EngineRace::InitForRange(int64_t tid) {
+        static thread_local bool is_first = true;
         if (!is_range_init_) {
             unique_lock<mutex> lock(range_mtx_);
             if (tid == 0) {
@@ -599,8 +584,8 @@ namespace polar_race {
                 }
                 val_buffer_max_size_ *= VALUE_SIZE;
                 log_info("Max Buffer Size: %zu", val_buffer_max_size_);
-                value_shared_buffers_ = vector<char *>(MAX_BUFFER_NUM);
-                for (uint32_t i = 0; i < MAX_BUFFER_NUM; i++) {
+                value_shared_buffers_ = vector<char *>(MAX_TOTAL_BUFFER_NUM);
+                for (uint32_t i = 0; i < MAX_TOTAL_BUFFER_NUM; i++) {
                     value_shared_buffers_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, val_buffer_max_size_);
                 }
                 const string value_file_path = dir_ + "/" + value_file_name;
@@ -616,14 +601,8 @@ namespace polar_race {
                 bucket_cond_var_arr_ = new condition_variable[BUCKET_NUM];
                 bucket_is_ready_read_ = new bool[BUCKET_NUM];
                 bucket_consumed_num_ = new atomic_int[BUCKET_NUM];
-                futures_.resize(BUCKET_NUM * SLICE_NUM);
+                futures_.resize(BUCKET_NUM);
 
-                // reserve some for aio threads
-                thread_logical_cpu_id_ = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-                                          16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
-                                          32, 33, 34, 35, 36, 37, 38, 39, 0, 1, 2, 3, 4, 5, 6, 7,
-                                          48, 49, 50, 51, 52, 53, 54, 55, 48, 49, 50, 51, 52, 53, 54, 55};
-//                assert(thread_logical_cpu_id_.size() == 64);
                 // AIO
                 // Init aio context.
                 queue_depth = 32;
@@ -659,42 +638,41 @@ namespace polar_race {
             }
         }
 
-//        setThreadSelfAffinity(thread_logical_cpu_id_[tid]);
         // Submit All IO Jobs
         if (tid == 0) {
             memset(bucket_is_ready_read_, 0, BUCKET_NUM);
-            for (uint32_t i = 0; i < MAX_BUFFER_NUM; i++) {
+            for (uint32_t i = 0; i < MAX_RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM; i++) {
                 bucket_is_ready_read_[i] = true;
             }
-            for (uint32_t next_bucket_idx = 0; next_bucket_idx < BUCKET_NUM; next_bucket_idx++) {
+
+            for (uint32_t next_bucket_idx = (is_first ? 0 : KEEP_REUSE_BUFFER_NUM);
+                 next_bucket_idx < BUCKET_NUM; next_bucket_idx++) {
                 bucket_consumed_num_[next_bucket_idx].store(0);
-                for (uint32_t slice_id = 0; slice_id < SLICE_NUM; slice_id++) {
-                    futures_[next_bucket_idx * SLICE_NUM + slice_id] = range_io_worker_pool_->enqueue(
-                            [this, next_bucket_idx, slice_id]() {
-                                unique_lock<mutex> lock(bucket_mutex_arr_[next_bucket_idx]);
-                                if (!bucket_is_ready_read_[next_bucket_idx]) {
-                                    auto range_clock_beg = high_resolution_clock::now();
+                futures_[next_bucket_idx] = range_io_worker_pool_->enqueue(
+                        [this, next_bucket_idx]() {
+                            unique_lock<mutex> lock(bucket_mutex_arr_[next_bucket_idx]);
+                            if (!bucket_is_ready_read_[next_bucket_idx]) {
+                                auto range_clock_beg = high_resolution_clock::now();
 
-                                    bucket_cond_var_arr_[next_bucket_idx].wait(lock, [this, next_bucket_idx]() {
-                                        return bucket_is_ready_read_[next_bucket_idx];
-                                    });
-                                    auto range_clock_end = high_resolution_clock::now();
-                                    double sleep_time =
-                                            duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
-                                            static_cast<double>(1000000000);
-//                        log_info("IO sleep in bucket :%d，elapsed time: %.9lf", next_bucket_idx, sleep_time);
-
-                                    {
-                                        unique_lock<mutex> lock_time(total_time_mtx_);
-                                        total_io_sleep_time_ += sleep_time;
-                                    }
+                                bucket_cond_var_arr_[next_bucket_idx].wait(lock, [this, next_bucket_idx]() {
+                                    return bucket_is_ready_read_[next_bucket_idx];
+                                });
+                                auto range_clock_end = high_resolution_clock::now();
+                                double sleep_time =
+                                        duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
+                                        static_cast<double>(1000000000);
+                                {
+                                    unique_lock<mutex> lock_time(total_time_mtx_);
+                                    total_io_sleep_time_ += sleep_time;
                                 }
-                                ReadBucketToBuffer(next_bucket_idx, slice_id);
-                                return;
-                            });
-                }
+                            }
+                            ReadBucketToBuffer(next_bucket_idx);
+                            return;
+                        });
             }
         }
+
+        is_first = false;
         range_barrier_ptr_->Wait();
     }
 
@@ -754,35 +732,34 @@ namespace polar_race {
         // 2-level Loop.
         uint32_t lower_key_par_id = 0;
         uint32_t upper_key_par_id = BUCKET_NUM - 1;
-        for (uint32_t key_par_id = lower_key_par_id; key_par_id < upper_key_par_id + 1; key_par_id++) {
+        for (uint32_t par_bucket_id = lower_key_par_id; par_bucket_id < upper_key_par_id + 1; par_bucket_id++) {
             range_barrier_ptr_->Wait();
 
             if (tid == 0) {
                 auto wait_start_clock = high_resolution_clock::now();
-                for (uint32_t slice_id = 0; slice_id < SLICE_NUM; slice_id++) {
-                    futures_[key_par_id * SLICE_NUM + slice_id].get();
-                }
+                futures_[par_bucket_id].get();
                 auto wait_end_clock = high_resolution_clock::now();
                 elapsed_time = duration_cast<nanoseconds>(wait_end_clock - wait_start_clock).count() /
                                static_cast<double>(1000000000);
+                if (par_bucket_id < KEEP_REUSE_BUFFER_NUM) {
+                    log_info("Elapsed wait: %.6lf s", elapsed_time);
+                }
                 wait_get_time_ += elapsed_time;
             } else {
-                for (uint32_t slice_id = 0; slice_id < SLICE_NUM; slice_id++) {
-                    futures_[key_par_id * SLICE_NUM + slice_id].get();
-                }
+                futures_[par_bucket_id].get();
             }
 
             uint32_t in_par_id_beg = 0;
-            uint32_t in_par_id_end = mmap_meta_cnt_[key_par_id];
+            uint32_t in_par_id_end = mmap_meta_cnt_[par_bucket_id];
             uint64_t prev_key = 0;
             uint32_t duplicates_num = 0;
-            uint32_t inner_loop_buffer_idx = key_par_id % MAX_BUFFER_NUM;
+            uint32_t buffer_id = get_buffer_id(par_bucket_id);
             for (uint32_t in_par_id = in_par_id_beg; in_par_id < in_par_id_end; in_par_id++) {
                 // Skip the equalities.
-                uint64_t big_endian_key = index_[key_par_id][in_par_id].key_;
+                uint64_t big_endian_key = index_[par_bucket_id][in_par_id].key_;
                 if (in_par_id != in_par_id_beg) {
                     if (big_endian_key == prev_key) {
-                        if (tid == 0 && duplicates_num < 3 && key_par_id % 256 == 0) {
+                        if (tid == 0 && duplicates_num < 3 && par_bucket_id % 256 == 0) {
                             log_info("duplicates...%d", duplicates_num);
                             duplicates_num++;
                         }
@@ -795,16 +772,16 @@ namespace polar_race {
                 (*(uint64_t *) polar_key_ptr_->data()) = bswap_64(big_endian_key);
 
                 // Value.
-                uint64_t val_id = index_[key_par_id][in_par_id].value_offset_;
-                polar_val_ptr_ = PolarString(value_shared_buffers_[inner_loop_buffer_idx] + val_id * VALUE_SIZE,
+                uint64_t val_id = index_[par_bucket_id][in_par_id].value_offset_;
+                polar_val_ptr_ = PolarString(value_shared_buffers_[buffer_id] + val_id * VALUE_SIZE,
                                              VALUE_SIZE);
                 // Visit Key/Value.
                 visitor.Visit(*polar_key_ptr_, polar_val_ptr_);
             }
             // End of inner loop, Submit IO Jobs.
-            int32_t my_order = ++bucket_consumed_num_[key_par_id];
+            int32_t my_order = ++bucket_consumed_num_[par_bucket_id];
             if (my_order == total_range_num_threads_) {
-                uint32_t next_bucket_idx = key_par_id + MAX_BUFFER_NUM;
+                uint32_t next_bucket_idx = par_bucket_id + MAX_RECYCLE_BUFFER_NUM;
 
                 // Notify
                 if (next_bucket_idx < upper_key_par_id + 1) {
