@@ -21,8 +21,8 @@
 #include "util.h"
 #include "file_util.h"
 
-#define STAT
-#define DSTAT_TESTING
+//#define STAT
+//#define DSTAT_TESTING
 
 namespace polar_race {
     using namespace std::chrono;
@@ -730,9 +730,11 @@ namespace polar_race {
                 auto wait_end_clock = high_resolution_clock::now();
                 elapsed_time = duration_cast<nanoseconds>(wait_end_clock - wait_start_clock).count() /
                                static_cast<double>(1000000000);
+#ifdef STAT
                 if (par_bucket_id < KEEP_REUSE_BUFFER_NUM) {
                     log_info("Elapsed wait: %.6lf s", elapsed_time);
                 }
+#endif
                 wait_get_time_ += elapsed_time;
             } else {
                 futures_[par_bucket_id].get();
@@ -748,10 +750,12 @@ namespace polar_race {
                 uint64_t big_endian_key = index_[par_bucket_id][in_par_id].key_;
                 if (in_par_id != in_par_id_beg) {
                     if (big_endian_key == prev_key) {
+#ifdef STAT
                         if (tid == 0 && duplicates_num < 3 && par_bucket_id % 256 == 0) {
                             log_info("duplicates...%d", duplicates_num);
                             duplicates_num++;
                         }
+#endif
                         continue;
                     }
                 }
