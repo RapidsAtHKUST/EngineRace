@@ -21,7 +21,7 @@
 #define FILESYSTEM_BLOCK_SIZE (4096)
 #define FILE_PRIVILEGE (0644)
 #define TMP_KEY_BUFFER_SIZE (512)
-#define TMP_VALUE_BUFFER_SIZE (4)
+#define TMP_VALUE_BUFFER_SIZE (4*110)
 #define TO_UINT64(buffer) (*(uint64_t*)(buffer))
 
 #define WRITE_BARRIER_NUM (16)

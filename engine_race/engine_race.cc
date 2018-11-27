@@ -382,24 +382,27 @@ namespace polar_race {
             uint32_t val_buffer_offset = (mmap_meta_cnt_[par_bucket_id] % TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
             char *value_buffer = mmap_value_aligned_buffer_[par_bucket_id];
             memcpy(value_buffer + val_buffer_offset, value.data(), VALUE_SIZE);
+
+            // Fallocate
+            if ((mmap_meta_cnt_[par_bucket_id] * VALUE_SIZE) % (FALLOCATE_SIZE) == 0) {
+                fallocate_futures_per_bucket_[par_bucket_id].front().get();
+                fallocate_futures_per_bucket_[par_bucket_id].pop();
+
+                // Submit Fallocate Job
+                fallocate_futures_per_bucket_[par_bucket_id].push(fallocate_pool_->enqueue([this, par_bucket_id]() {
+                    int ret = fallocate(value_file_dp_[par_bucket_id], 0, FALLOCATE_SIZE,
+                                        fallocate_slice_id_end_[par_bucket_id] * FALLOCATE_SIZE);
+                    if (ret < 0) {
+                        log_info("Fallocate Err For Bucket %d, slice id: %d, Ret: %d, Err: %s", par_bucket_id,
+                                 fallocate_slice_id_end_[par_bucket_id], ret, strerror(errno));
+                    }
+                }));
+                fallocate_slice_id_end_[par_bucket_id]++;
+            }
+
             if ((mmap_meta_cnt_[par_bucket_id] + 1) % TMP_VALUE_BUFFER_SIZE == 0) {
                 uint64_t write_offset =
                         ((uint64_t) mmap_meta_cnt_[par_bucket_id] - (TMP_VALUE_BUFFER_SIZE - 1)) * VALUE_SIZE;
-                if (write_offset % (FALLOCATE_SIZE) == 0) {
-                    fallocate_futures_per_bucket_[par_bucket_id].front().get();
-                    fallocate_futures_per_bucket_[par_bucket_id].pop();
-
-                    // Submit Fallocate Job
-                    fallocate_futures_per_bucket_[par_bucket_id].push(fallocate_pool_->enqueue([this, par_bucket_id]() {
-                        int ret = fallocate(value_file_dp_[par_bucket_id], 0, FALLOCATE_SIZE,
-                                            fallocate_slice_id_end_[par_bucket_id] * FALLOCATE_SIZE);
-                        if (ret < 0) {
-                            log_info("Fallocate Err For Bucket %d, slice id: %d, Ret: %d, Err: %s", par_bucket_id,
-                                     fallocate_slice_id_end_[par_bucket_id], ret, strerror(errno));
-                        }
-                    }));
-                    fallocate_slice_id_end_[par_bucket_id]++;
-                }
                 pwrite(value_file_dp_[par_bucket_id], value_buffer, VALUE_SIZE * TMP_VALUE_BUFFER_SIZE, write_offset);
             }
             // Write key to the key file.
