@@ -39,7 +39,7 @@
 #define MAX_TOTAL_BUFFER_NUM (MAX_RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
 
 #define KEY_READ_BLOCK_COUNT (8192u)
-#define FALLOCATE_SIZE (8 * 1024 * 1024)
+#define FALLOCATE_SIZE (16 * 1024 * 1024)
 
 //#define MAX_READ_BUFFER_SIZE (200)
 #define FALLOCATE_POOL_SIZE (32u)
@@ -141,6 +141,9 @@ namespace polar_race {
         RetCode Range(const PolarString &lower,
                       const PolarString &upper,
                       Visitor &visitor) override;
+
+    private:
+        void FAllocateForBucket(uint32_t par_bucket_id);
 
     private:
         void ReadBucketToBuffer(uint32_t bucket_id);
