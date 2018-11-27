@@ -46,20 +46,38 @@ inline std::string dstat() {
     std::string result;
     std::shared_ptr<FILE> pipe(popen("dstat -tcdrlmgy --fs", "r"), pclose);
     if (!pipe) throw std::runtime_error("popen() failed!");
+    int times = 0;
+    int global_times = 0;
     while (!feof(pipe.get())) {
         if (fgets(buffer.data(), 512, pipe.get()) != nullptr) {
-            log_debug(
-                    "\n----system---- --total-cpu-usage-- -dsk/total- --io/total- ---load-avg---"
-                    " ------memory-usage----- ---paging-- ---system-- --filesystem-"
-                    "\n     time     |usr sys idl wai hiq siq| read  writ| read  writ| 1m   5m  15m | "
-                    "used  buff  cach  free|  in   out | int   csw |files  inodes"
-                    "\n%s", buffer.data());
+            if (global_times < 100) {
+                result += buffer.data();
+                times++;
+                global_times++;
+                if (times >= 5) {
+                    log_debug(
+                            "\n----system---- --total-cpu-usage-- -dsk/total- --io/total- ---load-avg---"
+                            " ------memory-usage----- ---paging-- ---system-- --filesystem-"
+                            "\n     time     |usr sys idl wai hiq siq| read  writ| read  writ| 1m   5m  15m | "
+                            "used  buff  cach  free|  in   out | int   csw |files  inodes"
+                            "\n%s", result.c_str());
+                    times = 0;
+                    result.clear();
+                }
+            } else {
+                log_debug(
+                        "\n----system---- --total-cpu-usage-- -dsk/total- --io/total- ---load-avg---"
+                        " ------memory-usage----- ---paging-- ---system-- --filesystem-"
+                        "\n     time     |usr sys idl wai hiq siq| read  writ| read  writ| 1m   5m  15m | "
+                        "used  buff  cach  free|  in   out | int   csw |files  inodes"
+                        "\n%s", buffer.data());
+            }
         }
     }
     return result;
 }
 
-inline void dstat_corountine() {
+inline void DstatCorountine() {
     thread my_coroutine = thread([]() {
         dstat();
     });
@@ -91,6 +109,6 @@ inline int getValue() { //Note: this value is in KB!
     return result;
 }
 
-inline void print_mem_free() {
+inline void PrintMemFree() {
     log_info("Consumption: %d KB, Free: \n%s", getValue(), exec("free").c_str());
 }

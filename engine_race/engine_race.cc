@@ -165,6 +165,10 @@ namespace polar_race {
         log_info("Start init DB, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
+        log_info("Sleep For Wait.");
+        sleep(5);
+        log_info("Sleep For Wait End.");
+
         const string meta_file_path = dir + "/polar.meta";
 
         const string key_file_path = dir + "/" + key_file_name;
@@ -263,8 +267,8 @@ namespace polar_race {
 
 // 1. Open engine
     RetCode EngineRace::Open(const std::string &name, Engine **eptr) {
-        print_mem_free();
-        dstat_corountine();
+        PrintMemFree();
+        DstatCorountine();
         if (!file_exists(name.c_str())) {
             int ret = mkdir(name.c_str(), 0755);
             if (ret != 0) {
@@ -283,7 +287,7 @@ namespace polar_race {
         log_info("Start ~EngineRace(), time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
-        print_mem_free();
+        PrintMemFree();
 
         // Thread.
         for (uint32_t i = 0; i < NUM_THREADS; ++i) {
@@ -375,11 +379,11 @@ namespace polar_race {
             log_info("Total Range Time: %.9lf s, wait: %.9lf s,  io thread sleep: %.9lf s",
                      total_time_, wait_get_time_, total_io_sleep_time_);
         }
+        PrintMemFree();
         clock_end = high_resolution_clock::now();
         log_info("Finish ~EngineRace(), time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
-
     }
 
 // 3. Write a key-value pair into engine
