@@ -263,8 +263,8 @@ namespace polar_race {
 
 // 1. Open engine
     RetCode EngineRace::Open(const std::string &name, Engine **eptr) {
-//        log_info("Consumption: %d KB, Free Mem (KB): \n%s", getValue(), exec("free -m").c_str());
-//        dstat_corountine();
+        print_mem_free();
+        dstat_corountine();
         if (!file_exists(name.c_str())) {
             int ret = mkdir(name.c_str(), 0755);
             if (ret != 0) {
@@ -283,7 +283,7 @@ namespace polar_race {
         log_info("Start ~EngineRace(), time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
-//        log_info("Consumption: %d KB, Free Mem (KB): \n%s", getValue(), exec("free -m").c_str());
+        print_mem_free();
 
         // Thread.
         for (uint32_t i = 0; i < NUM_THREADS; ++i) {

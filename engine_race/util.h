@@ -51,8 +51,9 @@ inline std::string dstat() {
             log_debug(
                     "\n----system---- --total-cpu-usage-- -dsk/total- --io/total- ---load-avg---"
                     " ------memory-usage----- ---paging-- ---system-- --filesystem-"
-                    "\n     time     |usr sys idl wai stl| read  writ| read  writ| 1m   5m  15m "
-                    "| used  free  buff  cach|  in   out | int   csw |files  inodes\n%s", buffer.data());
+                    "\n     time     |usr sys idl wai hiq siq| read  writ| read  writ| 1m   5m  15m | "
+                    "used  buff  cach  free|  in   out | int   csw |files  inodes"
+                    "\n%s", buffer.data());
         }
     }
     return result;
@@ -88,4 +89,8 @@ inline int getValue() { //Note: this value is in KB!
     }
     fclose(file);
     return result;
+}
+
+inline void print_mem_free() {
+    log_info("Consumption: %d KB, Free: \n%s", getValue(), exec("free").c_str());
 }
