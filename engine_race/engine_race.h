@@ -43,7 +43,7 @@
 
 //#define MAX_READ_BUFFER_SIZE (200)
 #define FALLOCATE_POOL_SIZE (32u)
-#define MAX_FALLOCATE_RESERVE_SLICE_NUM (1)
+#define MAX_FALLOCATE_RESERVE_SLICE_NUM (2)
 
 namespace polar_race {
     using namespace std;

@@ -44,7 +44,7 @@ inline std::string exec(const char *cmd) {
 inline std::string dstat() {
     std::array<char, 512> buffer;
     std::string result;
-    std::shared_ptr<FILE> pipe(popen("dstat -tcdrlmgy --fs", "r"), pclose);
+    std::shared_ptr<FILE> pipe(popen("dstat -tcdrlmgy --fs 1 95", "r"), pclose);
     if (!pipe) throw std::runtime_error("popen() failed!");
     int times = 0;
     int global_times = 0;
@@ -83,6 +83,30 @@ inline void DstatCorountine() {
     });
     my_coroutine.detach();
 }
+
+inline std::string iostat() {
+    std::array<char, 512> buffer;
+    std::string result;
+    std::shared_ptr<FILE> pipe(popen(" iostat -d -x -k 1 95", "r"), pclose);
+    if (!pipe) throw std::runtime_error("popen() failed!");
+    int times = 0;
+    int global_times = 0;
+    while (!feof(pipe.get())) {
+        if (fgets(buffer.data(), 512, pipe.get()) != nullptr) {
+            log_debug(
+                    "\n %s", buffer.data());
+        }
+    }
+    return result;
+}
+
+inline void IOStatCoroutine() {
+    thread my_coroutine = thread([]() {
+        iostat();
+    });
+    my_coroutine.detach();
+}
+
 
 inline int parseLine(char *line) {
     // This assumes that a digit will be found and the line ends in " Kb".

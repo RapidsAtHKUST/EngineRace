@@ -21,8 +21,8 @@
 #include "util.h"
 #include "file_util.h"
 
-//#define STAT
-//#define DSTAT_TESTING
+#define STAT
+#define DSTAT_TESTING
 
 namespace polar_race {
     using namespace std;
@@ -237,6 +237,7 @@ namespace polar_race {
 #ifdef DSTAT_TESTING
         PrintMemFree();
         DstatCorountine();
+        IOStatCoroutine();
 #endif
         if (!file_exists(name.c_str())) {
             int ret = mkdir(name.c_str(), 0755);
@@ -471,10 +472,9 @@ namespace polar_race {
         auto range_clock_beg = high_resolution_clock::now();
 #ifdef STAT
         if (bucket_id % 64 == 63)
-            log_info("In bucket %d, Read in tid: %d, start ts: %.9lf s", bucket_id, tid,
+            log_info("In bucket %d, Read in tid: %d, start ts: %.9lf s", bucket_id,
                      std::chrono::duration_cast<std::chrono::nanoseconds>(
-                             range_clock_beg.time_since_epoch()).count() /
-                     1000000000.0);
+                             range_clock_beg.time_since_epoch()).count() / 1000000000.0);
 #endif
 
         auto buffer_id = get_buffer_id(bucket_id);
@@ -551,12 +551,10 @@ namespace polar_race {
                               static_cast<double>(1000000000);
         total_time_ += elapsed_time;
 #ifdef STAT
-        read_time += elapsed_time;
         if (bucket_id % 64 == 63)
-            log_info("In bucket %d, Read time %.9lf s, ts: %.9lf s, tid: %d, acc-time: %.6lf s",
-                     bucket_id, elapsed_time,
-                     duration_cast<nanoseconds>(range_clock_end.time_since_epoch()).count() /
-                     1000000000.0, tid, read_time);
+            log_info("In bucket %d, Read time %.9lf s, ts: %.9lf s",
+                     bucket_id, elapsed_time, duration_cast<nanoseconds>(range_clock_end.time_since_epoch()).count() /
+                                              1000000000.0);
 #endif
     }
 
