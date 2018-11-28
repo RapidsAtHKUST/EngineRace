@@ -24,7 +24,8 @@
 #define STAT
 #define DSTAT_TESTING
 //#define SLEEP_FOR_TESTING
-#define SLEEP_FOR_DEBUG
+//#define SLEEP_FOR_DEBUG
+#define ENABLE_WRITE_BARRIER
 
 namespace polar_race {
     using namespace std;
@@ -191,7 +192,7 @@ namespace polar_race {
                 string temp_key = key_file_path + to_string(i);
                 string temp_buffer_key = tmp_key_file_path + to_string(i);
                 key_file_dp_[i] = open(temp_key.c_str(), O_RDWR | O_CREAT | O_DIRECT, FILE_PRIVILEGE);
-                fallocate(key_file_dp_[i], 0, 0, FALLOCATE_KEY_FILE_SIZE);
+//                fallocate(key_file_dp_[i], 0, 0, FALLOCATE_KEY_FILE_SIZE);
 
                 constexpr size_t tmp_buffer_key_file_size = sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE;
                 key_buffer_file_dp_[i] = open(temp_buffer_key.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
@@ -392,7 +393,7 @@ namespace polar_race {
         }
 #endif
 #ifdef ENABLE_WRITE_BARRIER
-        if (local_block_offset % 100000 == 0 && local_block_offset < 900000 && tid < WRITE_BARRIER_NUM) {
+        if (local_block_offset % 10000 == 0 && local_block_offset < 900000 && tid < WRITE_BARRIER_NUM) {
             write_barrier_.Wait();
         }
 #endif

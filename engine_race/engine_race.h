@@ -45,7 +45,7 @@
 #define FALLOCATE_POOL_SIZE (32u)
 #define MAX_FALLOCATE_RESERVE_SLICE_NUM (1)
 
-#define FALLOCATE_KEY_FILE_SIZE (768 * 1024)
+//#define FALLOCATE_KEY_FILE_SIZE (768 * 1024)
 
 namespace polar_race {
     using namespace std;
