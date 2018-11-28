@@ -21,7 +21,7 @@
 #include "util.h"
 #include "file_util.h"
 
-//#define STAT
+#define STAT
 //#define DSTAT_TESTING
 //#define SLEEP_FOR_TESTING
 //#define SLEEP_FOR_DEBUG
@@ -457,7 +457,6 @@ namespace polar_race {
         }
         if (it == index_[bucket_id] + mmap_meta_cnt_[bucket_id] || it->key_ != big_endian_key_uint) {
             if (is_first_not_found) {
-                log_info("par: %d, key: %zu, %zu", bucket_id, big_endian_key_uint, bswap_64(big_endian_key_uint));
                 log_info("not found in tid: %d\n", tid);
                 is_first_not_found = false;
             }

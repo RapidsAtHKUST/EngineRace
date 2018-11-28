@@ -39,14 +39,12 @@
 #define MAX_TOTAL_BUFFER_NUM (MAX_RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
 
 #define KEY_READ_BLOCK_COUNT (8192u)
-#define FALLOCATE_SIZE (8 * 1024 * 1024)
+#define FALLOCATE_SIZE (4 * 1024 * 1024)
 
 #define FALLOCATE_POOL_SIZE (32u)
 #define MAX_FALLOCATE_RESERVE_SLICE_NUM (1)
 
-#define FALLOCATE_KEY_FILE_SIZE (768 * 1024)
-
-//#define MAX_READ_BUFFER_SIZE (300000 / BUCKET_NUM)
+#define FALLOCATE_KEY_FILE_SIZE (1024 * 1024)
 
 namespace polar_race {
     using namespace std;
@@ -79,12 +77,6 @@ namespace polar_race {
         Barrier write_barrier_;
 
         // Read.
-//        volatile bool is_read_init_;
-//        mutex read_mutex;
-//        vector<vector<bool>> is_accessed_flag_;
-//        vector<uint32_t> bucket_size_;
-//        vector<spp::sparse_hash_map<uint64_t, char *>> buffers_;
-
         char **aligned_read_buffer_;
         Barrier read_barrier_;
 
