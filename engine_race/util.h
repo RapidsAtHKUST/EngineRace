@@ -92,7 +92,7 @@ inline void DstatCorountine() {
 inline std::string iostat() {
     std::array<char, 512> buffer;
     std::string result;
-    std::shared_ptr<FILE> pipe(popen("iostat -d -x -k 1 95", "r"), pclose);
+    std::shared_ptr<FILE> pipe(popen("iostat -d -x -k /dev/nvme0n1 /dev/sda 1 95", "r"), pclose);
     if (!pipe) throw std::runtime_error("popen() failed!");
     while (!feof(pipe.get())) {
         if (fgets(buffer.data(), 512, pipe.get()) != nullptr) {
@@ -102,11 +102,13 @@ inline std::string iostat() {
             }
             if (memcmp(DEVICE_STR, buffer.data(), strlen(DEVICE_STR)) == 0 ||
                 memcmp(SPACE_DEVICE_STR, buffer.data(), strlen(SPACE_DEVICE_STR)) == 0) {
-                log_debug("\n %s", result.c_str());
+                log_debug("\n%s", result.c_str());
                 result.clear();
             }
             result += buffer.data();
-            result += '\n';
+            if (result.back() != '\n') {
+                result += '\n';
+            }
         }
     }
     return result;
@@ -118,7 +120,6 @@ inline void IOStatCoroutine() {
     });
     my_coroutine.detach();
 }
-
 
 inline int parseLine(char *line) {
     // This assumes that a digit will be found and the line ends in " Kb".

@@ -24,6 +24,7 @@
 #define STAT
 #define DSTAT_TESTING
 //#define SLEEP_FOR_TESTING
+#define SLEEP_FOR_DEBUG
 
 namespace polar_race {
     using namespace std;
@@ -190,6 +191,7 @@ namespace polar_race {
                 string temp_key = key_file_path + to_string(i);
                 string temp_buffer_key = tmp_key_file_path + to_string(i);
                 key_file_dp_[i] = open(temp_key.c_str(), O_RDWR | O_CREAT | O_DIRECT, FILE_PRIVILEGE);
+                fallocate(key_file_dp_[i], 0, 0, FALLOCATE_KEY_FILE_SIZE);
 
                 constexpr size_t tmp_buffer_key_file_size = sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE;
                 key_buffer_file_dp_[i] = open(temp_buffer_key.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
@@ -276,11 +278,12 @@ namespace polar_race {
                     size_t write_offset =
                             static_cast<uint64_t>(mmap_meta_cnt_[i] / TMP_KEY_BUFFER_SIZE *
                                                   TMP_KEY_BUFFER_SIZE) * sizeof(uint64_t);
+                    log_info("~Flush Key in Bucket: %d", i);
                     pwrite(key_file_dp_[i], mmap_key_aligned_buffer_[i], write_length, write_offset);
                 }
                 int ret = ftruncate(key_buffer_file_dp_[i], 0);
                 if (ret < 0) {
-                    log_info("Flush ftruncate Err: %d, %s", ret, strerror(errno));
+                    log_info("~Flush ftruncate Err: %d, %s", ret, strerror(errno));
                 }
             }
             if (mmap_key_aligned_buffer_[i] != nullptr) {
@@ -302,11 +305,12 @@ namespace polar_race {
                     size_t write_offset =
                             static_cast<uint64_t>(mmap_meta_cnt_[i] / TMP_VALUE_BUFFER_SIZE *
                                                   TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
+                    log_info("~Flush Val in Bucket: %d", i);
                     pwrite(value_file_dp_[i], mmap_value_aligned_buffer_[i], write_length, write_offset);
-                    int ret = ftruncate(value_buffer_file_dp_[i], 0);
-                    if (ret < 0) {
-                        log_info("Flush Val ftruncate Err: %d, %s", ret, strerror(errno));
-                    }
+                }
+                int ret = ftruncate(value_buffer_file_dp_[i], 0);
+                if (ret < 0) {
+                    log_info("~Flush Val ftruncate Err: %d, %s", ret, strerror(errno));
                 }
             }
             if (mmap_value_aligned_buffer_[i] != nullptr) {
@@ -786,9 +790,10 @@ namespace polar_race {
                     string temp_value = value_file_path + to_string(bucket_id);
                     string temp_buffer_value = tmp_value_file_path + to_string(bucket_id);
                     if (file_size(temp_buffer_value.c_str()) != 0) {
+                        log_info("Not Trunc, Flush Val in Bucket %d", bucket_id);
+                        value_buffer_file_dp_[bucket_id] = open(temp_buffer_value.c_str(), O_RDONLY, FILE_PRIVILEGE);
                         if ((mmap_meta_cnt_[bucket_id] % TMP_VALUE_BUFFER_SIZE) != 0) {
-                            value_buffer_file_dp_[bucket_id] = open(temp_buffer_value.c_str(), O_RDONLY,
-                                                                    FILE_PRIVILEGE);
+
                             size_t tmp_buffer_value_file_size = VALUE_SIZE * TMP_VALUE_BUFFER_SIZE;
                             mmap_value_aligned_buffer_[bucket_id] = (char *) mmap(
                                     nullptr, tmp_buffer_value_file_size, PROT_READ, MAP_PRIVATE | MAP_POPULATE,
@@ -803,14 +808,16 @@ namespace polar_race {
                             pwrite(tmp_fd, mmap_value_aligned_buffer_[bucket_id], write_length, write_offset);
                             close(tmp_fd);
                         }
+                        log_info("Trunc Val in bucket: %d", bucket_id);
                         ftruncate(value_buffer_file_dp_[bucket_id], 0);
                     }
 
                     // Flush Keys.
                     string temp_buffer_key = tmp_key_file_path + to_string(bucket_id);
                     if (file_size(temp_buffer_key.c_str()) != 0) {
+                        log_info("Not Trunc, Flush Key in Bucket %d", bucket_id);
+                        key_buffer_file_dp_[bucket_id] = open(temp_buffer_key.c_str(), O_RDONLY, FILE_PRIVILEGE);
                         if ((mmap_meta_cnt_[bucket_id] % TMP_KEY_BUFFER_SIZE) != 0) {
-                            key_buffer_file_dp_[bucket_id] = open(temp_buffer_key.c_str(), O_RDONLY, FILE_PRIVILEGE);
                             constexpr size_t tmp_buffer_key_file_size = sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE;
                             mmap_key_aligned_buffer_[bucket_id] = (uint64_t *) mmap(
                                     nullptr, tmp_buffer_key_file_size, PROT_READ, MAP_PRIVATE | MAP_POPULATE,
@@ -826,6 +833,7 @@ namespace polar_race {
                             pwrite(tmp_fd, mmap_key_aligned_buffer_[bucket_id], write_length, write_offset);
                             close(tmp_fd);
                         }
+                        log_info("Trunc Key in bucket: %d", bucket_id);
                         ftruncate(key_buffer_file_dp_[bucket_id], 0);
                     }
                 }
@@ -845,8 +853,19 @@ namespace polar_race {
             index_[key_par_id] = static_cast<KeyEntry *>(malloc(mmap_meta_cnt_[key_par_id] * sizeof(KeyEntry)));
         }
 
+#ifdef SLEEP_FOR_DEBUG
+        log_info("Sleep For Wait.");
+        sleep(5);
+        log_info("Sleep For Wait End.");
+#endif
         // Flush tmp Files
         FlushTmpFiles(std::move(dir));
+
+#ifdef SLEEP_FOR_DEBUG
+        log_info("Sleep For Wait.");
+        sleep(5);
+        log_info("Sleep For Wait End.");
+#endif
         clock_end = high_resolution_clock::now();
         log_info("After Flush Files, time: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0);

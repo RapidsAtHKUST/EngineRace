@@ -18,7 +18,7 @@
 
 #define NUM_THREADS (64)
 #define VALUE_SIZE (4096)
-#define FILESYSTEM_BLOCK_SIZE (512)
+#define FILESYSTEM_BLOCK_SIZE (4096)
 #define FILE_PRIVILEGE (0644)
 #define TMP_KEY_BUFFER_SIZE (512)
 #define TMP_VALUE_BUFFER_SIZE (4)
@@ -43,7 +43,9 @@
 
 //#define MAX_READ_BUFFER_SIZE (200)
 #define FALLOCATE_POOL_SIZE (32u)
-#define MAX_FALLOCATE_RESERVE_SLICE_NUM (2)
+#define MAX_FALLOCATE_RESERVE_SLICE_NUM (1)
+
+#define FALLOCATE_KEY_FILE_SIZE (768 * 1024)
 
 namespace polar_race {
     using namespace std;
