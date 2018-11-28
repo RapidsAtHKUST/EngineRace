@@ -21,8 +21,9 @@
 #include "util.h"
 #include "file_util.h"
 
-//#define STAT
-//#define DSTAT_TESTING
+#define STAT
+#define DSTAT_TESTING
+//#define SLEEP_FOR_TESTING
 
 namespace polar_race {
     using namespace std;
@@ -37,7 +38,6 @@ namespace polar_race {
     using namespace std::chrono;
     std::chrono::time_point<std::chrono::high_resolution_clock> clock_start;
     std::chrono::time_point<std::chrono::high_resolution_clock> clock_end;
-
 
     bool operator<(KeyEntry l, KeyEntry r) {
         return l.key_ < r.key_;
@@ -118,7 +118,7 @@ namespace polar_race {
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
 
-#ifdef DSTAT_TESTING
+#if defined(DSTAT_TESTING) && defined(SLEEP_FOR_TESTING)
         log_info("Sleep For Wait.");
         sleep(5);
         log_info("Sleep For Wait End.");
@@ -254,9 +254,8 @@ namespace polar_race {
 
     EngineRace::~EngineRace() {
         clock_end = high_resolution_clock::now();
-        log_info("Start ~EngineRace(), time: %.3lf s, ts: %.3lf s",
-                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
-                 std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
+        log_info("Start ~EngineRace(), time: %.3lf s",
+                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0);
 #ifdef DSTAT_TESTING
         PrintMemFree();
 #endif
@@ -353,9 +352,8 @@ namespace polar_race {
         PrintMemFree();
 #endif
         clock_end = high_resolution_clock::now();
-        log_info("Finish ~EngineRace(), time: %.3lf s, ts: %.3lf s",
-                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
-                 std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
+        log_info("Finish ~EngineRace(), time: %.3lf s",
+                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0);
     }
 
 // 3. Write a key-value pair into engine
@@ -470,12 +468,6 @@ namespace polar_race {
 
     void EngineRace::ReadBucketToBuffer(uint32_t bucket_id) {
         auto range_clock_beg = high_resolution_clock::now();
-#ifdef STAT
-        if (bucket_id % 64 == 63)
-            log_info("In bucket %d, Read in tid: %d, start ts: %.9lf s", bucket_id,
-                     std::chrono::duration_cast<std::chrono::nanoseconds>(
-                             range_clock_beg.time_since_epoch()).count() / 1000000000.0);
-#endif
 
         auto buffer_id = get_buffer_id(bucket_id);
 
@@ -552,9 +544,7 @@ namespace polar_race {
         total_time_ += elapsed_time;
 #ifdef STAT
         if (bucket_id % 64 == 63)
-            log_info("In bucket %d, Read time %.9lf s, ts: %.9lf s",
-                     bucket_id, elapsed_time, duration_cast<nanoseconds>(range_clock_end.time_since_epoch()).count() /
-                                              1000000000.0);
+            log_info("In bucket %d, Read time %.9lf s", bucket_id, elapsed_time);
 #endif
     }
 
@@ -582,7 +572,7 @@ namespace polar_race {
             val_buffer_max_size_ = max<uint64_t>(val_buffer_max_size_, mmap_meta_cnt_[i]);
         }
         val_buffer_max_size_ *= VALUE_SIZE;
-        log_info("Max Buffer Size: %zu", val_buffer_max_size_);
+        log_info("Max Buffer Size: %zu B", val_buffer_max_size_);
         value_shared_buffers_ = vector<char *>(MAX_TOTAL_BUFFER_NUM);
         for (uint32_t i = 0; i < MAX_TOTAL_BUFFER_NUM; i++) {
             value_shared_buffers_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, val_buffer_max_size_);
@@ -607,7 +597,7 @@ namespace polar_race {
                 auto range_clock_end = high_resolution_clock::now();
                 double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                                       static_cast<double>(1000000000);
-                log_info("Elapsed time in first sync, %.9lf s", 0, elapsed_time);
+                log_info("Elapsed time in first sync, %.9lf s", elapsed_time);
 
                 // Init Barrier, Notify All.
                 total_range_num_threads_ = range_num_threads_count + 1;
@@ -707,9 +697,7 @@ namespace polar_race {
         double elapsed_time = duration_cast<nanoseconds>(range_init_end_clock - range_init_start_clock).count() /
                               static_cast<double>(1000000000);
         if (tid == 0) {
-            log_info("Init elapsed time in tid %d, %.9lf s, ts: %.9lf s", tid, elapsed_time,
-                     std::chrono::duration_cast<std::chrono::nanoseconds>(
-                             range_init_end_clock.time_since_epoch()).count() / 1000000000.0);
+            log_info("Init elapsed time in tid %d, %.9lf s", tid, elapsed_time);
         }
         // 2-level Loop.
         uint32_t lower_key_par_id = 0;
@@ -850,9 +838,7 @@ namespace polar_race {
 
     void EngineRace::BuildIndex(string dir) {
         clock_end = high_resolution_clock::now();
-        log_info("Begin BI, time: %.3lf s, ts: %.3lf s",
-                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
-                 std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
+        log_info("Begin BI, time: %.3lf s", duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0);
         // Key Cnt, Index Allocation.
         index_ = vector<KeyEntry *>(BUCKET_NUM, nullptr);
         for (int key_par_id = 0; key_par_id < BUCKET_NUM; key_par_id++) {
@@ -862,9 +848,8 @@ namespace polar_race {
         // Flush tmp Files
         FlushTmpFiles(std::move(dir));
         clock_end = high_resolution_clock::now();
-        log_info("After Flush Files, time: %.3lf s, ts: %.3lf s",
-                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
-                 std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
+        log_info("After Flush Files, time: %.3lf s",
+                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0);
 
         // Read each key file.
         auto **local_buffers_g = new uint64_t *[NUM_READ_KEY_THREADS];
@@ -906,7 +891,7 @@ namespace polar_race {
                                                FILESYSTEM_BLOCK_SIZE * FILESYSTEM_BLOCK_SIZE;
                             auto ret = pread(key_file_dp_[key_par_id], local_buffer,
                                              num_bytes, read_offset);
-                            if (ret < remain_entries_count * sizeof(uint64_t)) {
+                            if (ret < static_cast<ssize_t>(remain_entries_count * sizeof(uint64_t))) {
                                 log_info("ret: %d, err: %s", ret, strerror(errno));
                             }
                             for (uint32_t k = 0; k < remain_entries_count; k++) {
@@ -932,11 +917,7 @@ namespace polar_race {
         }
         delete[]local_buffers_g;
         clock_end = high_resolution_clock::now();
-        log_info("Finish BI, time: %.3lf s, ts: %.3lf s",
-                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
-                 std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() /
-                 1000.0);
-
+        log_info("Finish BI, time: %.3lf s", duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0);
     }
 
 }  // namespace polar_race

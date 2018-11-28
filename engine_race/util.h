@@ -84,17 +84,29 @@ inline void DstatCorountine() {
     my_coroutine.detach();
 }
 
+#define DEVICE_STR ("Device")
+#define SPACE_DEVICE_STR (" Device")
+#define LINUX_STR ("Linux")
+#define SPACE_LINUX_STR (" Linux")
+
 inline std::string iostat() {
     std::array<char, 512> buffer;
     std::string result;
-    std::shared_ptr<FILE> pipe(popen(" iostat -d -x -k 1 95", "r"), pclose);
+    std::shared_ptr<FILE> pipe(popen("iostat -d -x -k 1 95", "r"), pclose);
     if (!pipe) throw std::runtime_error("popen() failed!");
-    int times = 0;
-    int global_times = 0;
     while (!feof(pipe.get())) {
         if (fgets(buffer.data(), 512, pipe.get()) != nullptr) {
-            log_debug(
-                    "\n %s", buffer.data());
+            if (memcmp(LINUX_STR, buffer.data(), strlen(LINUX_STR)) == 0 ||
+                memcmp(SPACE_LINUX_STR, buffer.data(), strlen(SPACE_LINUX_STR)) == 0) {
+                continue;
+            }
+            if (memcmp(DEVICE_STR, buffer.data(), strlen(DEVICE_STR)) == 0 ||
+                memcmp(SPACE_DEVICE_STR, buffer.data(), strlen(SPACE_DEVICE_STR)) == 0) {
+                log_debug("\n %s", result.c_str());
+                result.clear();
+            }
+            result += buffer.data();
+            result += '\n';
         }
     }
     return result;
@@ -134,5 +146,5 @@ inline int getValue() { //Note: this value is in KB!
 }
 
 inline void PrintMemFree() {
-    log_info("Consumption: %d KB, Free: \n%s", getValue(), exec("free").c_str());
+    log_info("Consumption: %d KB, Free (MB): \n%s", getValue(), exec("free -m").c_str());
 }
