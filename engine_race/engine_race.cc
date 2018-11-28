@@ -21,8 +21,8 @@
 #include "util.h"
 #include "file_util.h"
 
-#define STAT
-#define DSTAT_TESTING
+//#define STAT
+//#define DSTAT_TESTING
 //#define SLEEP_FOR_TESTING
 //#define SLEEP_FOR_DEBUG
 #define ENABLE_WRITE_BARRIER
@@ -192,7 +192,7 @@ namespace polar_race {
                 string temp_key = key_file_path + to_string(i);
                 string temp_buffer_key = tmp_key_file_path + to_string(i);
                 key_file_dp_[i] = open(temp_key.c_str(), O_RDWR | O_CREAT | O_DIRECT, FILE_PRIVILEGE);
-//                fallocate(key_file_dp_[i], 0, 0, FALLOCATE_KEY_FILE_SIZE);
+                fallocate(key_file_dp_[i], 0, 0, FALLOCATE_KEY_FILE_SIZE);
 
                 constexpr size_t tmp_buffer_key_file_size = sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE;
                 key_buffer_file_dp_[i] = open(temp_buffer_key.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
@@ -279,7 +279,7 @@ namespace polar_race {
                     size_t write_offset =
                             static_cast<uint64_t>(mmap_meta_cnt_[i] / TMP_KEY_BUFFER_SIZE *
                                                   TMP_KEY_BUFFER_SIZE) * sizeof(uint64_t);
-                    log_info("~Flush Key in Bucket: %d", i);
+//                    log_info("~Flush Key in Bucket: %d", i);
                     pwrite(key_file_dp_[i], mmap_key_aligned_buffer_[i], write_length, write_offset);
                 }
                 int ret = ftruncate(key_buffer_file_dp_[i], 0);
@@ -306,7 +306,7 @@ namespace polar_race {
                     size_t write_offset =
                             static_cast<uint64_t>(mmap_meta_cnt_[i] / TMP_VALUE_BUFFER_SIZE *
                                                   TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
-                    log_info("~Flush Val in Bucket: %d", i);
+//                    log_info("~Flush Val in Bucket: %d", i);
                     pwrite(value_file_dp_[i], mmap_value_aligned_buffer_[i], write_length, write_offset);
                 }
                 int ret = ftruncate(value_buffer_file_dp_[i], 0);
@@ -787,7 +787,7 @@ namespace polar_race {
                 const string tmp_key_file_path = dir + "/polar.keybuffers";
 
                 for (int bucket_id = tid; bucket_id < BUCKET_NUM; bucket_id += NUM_FLUSH_TMP_THREADS) {
-                    // Flush Values.
+                    // R Values.
                     string temp_value = value_file_path + to_string(bucket_id);
                     string temp_buffer_value = tmp_value_file_path + to_string(bucket_id);
                     if (file_size(temp_buffer_value.c_str()) != 0) {
