@@ -21,11 +21,11 @@
 #include "util.h"
 #include "file_util.h"
 
-#define STAT
+//#define STAT
 //#define DSTAT_TESTING
 //#define SLEEP_FOR_TESTING
 //#define SLEEP_FOR_DEBUG
-#define ENABLE_WRITE_BARRIER
+//#define ENABLE_WRITE_BARRIER
 
 namespace polar_race {
     using namespace std;
