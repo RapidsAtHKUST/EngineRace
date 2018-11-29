@@ -15,35 +15,37 @@
 #include "barrier.h"
 #include "thread_pool.h"
 
-#define NUM_THREADS (64)
-#define VALUE_SIZE (4096)
-#define FILESYSTEM_BLOCK_SIZE (4096)
-#define FILE_PRIVILEGE (0644)
-#define TMP_KEY_BUFFER_SIZE (512)
-#define TMP_VALUE_BUFFER_SIZE (4)
 #define TO_UINT64(buffer) (*(uint64_t*)(buffer))
 
-#define WRITE_BARRIER_NUM (16)
-#define READ_BARRIER_NUM (32)
+#define FILE_PRIVILEGE (0644)
+#define FILESYSTEM_BLOCK_SIZE (4096)
+#define NUM_THREADS (64)
 
-#define BUCKET_DIGITS (9)      // must be the same for the range query
-#define BUCKET_NUM (1 << BUCKET_DIGITS)
-
-#define NUM_READ_KEY_THREADS (NUM_THREADS)
-#define NUM_FLUSH_TMP_THREADS (8u)
-
-#define IO_POOL_SIZE (1u)       // have to be one for aio
-#define MAX_RECYCLE_BUFFER_NUM (2u)
-#define KEEP_REUSE_BUFFER_NUM (0u)
-#define MAX_TOTAL_BUFFER_NUM (MAX_RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
-
-#define KEY_READ_BLOCK_COUNT (8192u)
+// Buffers.
+#define TMP_KEY_BUFFER_SIZE (512)
+#define TMP_VALUE_BUFFER_SIZE (4)
+// Key/Value Files.
+#define VALUE_SIZE (4096)
 #define FALLOCATE_SIZE (4 * 1024 * 1024)
-
 #define FALLOCATE_POOL_SIZE (32u)
 #define MAX_FALLOCATE_RESERVE_SLICE_NUM (1)
-
 #define FALLOCATE_KEY_FILE_SIZE (1024 * 1024)
+// Buckets.
+#define BUCKET_DIGITS (10)      // must be the same for the range query
+#define BUCKET_NUM (1 << BUCKET_DIGITS)
+
+// Write.
+#define WRITE_BARRIER_NUM (16)
+// Read.
+#define NUM_READ_KEY_THREADS (NUM_THREADS)
+#define NUM_FLUSH_TMP_THREADS (8u)
+#define READ_BARRIER_NUM (32)
+#define KEY_READ_BLOCK_COUNT (8192u)
+// Range.
+#define IO_POOL_SIZE (1u)       // have to be one for aio
+#define MAX_RECYCLE_BUFFER_NUM (2u)
+#define KEEP_REUSE_BUFFER_NUM (3u)
+#define MAX_TOTAL_BUFFER_NUM (MAX_RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
 
 namespace polar_race {
     using namespace std;

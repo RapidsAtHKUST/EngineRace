@@ -117,7 +117,7 @@ namespace polar_race {
             val_buffer_max_size_(0), range_io_worker_pool_(nullptr),
             bucket_mutex_arr_(nullptr), bucket_cond_var_arr_(nullptr),
             bucket_is_ready_read_(nullptr), bucket_consumed_num_(nullptr), total_range_num_threads_(0) {
-        printTS(__FUNCTION__, __LINE__);
+        printTS(__FUNCTION__, __LINE__, clock_start);
 
         clock_end = high_resolution_clock::now();
         log_info("Start init DB, time: %.3lf s, ts: %.3lf s",
@@ -232,12 +232,12 @@ namespace polar_race {
         log_info("After init DB, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
-        printTS(__FUNCTION__, __LINE__);
+        printTS(__FUNCTION__, __LINE__, clock_start);
     }
 
 // 1. Open engine
     RetCode EngineRace::Open(const std::string &name, Engine **eptr) {
-        printTS(__FUNCTION__, __LINE__);
+        printTS(__FUNCTION__, __LINE__, clock_start);
 #ifdef DSTAT_TESTING
         PrintMemFree();
         DstatCorountine();
@@ -252,12 +252,12 @@ namespace polar_race {
             log_info("Create the target directory %s.", name.c_str());
         }
         *eptr = new EngineRace(name);
-        printTS(__FUNCTION__, __LINE__);
+        printTS(__FUNCTION__, __LINE__, clock_start);
         return kSucc;
     }
 
     EngineRace::~EngineRace() {
-        printTS(__FUNCTION__, __LINE__);
+        printTS(__FUNCTION__, __LINE__, clock_start);
         clock_end = high_resolution_clock::now();
         log_info("Start ~EngineRace(), time: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0);
@@ -361,7 +361,7 @@ namespace polar_race {
         clock_end = high_resolution_clock::now();
         log_info("Finish ~EngineRace(), time: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0);
-        printTS(__FUNCTION__, __LINE__);
+        printTS(__FUNCTION__, __LINE__, clock_start);
     }
 
 // 3. Write a key-value pair into engine
@@ -871,7 +871,7 @@ namespace polar_race {
         }
         vector<thread> workers(NUM_READ_KEY_THREADS);
         for (uint32_t tid = 0; tid < NUM_READ_KEY_THREADS; ++tid) {
-            workers[tid] = move(thread([tid, local_buffers_g, this]() {
+            workers[tid] = thread([tid, local_buffers_g, this]() {
                 uint64_t *local_buffer = local_buffers_g[tid];
                 for (uint32_t key_par_id = tid; key_par_id < BUCKET_NUM; key_par_id += NUM_READ_KEY_THREADS) {
                     uint32_t entry_count = mmap_meta_cnt_[key_par_id];
@@ -918,7 +918,7 @@ namespace polar_race {
                         });
                     }
                 }
-            }));
+            });
         }
         for (uint32_t i = 0; i < NUM_READ_KEY_THREADS; ++i) {
             workers[i].join();
