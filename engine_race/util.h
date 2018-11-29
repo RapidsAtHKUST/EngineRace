@@ -6,10 +6,24 @@
 #include <cstring>
 
 #include <thread>
+#include <chrono>
 
 #include "log.h"
 
 using namespace std;
+using namespace std::chrono;
+
+inline void printTS(const char *func, int line) {
+    /* Get current time */
+    time_t t = time(nullptr);
+    struct tm *lt = localtime(&t);
+    char buf[16];
+    buf[strftime(buf, sizeof(buf), "%H:%M:%S", lt)] = '\0';
+    time_point<high_resolution_clock> clock_now = high_resolution_clock::now();
+    fprintf(stderr, "%s (Func: %s, Line: %d), (TS: %.6lf s) \n", buf, func,
+            line, duration_cast<nanoseconds>(clock_now.time_since_epoch()).count() / 1000000000.0);
+    fprintf(stderr, "\n");
+}
 
 inline void setThreadSelfAffinity(int core_id) {
 //    long num_cores = sysconf(_SC_NPROCESSORS_ONLN);

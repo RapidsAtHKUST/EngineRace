@@ -23,9 +23,7 @@
 
 //#define STAT
 //#define DSTAT_TESTING
-//#define SLEEP_FOR_TESTING
-//#define SLEEP_FOR_DEBUG
-//#define ENABLE_WRITE_BARRIER
+//#define RANGE_STAT
 
 namespace polar_race {
     using namespace std;
@@ -70,6 +68,8 @@ namespace polar_race {
         }
     }
 
+#ifdef RANGE_STAT
+
     inline uint64_t polar_str_to_big_endian_uint64(const PolarString &polar_str) {
         static thread_local bool is_first = true;
 
@@ -87,6 +87,8 @@ namespace polar_race {
             return polar_str.size() < 8 ? tmp_int : tmp_int + 1;
         }
     }
+
+#endif
 
     RetCode Engine::Open(const std::string &name, Engine **eptr) {
         clock_start = high_resolution_clock::now();
@@ -115,16 +117,13 @@ namespace polar_race {
             val_buffer_max_size_(0), range_io_worker_pool_(nullptr),
             bucket_mutex_arr_(nullptr), bucket_cond_var_arr_(nullptr),
             bucket_is_ready_read_(nullptr), bucket_consumed_num_(nullptr), total_range_num_threads_(0) {
+        printTS(__FUNCTION__, __LINE__);
+
         clock_end = high_resolution_clock::now();
         log_info("Start init DB, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
 
-#if defined(DSTAT_TESTING) && defined(SLEEP_FOR_TESTING)
-        log_info("Sleep For Wait.");
-        sleep(5);
-        log_info("Sleep For Wait End.");
-#endif
         const string meta_file_path = dir + "/polar.meta";
 
         const string key_file_path = dir + "/" + key_file_name;
@@ -151,7 +150,7 @@ namespace polar_race {
                                                PROT_READ | PROT_WRITE, MAP_SHARED, meta_cnt_file_dp_, 0);
             memset(mmap_meta_cnt_, 0, sizeof(uint32_t) * (BUCKET_NUM));
 
-            // Fallocate Value File Jobs.
+            // Reserve FAllocate Value File Jobs.
             fallocate_pool_ = new ThreadPool(FALLOCATE_POOL_SIZE);
             fallocate_futures_per_bucket_.resize(BUCKET_NUM);
             fallocate_slice_id_end_.resize(BUCKET_NUM, 0);
@@ -178,7 +177,7 @@ namespace polar_race {
                 mmap_value_aligned_buffer_[i] = (char *) mmap(nullptr, tmp_buffer_value_file_size, \
                         PROT_READ | PROT_WRITE, MAP_SHARED, value_buffer_file_dp_[i], 0);
 
-                // Submit Fallocate Value File Jobs.
+                // Submit FAllocate Value File Jobs.
                 for (int j = 0; j < MAX_FALLOCATE_RESERVE_SLICE_NUM; j++) {
                     fallocate_futures_per_bucket_[i].push(fallocate_pool_->enqueue([this, i]() {
                         fallocate(value_file_dp_[i], 0, FALLOCATE_SIZE, fallocate_slice_id_end_[i] * FALLOCATE_SIZE);
@@ -233,10 +232,12 @@ namespace polar_race {
         log_info("After init DB, time: %.3lf s, ts: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
                  std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
+        printTS(__FUNCTION__, __LINE__);
     }
 
 // 1. Open engine
     RetCode EngineRace::Open(const std::string &name, Engine **eptr) {
+        printTS(__FUNCTION__, __LINE__);
 #ifdef DSTAT_TESTING
         PrintMemFree();
         DstatCorountine();
@@ -251,11 +252,12 @@ namespace polar_race {
             log_info("Create the target directory %s.", name.c_str());
         }
         *eptr = new EngineRace(name);
-
+        printTS(__FUNCTION__, __LINE__);
         return kSucc;
     }
 
     EngineRace::~EngineRace() {
+        printTS(__FUNCTION__, __LINE__);
         clock_end = high_resolution_clock::now();
         log_info("Start ~EngineRace(), time: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0);
@@ -325,7 +327,7 @@ namespace polar_race {
         delete[] value_file_dp_;
         delete[] mmap_value_aligned_buffer_;
 
-        // Free indices
+        // Free indices.
         for (KeyEntry *index_partition: index_) {
             free(index_partition);
         }
@@ -359,6 +361,7 @@ namespace polar_race {
         clock_end = high_resolution_clock::now();
         log_info("Finish ~EngineRace(), time: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0);
+        printTS(__FUNCTION__, __LINE__);
     }
 
 // 3. Write a key-value pair into engine
@@ -367,7 +370,7 @@ namespace polar_race {
             fallocate_futures_per_bucket_[par_bucket_id].front().get();
             fallocate_futures_per_bucket_[par_bucket_id].pop();
 
-            // Submit Fallocate Job
+            // Submit FAllocate Job.
             fallocate_futures_per_bucket_[par_bucket_id].push(fallocate_pool_->enqueue([this, par_bucket_id]() {
                 int ret = fallocate(value_file_dp_[par_bucket_id], 0, FALLOCATE_SIZE,
                                     fallocate_slice_id_end_[par_bucket_id] * FALLOCATE_SIZE);
@@ -475,7 +478,7 @@ namespace polar_race {
 
         auto buffer_id = get_buffer_id(bucket_id);
 
-        // Replace with AIO
+        // Replace with AIO.
         uint32_t value_agg_num = 32;
         uint32_t value_num = mmap_meta_cnt_[bucket_id];
         uint32_t remain_value_num = value_num % value_agg_num;
@@ -616,7 +619,7 @@ namespace polar_race {
             }
         }
 
-        // Submit All IO Jobs
+        // Submit All IO Jobs.
         if (tid == 0) {
             memset(bucket_is_ready_read_, 0, BUCKET_NUM);
             for (uint32_t i = 0; i < MAX_RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM; i++) {
@@ -786,11 +789,11 @@ namespace polar_race {
                 const string tmp_key_file_path = dir + "/polar.keybuffers";
 
                 for (int bucket_id = tid; bucket_id < BUCKET_NUM; bucket_id += NUM_FLUSH_TMP_THREADS) {
-                    // R Values.
+                    // Flush Values.
                     string temp_value = value_file_path + to_string(bucket_id);
                     string temp_buffer_value = tmp_value_file_path + to_string(bucket_id);
                     if (file_size(temp_buffer_value.c_str()) != 0) {
-                        log_info("Not Trunc, Flush Val in Bucket %d", bucket_id);
+//                        log_info("Not Trunc, Flush Val in Bucket %d", bucket_id);
                         value_buffer_file_dp_[bucket_id] = open(temp_buffer_value.c_str(), O_RDONLY, FILE_PRIVILEGE);
                         if ((mmap_meta_cnt_[bucket_id] % TMP_VALUE_BUFFER_SIZE) != 0) {
 
@@ -804,18 +807,18 @@ namespace polar_race {
                                     static_cast<uint64_t>(mmap_meta_cnt_[bucket_id] / TMP_VALUE_BUFFER_SIZE *
                                                           TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
                             auto tmp_fd = open(temp_value.c_str(), O_RDWR, FILE_PRIVILEGE);
-                            log_info("Flush Val in bucket: %d", bucket_id);
+//                            log_info("Flush Val in bucket: %d", bucket_id);
                             pwrite(tmp_fd, mmap_value_aligned_buffer_[bucket_id], write_length, write_offset);
                             close(tmp_fd);
                         }
-                        log_info("Trunc Val in bucket: %d", bucket_id);
+//                        log_info("Trunc Val in bucket: %d", bucket_id);
                         ftruncate(value_buffer_file_dp_[bucket_id], 0);
                     }
 
                     // Flush Keys.
                     string temp_buffer_key = tmp_key_file_path + to_string(bucket_id);
                     if (file_size(temp_buffer_key.c_str()) != 0) {
-                        log_info("Not Trunc, Flush Key in Bucket %d", bucket_id);
+//                        log_info("Not Trunc, Flush Key in Bucket %d", bucket_id);
                         key_buffer_file_dp_[bucket_id] = open(temp_buffer_key.c_str(), O_RDONLY, FILE_PRIVILEGE);
                         if ((mmap_meta_cnt_[bucket_id] % TMP_KEY_BUFFER_SIZE) != 0) {
                             constexpr size_t tmp_buffer_key_file_size = sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE;
@@ -824,7 +827,7 @@ namespace polar_race {
                                     key_buffer_file_dp_[bucket_id], 0);
 
                             string temp_key = key_file_path + to_string(bucket_id);
-                            log_info("Flush Key in bucket: %d", bucket_id);
+//                            log_info("Flush Key in bucket: %d", bucket_id);
                             size_t write_length = (mmap_meta_cnt_[bucket_id] % TMP_KEY_BUFFER_SIZE) * sizeof(uint64_t);
                             size_t write_offset =
                                     static_cast<uint64_t>(mmap_meta_cnt_[bucket_id] / TMP_KEY_BUFFER_SIZE *
@@ -833,7 +836,7 @@ namespace polar_race {
                             pwrite(tmp_fd, mmap_key_aligned_buffer_[bucket_id], write_length, write_offset);
                             close(tmp_fd);
                         }
-                        log_info("Trunc Key in bucket: %d", bucket_id);
+//                        log_info("Trunc Key in bucket: %d", bucket_id);
                         ftruncate(key_buffer_file_dp_[bucket_id], 0);
                     }
                 }
@@ -853,19 +856,9 @@ namespace polar_race {
             index_[key_par_id] = static_cast<KeyEntry *>(malloc(mmap_meta_cnt_[key_par_id] * sizeof(KeyEntry)));
         }
 
-#ifdef SLEEP_FOR_DEBUG
-        log_info("Sleep For Wait.");
-        sleep(5);
-        log_info("Sleep For Wait End.");
-#endif
-        // Flush tmp Files
+        // Flush tmp Files.
         FlushTmpFiles(std::move(dir));
 
-#ifdef SLEEP_FOR_DEBUG
-        log_info("Sleep For Wait.");
-        sleep(5);
-        log_info("Sleep For Wait End.");
-#endif
         clock_end = high_resolution_clock::now();
         log_info("After Flush Files, time: %.3lf s",
                  duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0);
@@ -883,9 +876,6 @@ namespace polar_race {
                 for (uint32_t key_par_id = tid; key_par_id < BUCKET_NUM; key_par_id += NUM_READ_KEY_THREADS) {
                     uint32_t entry_count = mmap_meta_cnt_[key_par_id];
                     if (entry_count > 0) {
-#ifdef STAT_ENTRY_CNT
-                        log_info("entry count: %d", entry_count);
-#endif
                         uint32_t passes = entry_count / KEY_READ_BLOCK_COUNT;
                         uint32_t remain_entries_count = entry_count - passes * KEY_READ_BLOCK_COUNT;
                         uint32_t file_offset = 0;

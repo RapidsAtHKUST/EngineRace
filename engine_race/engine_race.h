@@ -11,7 +11,6 @@
 #include <linux/aio_abi.h>
 #include <sys/syscall.h>
 
-#include "sparsepp/spp.h"
 #include "include/engine.h"
 #include "barrier.h"
 #include "thread_pool.h"
@@ -27,7 +26,7 @@
 #define WRITE_BARRIER_NUM (16)
 #define READ_BARRIER_NUM (32)
 
-#define BUCKET_DIGITS (10)      // must be the same for the range query
+#define BUCKET_DIGITS (9)      // must be the same for the range query
 #define BUCKET_NUM (1 << BUCKET_DIGITS)
 
 #define NUM_READ_KEY_THREADS (NUM_THREADS)
@@ -35,7 +34,7 @@
 
 #define IO_POOL_SIZE (1u)       // have to be one for aio
 #define MAX_RECYCLE_BUFFER_NUM (2u)
-#define KEEP_REUSE_BUFFER_NUM (3u)
+#define KEEP_REUSE_BUFFER_NUM (0u)
 #define MAX_TOTAL_BUFFER_NUM (MAX_RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
 
 #define KEY_READ_BLOCK_COUNT (8192u)
