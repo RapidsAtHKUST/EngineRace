@@ -18,8 +18,6 @@
 #include "file_util.h"
 
 #define STAT
-//#define DSTAT_TESTING
-//#define RANGE_STAT
 #define ENABLE_WRITE_BARRIER
 
 namespace polar_race {
@@ -69,10 +67,6 @@ namespace polar_race {
         clock_start = high_resolution_clock::now();
         log_info("sizeof %d, %d, %d", sizeof(off_t), sizeof(off64_t), sizeof(KeyEntry));
         auto ret = EngineRace::Open(name, eptr);
-        clock_end = high_resolution_clock::now();
-        log_info("After open DB, time: %.3lf s, ts: %.3lf s",
-                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
-                 std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
         return ret;
     }
 
@@ -93,11 +87,6 @@ namespace polar_race {
             bucket_mutex_arr_(nullptr), bucket_cond_var_arr_(nullptr),
             bucket_is_ready_read_(nullptr), bucket_consumed_num_(nullptr), total_range_num_threads_(0) {
         printTS(__FUNCTION__, __LINE__, clock_start);
-
-        clock_end = high_resolution_clock::now();
-        log_info("Start init DB, time: %.3lf s, ts: %.3lf s",
-                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
-                 std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
 
         const string meta_file_path = dir + "/polar.meta";
 
@@ -202,13 +191,12 @@ namespace polar_race {
 
             // Flush tmp Files.
             FlushTmpFiles(dir);
+            printTS(__FUNCTION__, __LINE__, clock_start);
             // Build Index.
             BuildIndex();
+            printTS(__FUNCTION__, __LINE__, clock_start);
         }
         clock_end = high_resolution_clock::now();
-        log_info("After init DB, time: %.3lf s, ts: %.3lf s",
-                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0,
-                 std::chrono::duration_cast<std::chrono::milliseconds>(clock_end.time_since_epoch()).count() / 1000.0);
         printTS(__FUNCTION__, __LINE__, clock_start);
     }
 
@@ -235,9 +223,6 @@ namespace polar_race {
 
     EngineRace::~EngineRace() {
         printTS(__FUNCTION__, __LINE__, clock_start);
-        clock_end = high_resolution_clock::now();
-        log_info("Start ~EngineRace(), time: %.3lf s",
-                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0);
 #ifdef DSTAT_TESTING
         PrintMemFree();
 #endif
@@ -308,8 +293,6 @@ namespace polar_race {
         PrintMemFree();
 #endif
         clock_end = high_resolution_clock::now();
-        log_info("Finish ~EngineRace(), time: %.3lf s",
-                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0);
         printTS(__FUNCTION__, __LINE__, clock_start);
     }
 
@@ -707,8 +690,10 @@ namespace polar_race {
         vector<thread> workers(NUM_FLUSH_TMP_THREADS);
         for (uint32_t tid = 0; tid < NUM_FLUSH_TMP_THREADS; ++tid) {
             workers[tid] = thread([tid, this, dir]() {
-//                bool is_flush_key = false;
-//                bool is_flush_val = false;
+#ifdef FLUSH_STAT
+                bool is_flush_key = false;
+                bool is_flush_val = false;
+#endif
                 // Flush Values.
                 for (int i = tid; i < BUCKET_NUM; i += NUM_FLUSH_TMP_THREADS) {
                     const string value_file_path = dir + "/" + value_file_name;
@@ -717,10 +702,12 @@ namespace polar_race {
                     string temp_buffer_value = tmp_value_file_path + to_string(i);
 
                     if ((mmap_meta_cnt_[i] % TMP_VALUE_BUFFER_SIZE) != 0 && file_size(temp_buffer_value.c_str()) > 0) {
-//                        if (!is_flush_val) {
-//                            log_info("Flush Val in Bucket %d", i);
-//                            is_flush_val = true;
-//                        }
+#ifdef FLUSH_STAT
+                        if (!is_flush_val) {
+                            log_info("Flush Val in Bucket %d", i);
+                            is_flush_val = true;
+                        }
+#endif
                         value_buffer_file_dp_[i] = open(temp_buffer_value.c_str(), O_RDWR, FILE_PRIVILEGE);
                         size_t tmp_buffer_value_file_size = VALUE_SIZE * TMP_VALUE_BUFFER_SIZE;
                         mmap_value_aligned_buffer_[i] = (char *) mmap(nullptr, tmp_buffer_value_file_size,
@@ -744,10 +731,12 @@ namespace polar_race {
                     string temp_buffer_key = tmp_key_file_path + to_string(i);
 
                     if ((mmap_meta_cnt_[i] % TMP_KEY_BUFFER_SIZE) != 0 && file_size(temp_buffer_key.c_str()) > 0) {
-//                        if (!is_flush_key) {
-//                            log_info("Flush Key in Bucket %d", i);
-//                            is_flush_key = true;
-//                        }
+#ifdef FLUSH_STAT
+                        if (!is_flush_key) {
+                            log_info("Flush Key in Bucket %d", i);
+                            is_flush_key = true;
+                        }
+#endif
                         key_buffer_file_dp_[i] = open(temp_buffer_key.c_str(), O_RDWR, FILE_PRIVILEGE);
                         constexpr size_t tmp_buffer_key_file_size = sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE;
                         mmap_key_aligned_buffer_[i] = (uint64_t *) mmap(nullptr, tmp_buffer_key_file_size, \
@@ -773,8 +762,6 @@ namespace polar_race {
     }
 
     void EngineRace::BuildIndex() {
-        clock_end = high_resolution_clock::now();
-        log_info("Begin BI, time: %.3lf s", duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0);
         // Key Cnt, Index Allocation.
         index_ = vector<KeyEntry *>(BUCKET_NUM, nullptr);
         for (int key_par_id = 0; key_par_id < BUCKET_NUM; key_par_id++) {
@@ -843,8 +830,5 @@ namespace polar_race {
             free(local_buffers_g[i]);
         }
         delete[]local_buffers_g;
-        clock_end = high_resolution_clock::now();
-        log_info("Finish BI, time: %.3lf s", duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0);
     }
-
 }  // namespace polar_race
