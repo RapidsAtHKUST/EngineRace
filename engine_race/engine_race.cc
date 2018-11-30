@@ -328,7 +328,7 @@ namespace polar_race {
         }
 #endif
 #ifdef ENABLE_WRITE_BARRIER
-        if (local_block_offset % 100000 == 0 && local_block_offset < 900000 && tid < WRITE_BARRIER_NUM) {
+        if (local_block_offset % 10000 == 0 && local_block_offset < 1000000 && tid < WRITE_BARRIER_NUM) {
             write_barrier_.Wait();
         }
 #endif
@@ -606,8 +606,6 @@ namespace polar_race {
         static thread_local PolarString *polar_key_ptr_;
         static thread_local PolarString polar_val_ptr_;
 
-        auto range_init_start_clock = high_resolution_clock::now();
-
         // Thread Local Key/Value Init.
         if (local_block_offset == 0) {
             char *key_chars = new char[sizeof(uint64_t)];
@@ -616,11 +614,8 @@ namespace polar_race {
         }
         InitForRange(tid);
 
-        auto range_init_end_clock = high_resolution_clock::now();
-        double elapsed_time = duration_cast<nanoseconds>(range_init_end_clock - range_init_start_clock).count() /
-                              static_cast<double>(1000000000);
         if (tid == 0) {
-            log_info("Init elapsed time in tid %d, %.9lf s", tid, elapsed_time);
+            printTS(__FUNCTION__, __LINE__, clock_start);
         }
         // 2-level Loop.
         uint32_t lower_key_par_id = 0;
@@ -632,11 +627,11 @@ namespace polar_race {
                 auto wait_start_clock = high_resolution_clock::now();
                 futures_[par_bucket_id].get();
                 auto wait_end_clock = high_resolution_clock::now();
-                elapsed_time = duration_cast<nanoseconds>(wait_end_clock - wait_start_clock).count() /
+                double elapsed_time = duration_cast<nanoseconds>(wait_end_clock - wait_start_clock).count() /
                                static_cast<double>(1000000000);
 #ifdef STAT
                 if (par_bucket_id < KEEP_REUSE_BUFFER_NUM) {
-                    log_info("Elapsed wait: %.6lf s", elapsed_time);
+                    log_info("Elapsed Wait: %.6lf s", elapsed_time);
                 }
 #endif
                 wait_get_time_ += elapsed_time;

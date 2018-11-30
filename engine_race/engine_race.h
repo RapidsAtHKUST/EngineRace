@@ -38,7 +38,7 @@
 #define WRITE_BARRIER_NUM (16)
 // Read.
 #define NUM_READ_KEY_THREADS (NUM_THREADS)
-#define NUM_FLUSH_TMP_THREADS (16u)
+#define NUM_FLUSH_TMP_THREADS (8u)
 #define READ_BARRIER_NUM (32)
 #define KEY_READ_BLOCK_COUNT (8192u)
 // Range.
