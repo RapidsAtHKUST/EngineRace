@@ -17,9 +17,10 @@
 #include "util.h"
 #include "file_util.h"
 
-//#define STAT
+#define STAT
 //#define DSTAT_TESTING
 //#define RANGE_STAT
+#define ENABLE_WRITE_BARRIER
 
 namespace polar_race {
     using namespace std;
@@ -344,7 +345,7 @@ namespace polar_race {
         }
 #endif
 #ifdef ENABLE_WRITE_BARRIER
-        if (local_block_offset % 10000 == 0 && local_block_offset < 900000 && tid < WRITE_BARRIER_NUM) {
+        if (local_block_offset % 100000 == 0 && local_block_offset < 900000 && tid < WRITE_BARRIER_NUM) {
             write_barrier_.Wait();
         }
 #endif
@@ -706,8 +707,8 @@ namespace polar_race {
         vector<thread> workers(NUM_FLUSH_TMP_THREADS);
         for (uint32_t tid = 0; tid < NUM_FLUSH_TMP_THREADS; ++tid) {
             workers[tid] = thread([tid, this, dir]() {
-                bool is_flush_key = false;
-                bool is_flush_val = false;
+//                bool is_flush_key = false;
+//                bool is_flush_val = false;
                 // Flush Values.
                 for (int i = tid; i < BUCKET_NUM; i += NUM_FLUSH_TMP_THREADS) {
                     const string value_file_path = dir + "/" + value_file_name;
@@ -716,10 +717,10 @@ namespace polar_race {
                     string temp_buffer_value = tmp_value_file_path + to_string(i);
 
                     if ((mmap_meta_cnt_[i] % TMP_VALUE_BUFFER_SIZE) != 0 && file_size(temp_buffer_value.c_str()) > 0) {
-                        if (!is_flush_val) {
-                            log_info("Flush Val in Bucket %d", i);
-                            is_flush_val = true;
-                        }
+//                        if (!is_flush_val) {
+//                            log_info("Flush Val in Bucket %d", i);
+//                            is_flush_val = true;
+//                        }
                         value_buffer_file_dp_[i] = open(temp_buffer_value.c_str(), O_RDWR, FILE_PRIVILEGE);
                         size_t tmp_buffer_value_file_size = VALUE_SIZE * TMP_VALUE_BUFFER_SIZE;
                         mmap_value_aligned_buffer_[i] = (char *) mmap(nullptr, tmp_buffer_value_file_size,
@@ -743,10 +744,10 @@ namespace polar_race {
                     string temp_buffer_key = tmp_key_file_path + to_string(i);
 
                     if ((mmap_meta_cnt_[i] % TMP_KEY_BUFFER_SIZE) != 0 && file_size(temp_buffer_key.c_str()) > 0) {
-                        if (!is_flush_key) {
-                            log_info("Flush Key in Bucket %d", i);
-                            is_flush_key = true;
-                        }
+//                        if (!is_flush_key) {
+//                            log_info("Flush Key in Bucket %d", i);
+//                            is_flush_key = true;
+//                        }
                         key_buffer_file_dp_[i] = open(temp_buffer_key.c_str(), O_RDWR, FILE_PRIVILEGE);
                         constexpr size_t tmp_buffer_key_file_size = sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE;
                         mmap_key_aligned_buffer_[i] = (uint64_t *) mmap(nullptr, tmp_buffer_key_file_size, \
