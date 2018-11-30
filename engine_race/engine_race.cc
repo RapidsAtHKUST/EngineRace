@@ -18,7 +18,7 @@
 #include "file_util.h"
 
 //#define STAT
-#define ENABLE_WRITE_BARRIER
+//#define ENABLE_WRITE_BARRIER
 
 namespace polar_race {
     using namespace std;
