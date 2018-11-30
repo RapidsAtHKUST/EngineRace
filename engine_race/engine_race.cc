@@ -328,7 +328,7 @@ namespace polar_race {
         }
 #endif
 #ifdef ENABLE_WRITE_BARRIER
-        if (local_block_offset % 10000 == 0 && local_block_offset < 1000000 && tid < WRITE_BARRIER_NUM) {
+        if (local_block_offset % 100000 == 0 && local_block_offset < 1000000 && tid < WRITE_BARRIER_NUM) {
             write_barrier_.Wait();
         }
 #endif
