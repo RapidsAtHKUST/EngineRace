@@ -141,8 +141,6 @@ namespace polar_race {
         mmap_value_aligned_buffer_ = new char *[BUCKET_NUM];
 
         if (!file_exists(meta_file_path.c_str())) {
-            log_info("Initialize the database...");
-
             // Meta.
             meta_cnt_file_dp_ = open(meta_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
             ftruncate(meta_cnt_file_dp_, sizeof(uint32_t) * BUCKET_NUM);
@@ -199,9 +197,7 @@ namespace polar_race {
                 mmap_key_aligned_buffer_[i] = (uint64_t *) mmap(nullptr, tmp_buffer_key_file_size, \
                         PROT_READ | PROT_WRITE, MAP_SHARED, key_buffer_file_dp_[i], 0);
             }
-            log_info("Create the database successfully.");
         } else {
-            log_info("Reload the database.");
             meta_cnt_file_dp_ = open(meta_file_path.c_str(), O_RDONLY, FILE_PRIVILEGE);
             mmap_meta_cnt_ = (uint32_t *) mmap(nullptr, sizeof(uint32_t) * (BUCKET_NUM),
                                                PROT_READ, MAP_PRIVATE | MAP_POPULATE, meta_cnt_file_dp_, 0);
@@ -212,31 +208,27 @@ namespace polar_race {
 
                 value_file_dp_[i] = open(temp_value.c_str(), O_RDONLY | O_DIRECT, FILE_PRIVILEGE);
 
-                string temp_buffer_value = tmp_value_file_path + to_string(i);
-                value_buffer_file_dp_[i] = open(temp_buffer_value.c_str(), O_RDWR, FILE_PRIVILEGE);
-                size_t tmp_buffer_value_file_size = VALUE_SIZE * TMP_VALUE_BUFFER_SIZE;
-                mmap_value_aligned_buffer_[i] = (char *) mmap(nullptr, tmp_buffer_value_file_size,
-                                                              PROT_READ | PROT_WRITE, MAP_SHARED,
-                                                              value_buffer_file_dp_[i], 0);
+                value_buffer_file_dp_[i] = -1;
+                mmap_value_aligned_buffer_[i] = nullptr;
             }
             // Key.
             for (int i = 0; i < BUCKET_NUM; ++i) {
                 string temp_key = key_file_path + to_string(i);
                 key_file_dp_[i] = open(temp_key.c_str(), O_RDONLY | O_DIRECT, FILE_PRIVILEGE);
 
-                string temp_buffer_key = tmp_key_file_path + to_string(i);
-                key_buffer_file_dp_[i] = open(temp_buffer_key.c_str(), O_RDWR, FILE_PRIVILEGE);
-                constexpr size_t tmp_buffer_key_file_size = sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE;
-                mmap_key_aligned_buffer_[i] = (uint64_t *) mmap(nullptr, tmp_buffer_key_file_size, \
-                        PROT_READ | PROT_WRITE, MAP_SHARED, key_buffer_file_dp_[i], 0);
+                key_buffer_file_dp_[i] = -1;
+                mmap_key_aligned_buffer_[i] = nullptr;
             }
             // Thread.
             aligned_read_buffer_ = new char *[NUM_THREADS];
             for (int i = 0; i < NUM_THREADS; ++i) {
                 aligned_read_buffer_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, VALUE_SIZE);
             }
-            BuildIndex(dir);
-            log_info("Reload the database successfully.");
+
+            // Flush tmp Files.
+            FlushTmpFiles(dir);
+            // Build Index.
+            BuildIndex();
         }
         clock_end = high_resolution_clock::now();
         log_info("After init DB, time: %.3lf s, ts: %.3lf s",
@@ -763,36 +755,67 @@ namespace polar_race {
 
     void EngineRace::FlushTmpFiles(string dir) {
         // Flush Values.
+        bool is_flush_key = false;
+        bool is_flush_val = false;
         for (int i = 0; i < BUCKET_NUM; i++) {
-
-
             const string value_file_path = dir + "/" + value_file_name;
             string temp_value = value_file_path + to_string(i);
-            if ((mmap_meta_cnt_[i] % TMP_VALUE_BUFFER_SIZE) != 0) {
+            const string tmp_value_file_path = dir + "/polar.valbuffers";
+            string temp_buffer_value = tmp_value_file_path + to_string(i);
+
+            if ((mmap_meta_cnt_[i] % TMP_VALUE_BUFFER_SIZE) != 0 && file_size(temp_buffer_value.c_str()) > 0) {
+                if (!is_flush_val) {
+                    log_info("Flush Val in Bucket %d", i);
+                    is_flush_val = true;
+                }
+                value_buffer_file_dp_[i] = open(temp_buffer_value.c_str(), O_RDWR, FILE_PRIVILEGE);
+                size_t tmp_buffer_value_file_size = VALUE_SIZE * TMP_VALUE_BUFFER_SIZE;
+                mmap_value_aligned_buffer_[i] = (char *) mmap(nullptr, tmp_buffer_value_file_size,
+                                                              PROT_READ | PROT_WRITE, MAP_SHARED,
+                                                              value_buffer_file_dp_[i], 0);
+
                 size_t write_length = (mmap_meta_cnt_[i] % TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
                 size_t write_offset = static_cast<uint64_t>(mmap_meta_cnt_[i] / TMP_VALUE_BUFFER_SIZE *
                                                             TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
                 auto tmp_fd = open(temp_value.c_str(), O_RDWR, FILE_PRIVILEGE);
                 pwrite(tmp_fd, mmap_value_aligned_buffer_[i], write_length, write_offset);
                 close(tmp_fd);
+                ftruncate(value_buffer_file_dp_[i], 0);
             }
         }
         // Flush Keys.
         for (int i = 0; i < BUCKET_NUM; i++) {
             const string key_file_path = dir + "/" + key_file_name;
             string temp_key = key_file_path + to_string(i);
-            if ((mmap_meta_cnt_[i] % TMP_KEY_BUFFER_SIZE) != 0) {
+            const string tmp_key_file_path = dir + "/polar.keybuffers";
+            string temp_buffer_key = tmp_key_file_path + to_string(i);
+
+            if ((mmap_meta_cnt_[i] % TMP_KEY_BUFFER_SIZE) != 0 && file_size(temp_buffer_key.c_str()) > 0) {
+                if (!is_flush_key) {
+                    log_info("Flush Key in Bucket %d", i);
+                    is_flush_key = true;
+                }
+                key_buffer_file_dp_[i] = open(temp_buffer_key.c_str(), O_RDWR, FILE_PRIVILEGE);
+                constexpr size_t tmp_buffer_key_file_size = sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE;
+                mmap_key_aligned_buffer_[i] = (uint64_t *) mmap(nullptr, tmp_buffer_key_file_size, \
+                        PROT_READ | PROT_WRITE, MAP_SHARED, key_buffer_file_dp_[i], 0);
+
                 size_t write_length = (mmap_meta_cnt_[i] % TMP_KEY_BUFFER_SIZE) * sizeof(uint64_t);
                 size_t write_offset = static_cast<uint64_t>(mmap_meta_cnt_[i] / TMP_KEY_BUFFER_SIZE *
                                                             TMP_KEY_BUFFER_SIZE) * sizeof(uint64_t);
                 auto tmp_fd = open(temp_key.c_str(), O_RDWR, FILE_PRIVILEGE);
                 pwrite(tmp_fd, mmap_key_aligned_buffer_[i], write_length, write_offset);
                 close(tmp_fd);
+                ftruncate(key_buffer_file_dp_[i], 0);
             }
         }
+
+        clock_end = high_resolution_clock::now();
+        log_info("After Flush Files, time: %.3lf s",
+                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0);
     }
 
-    void EngineRace::BuildIndex(string dir) {
+    void EngineRace::BuildIndex() {
         clock_end = high_resolution_clock::now();
         log_info("Begin BI, time: %.3lf s", duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0);
         // Key Cnt, Index Allocation.
@@ -800,13 +823,6 @@ namespace polar_race {
         for (int key_par_id = 0; key_par_id < BUCKET_NUM; key_par_id++) {
             index_[key_par_id] = static_cast<KeyEntry *>(malloc(mmap_meta_cnt_[key_par_id] * sizeof(KeyEntry)));
         }
-
-        // Flush tmp Files.
-        FlushTmpFiles(std::move(dir));
-
-        clock_end = high_resolution_clock::now();
-        log_info("After Flush Files, time: %.3lf s",
-                 duration_cast<milliseconds>(clock_end - clock_start).count() / 1000.0);
 
         // Read each key file.
         auto **local_buffers_g = new uint64_t *[NUM_READ_KEY_THREADS];

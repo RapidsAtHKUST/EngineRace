@@ -152,7 +152,7 @@ namespace polar_race {
     private:
         void FlushTmpFiles(string dir);
 
-        void BuildIndex(string dir);
+        void BuildIndex();
     };
 
 }  // namespace polar_race
