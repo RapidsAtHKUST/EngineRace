@@ -209,16 +209,26 @@ namespace polar_race {
             // Value.
             for (int i = 0; i < BUCKET_NUM; ++i) {
                 string temp_value = value_file_path + to_string(i);
+
                 value_file_dp_[i] = open(temp_value.c_str(), O_RDONLY | O_DIRECT, FILE_PRIVILEGE);
-                value_buffer_file_dp_[i] = -1;
-                mmap_value_aligned_buffer_[i] = nullptr;
+
+                string temp_buffer_value = tmp_value_file_path + to_string(i);
+                value_buffer_file_dp_[i] = open(temp_buffer_value.c_str(), O_RDWR, FILE_PRIVILEGE);
+                size_t tmp_buffer_value_file_size = VALUE_SIZE * TMP_VALUE_BUFFER_SIZE;
+                mmap_value_aligned_buffer_[i] = (char *) mmap(nullptr, tmp_buffer_value_file_size,
+                                                              PROT_READ | PROT_WRITE, MAP_SHARED,
+                                                              value_buffer_file_dp_[i], 0);
             }
             // Key.
             for (int i = 0; i < BUCKET_NUM; ++i) {
                 string temp_key = key_file_path + to_string(i);
                 key_file_dp_[i] = open(temp_key.c_str(), O_RDONLY | O_DIRECT, FILE_PRIVILEGE);
-                value_buffer_file_dp_[i] = -1;
-                mmap_key_aligned_buffer_[i] = nullptr;
+
+                string temp_buffer_key = tmp_key_file_path + to_string(i);
+                key_buffer_file_dp_[i] = open(temp_buffer_key.c_str(), O_RDWR, FILE_PRIVILEGE);
+                constexpr size_t tmp_buffer_key_file_size = sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE;
+                mmap_key_aligned_buffer_[i] = (uint64_t *) mmap(nullptr, tmp_buffer_key_file_size, \
+                        PROT_READ | PROT_WRITE, MAP_SHARED, key_buffer_file_dp_[i], 0);
             }
             // Thread.
             aligned_read_buffer_ = new char *[NUM_THREADS];
@@ -754,6 +764,8 @@ namespace polar_race {
     void EngineRace::FlushTmpFiles(string dir) {
         // Flush Values.
         for (int i = 0; i < BUCKET_NUM; i++) {
+
+
             const string value_file_path = dir + "/" + value_file_name;
             string temp_value = value_file_path + to_string(i);
             if ((mmap_meta_cnt_[i] % TMP_VALUE_BUFFER_SIZE) != 0) {
