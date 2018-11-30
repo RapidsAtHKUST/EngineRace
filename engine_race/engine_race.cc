@@ -275,20 +275,6 @@ namespace polar_race {
 
         // Key.
         for (uint32_t i = 0; i < BUCKET_NUM; ++i) {
-            if (index_.empty()) {
-                if ((mmap_meta_cnt_[i] % TMP_KEY_BUFFER_SIZE) != 0) {
-                    size_t write_length = TMP_KEY_BUFFER_SIZE * sizeof(uint64_t);
-                    size_t write_offset =
-                            static_cast<uint64_t>(mmap_meta_cnt_[i] / TMP_KEY_BUFFER_SIZE *
-                                                  TMP_KEY_BUFFER_SIZE) * sizeof(uint64_t);
-//                    log_info("~Flush Key in Bucket: %d", i);
-                    pwrite(key_file_dp_[i], mmap_key_aligned_buffer_[i], write_length, write_offset);
-                }
-                int ret = ftruncate(key_buffer_file_dp_[i], 0);
-                if (ret < 0) {
-                    log_info("~Flush ftruncate Err: %d, %s", ret, strerror(errno));
-                }
-            }
             if (mmap_key_aligned_buffer_[i] != nullptr) {
                 munmap(mmap_key_aligned_buffer_[i], sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE);
             }
@@ -302,20 +288,6 @@ namespace polar_race {
 
         // Value.
         for (uint32_t i = 0; i < BUCKET_NUM; ++i) {
-            if (index_.empty()) {
-                if ((mmap_meta_cnt_[i] % TMP_VALUE_BUFFER_SIZE) != 0) {
-                    size_t write_length = (mmap_meta_cnt_[i] % TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
-                    size_t write_offset =
-                            static_cast<uint64_t>(mmap_meta_cnt_[i] / TMP_VALUE_BUFFER_SIZE *
-                                                  TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
-//                    log_info("~Flush Val in Bucket: %d", i);
-                    pwrite(value_file_dp_[i], mmap_value_aligned_buffer_[i], write_length, write_offset);
-                }
-                int ret = ftruncate(value_buffer_file_dp_[i], 0);
-                if (ret < 0) {
-                    log_info("~Flush Val ftruncate Err: %d, %s", ret, strerror(errno));
-                }
-            }
             if (mmap_value_aligned_buffer_[i] != nullptr) {
                 munmap(mmap_value_aligned_buffer_[i], VALUE_SIZE * (size_t) TMP_VALUE_BUFFER_SIZE);
             }
@@ -780,70 +752,31 @@ namespace polar_race {
     }
 
     void EngineRace::FlushTmpFiles(string dir) {
-        vector<thread> workers(NUM_FLUSH_TMP_THREADS);
-        for (uint32_t tid = 0; tid < NUM_FLUSH_TMP_THREADS; tid++) {
-            workers[tid] = thread([this, tid, dir]() {
-                const string value_file_path = dir + "/" + value_file_name;
-                const string tmp_value_file_path = dir + "/polar.valbuffers";
-                const string key_file_path = dir + "/" + key_file_name;
-                const string tmp_key_file_path = dir + "/polar.keybuffers";
-
-                for (int bucket_id = tid; bucket_id < BUCKET_NUM; bucket_id += NUM_FLUSH_TMP_THREADS) {
-                    // Flush Values.
-                    string temp_value = value_file_path + to_string(bucket_id);
-                    string temp_buffer_value = tmp_value_file_path + to_string(bucket_id);
-                    if (file_size(temp_buffer_value.c_str()) != 0) {
-//                        log_info("Not Trunc, Flush Val in Bucket %d", bucket_id);
-                        value_buffer_file_dp_[bucket_id] = open(temp_buffer_value.c_str(), O_RDONLY, FILE_PRIVILEGE);
-                        if ((mmap_meta_cnt_[bucket_id] % TMP_VALUE_BUFFER_SIZE) != 0) {
-
-                            size_t tmp_buffer_value_file_size = VALUE_SIZE * TMP_VALUE_BUFFER_SIZE;
-                            mmap_value_aligned_buffer_[bucket_id] = (char *) mmap(
-                                    nullptr, tmp_buffer_value_file_size, PROT_READ, MAP_PRIVATE | MAP_POPULATE,
-                                    value_buffer_file_dp_[bucket_id], 0);
-
-                            size_t write_length = (mmap_meta_cnt_[bucket_id] % TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
-                            size_t write_offset =
-                                    static_cast<uint64_t>(mmap_meta_cnt_[bucket_id] / TMP_VALUE_BUFFER_SIZE *
-                                                          TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
-                            auto tmp_fd = open(temp_value.c_str(), O_RDWR, FILE_PRIVILEGE);
-//                            log_info("Flush Val in bucket: %d", bucket_id);
-                            pwrite(tmp_fd, mmap_value_aligned_buffer_[bucket_id], write_length, write_offset);
-                            close(tmp_fd);
-                        }
-//                        log_info("Trunc Val in bucket: %d", bucket_id);
-                        ftruncate(value_buffer_file_dp_[bucket_id], 0);
-                    }
-
-                    // Flush Keys.
-                    string temp_buffer_key = tmp_key_file_path + to_string(bucket_id);
-                    if (file_size(temp_buffer_key.c_str()) != 0) {
-//                        log_info("Not Trunc, Flush Key in Bucket %d", bucket_id);
-                        key_buffer_file_dp_[bucket_id] = open(temp_buffer_key.c_str(), O_RDONLY, FILE_PRIVILEGE);
-                        if ((mmap_meta_cnt_[bucket_id] % TMP_KEY_BUFFER_SIZE) != 0) {
-                            constexpr size_t tmp_buffer_key_file_size = sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE;
-                            mmap_key_aligned_buffer_[bucket_id] = (uint64_t *) mmap(
-                                    nullptr, tmp_buffer_key_file_size, PROT_READ, MAP_PRIVATE | MAP_POPULATE,
-                                    key_buffer_file_dp_[bucket_id], 0);
-
-                            string temp_key = key_file_path + to_string(bucket_id);
-//                            log_info("Flush Key in bucket: %d", bucket_id);
-                            size_t write_length = (mmap_meta_cnt_[bucket_id] % TMP_KEY_BUFFER_SIZE) * sizeof(uint64_t);
-                            size_t write_offset =
-                                    static_cast<uint64_t>(mmap_meta_cnt_[bucket_id] / TMP_KEY_BUFFER_SIZE *
-                                                          TMP_KEY_BUFFER_SIZE) * sizeof(uint64_t);
-                            auto tmp_fd = open(temp_key.c_str(), O_RDWR, FILE_PRIVILEGE);
-                            pwrite(tmp_fd, mmap_key_aligned_buffer_[bucket_id], write_length, write_offset);
-                            close(tmp_fd);
-                        }
-//                        log_info("Trunc Key in bucket: %d", bucket_id);
-                        ftruncate(key_buffer_file_dp_[bucket_id], 0);
-                    }
-                }
-            });
+        // Flush Values.
+        for (int i = 0; i < BUCKET_NUM; i++) {
+            const string value_file_path = dir + "/" + value_file_name;
+            string temp_value = value_file_path + to_string(i);
+            if ((mmap_meta_cnt_[i] % TMP_VALUE_BUFFER_SIZE) != 0) {
+                size_t write_length = (mmap_meta_cnt_[i] % TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
+                size_t write_offset = static_cast<uint64_t>(mmap_meta_cnt_[i] / TMP_VALUE_BUFFER_SIZE *
+                                                            TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
+                auto tmp_fd = open(temp_value.c_str(), O_RDWR, FILE_PRIVILEGE);
+                pwrite(tmp_fd, mmap_value_aligned_buffer_[i], write_length, write_offset);
+                close(tmp_fd);
+            }
         }
-        for (uint32_t i = 0; i < NUM_FLUSH_TMP_THREADS; i++) {
-            workers[i].join();
+        // Flush Keys.
+        for (int i = 0; i < BUCKET_NUM; i++) {
+            const string key_file_path = dir + "/" + key_file_name;
+            string temp_key = key_file_path + to_string(i);
+            if ((mmap_meta_cnt_[i] % TMP_KEY_BUFFER_SIZE) != 0) {
+                size_t write_length = (mmap_meta_cnt_[i] % TMP_KEY_BUFFER_SIZE) * sizeof(uint64_t);
+                size_t write_offset = static_cast<uint64_t>(mmap_meta_cnt_[i] / TMP_KEY_BUFFER_SIZE *
+                                                            TMP_KEY_BUFFER_SIZE) * sizeof(uint64_t);
+                auto tmp_fd = open(temp_key.c_str(), O_RDWR, FILE_PRIVILEGE);
+                pwrite(tmp_fd, mmap_key_aligned_buffer_[i], write_length, write_offset);
+                close(tmp_fd);
+            }
         }
     }
 
