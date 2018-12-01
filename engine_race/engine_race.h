@@ -32,12 +32,16 @@
 #define FALLOCATE_SIZE (4 * 1024 * 1024)
 #define FALLOCATE_POOL_SIZE (32u)
 #define MAX_FALLOCATE_RESERVE_SLICE_NUM (1)
-#define FALLOCATE_KEY_FILE_SIZE (1024 * 1024)
 #endif
 
 // Buckets.
 #define BUCKET_DIGITS (10)      // must be the same for the range query
 #define BUCKET_NUM (1 << BUCKET_DIGITS)
+
+#define KEY_FILE_DIGITS (5)     // must make sure same bucket in the same file
+#define KEY_FILE_NUM (1 << KEY_FILE_DIGITS)
+#define MAX_KEY_BUCKET_SIZE (72000000 / BUCKET_NUM / FILESYSTEM_BLOCK_SIZE * FILESYSTEM_BLOCK_SIZE)
+#define FALLOCATE_KEY_FILE_SIZE (MAX_KEY_BUCKET_SIZE * sizeof(uint64_t) * (BUCKET_NUM / KEY_FILE_NUM))
 
 // Write.
 #define WRITE_BARRIER_NUM (16)

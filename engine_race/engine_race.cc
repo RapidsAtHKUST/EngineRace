@@ -57,6 +57,12 @@ namespace polar_race {
         return static_cast<uint32_t >((key >> (NUM_THREADS - BUCKET_DIGITS)) & 0xffffffu);
     }
 
+    inline pair<uint32_t, uint64_t> get_key_fid_foff(uint32_t bucket_id, uint32_t bucket_off) {
+        uint32_t fid = bucket_id % KEY_FILE_NUM;
+        uint64_t foff = MAX_KEY_BUCKET_SIZE * (bucket_id / KEY_FILE_NUM) + bucket_off;
+        return make_pair(fid, foff * sizeof(uint64_t));
+    }
+
     inline uint32_t get_buffer_id(uint32_t bucket_id) {
         if (bucket_id >= KEEP_REUSE_BUFFER_NUM) {
             return (bucket_id % MAX_RECYCLE_BUFFER_NUM) + KEEP_REUSE_BUFFER_NUM;
@@ -160,15 +166,21 @@ namespace polar_race {
 #endif
             }
             printTS(__FUNCTION__, __LINE__, clock_start);
-
             // Key.
-            for (int i = 0; i < BUCKET_NUM; ++i) {
+            for (int i = 0; i < KEY_FILE_NUM; ++i) {
                 string temp_key = key_file_path + to_string(i);
-                string temp_buffer_key = tmp_key_file_path + to_string(i);
                 key_file_dp_[i] = open(temp_key.c_str(), O_RDWR | O_CREAT | O_DIRECT, FILE_PRIVILEGE);
+                if (key_file_dp_[i] < 0) {
+                    log_info("open err: %s", strerror(errno));
+                }
 #ifdef ENABLE_FALLOCATE
                 fallocate(key_file_dp_[i], 0, 0, FALLOCATE_KEY_FILE_SIZE);
 #endif
+            }
+            printTS(__FUNCTION__, __LINE__, clock_start);
+            // Key Buffers.
+            for (int i = 0; i < BUCKET_NUM; ++i) {
+                string temp_buffer_key = tmp_key_file_path + to_string(i);
                 constexpr size_t tmp_buffer_key_file_size = sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE;
                 key_buffer_file_dp_[i] = open(temp_buffer_key.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
                 ftruncate(key_buffer_file_dp_[i], tmp_buffer_key_file_size);
@@ -193,11 +205,14 @@ namespace polar_race {
             printTS(__FUNCTION__, __LINE__, clock_start);
 
             // Key.
-            for (int i = 0; i < BUCKET_NUM; ++i) {
+            for (int i = 0; i < KEY_FILE_NUM; ++i) {
                 string temp_key = key_file_path + to_string(i);
                 key_file_dp_[i] = open(temp_key.c_str(), O_RDONLY | O_DIRECT, FILE_PRIVILEGE);
-
-                key_buffer_file_dp_[i] = -1;
+            }
+            printTS(__FUNCTION__, __LINE__, clock_start);
+            // Key Buffers.
+            for (int i = 0; i < BUCKET_NUM; i++) {
+                value_buffer_file_dp_[i] = -1;
                 mmap_key_aligned_buffer_[i] = nullptr;
             }
             printTS(__FUNCTION__, __LINE__, clock_start);
@@ -389,8 +404,12 @@ namespace polar_race {
             uint64_t *key_buffer = mmap_key_aligned_buffer_[par_bucket_id];
             key_buffer[key_buffer_offset] = key_int_big_endian;
             if (((mmap_meta_cnt_[par_bucket_id] + 1) % TMP_KEY_BUFFER_SIZE) == 0) {
-                pwrite(key_file_dp_[par_bucket_id], key_buffer, sizeof(uint64_t) * TMP_KEY_BUFFER_SIZE,
-                       ((uint64_t) mmap_meta_cnt_[par_bucket_id] - (TMP_KEY_BUFFER_SIZE - 1)) * sizeof(uint64_t));
+                uint32_t in_bucket_id = (mmap_meta_cnt_[par_bucket_id] - (TMP_KEY_BUFFER_SIZE - 1));
+
+                uint32_t fid;
+                uint64_t foff;
+                tie(fid, foff) = get_key_fid_foff(par_bucket_id, in_bucket_id);
+                pwrite(key_file_dp_[fid], key_buffer, sizeof(uint64_t) * TMP_KEY_BUFFER_SIZE, foff);
             }
             // Update the meta data.
             mmap_meta_cnt_[par_bucket_id]++;
@@ -758,31 +777,36 @@ namespace polar_race {
                     }
                 }
                 // Flush Keys.
-                for (int i = tid; i < BUCKET_NUM; i += NUM_FLUSH_TMP_THREADS) {
+                for (uint32_t bucket_id = tid; bucket_id < BUCKET_NUM; bucket_id += NUM_FLUSH_TMP_THREADS) {
                     const string key_file_path = dir + "/" + key_file_name;
-                    string temp_key = key_file_path + to_string(i);
                     const string tmp_key_file_path = dir + "/polar.keybuffers";
-                    string temp_buffer_key = tmp_key_file_path + to_string(i);
+                    string temp_buffer_key = tmp_key_file_path + to_string(bucket_id);
+                    if (file_size(temp_buffer_key.c_str()) != 0) {
+                        log_info("Not Trunc, Flush Key in Bucket %d", bucket_id);
+                        key_buffer_file_dp_[bucket_id] = open(temp_buffer_key.c_str(), O_RDONLY, FILE_PRIVILEGE);
+                        if ((mmap_meta_cnt_[bucket_id] % TMP_KEY_BUFFER_SIZE) != 0) {
+                            constexpr size_t tmp_buffer_key_file_size = sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE;
+                            mmap_key_aligned_buffer_[bucket_id] = (uint64_t *) mmap(
+                                    nullptr, tmp_buffer_key_file_size, PROT_READ, MAP_PRIVATE | MAP_POPULATE,
+                                    key_buffer_file_dp_[bucket_id], 0);
 
-                    if ((mmap_meta_cnt_[i] % TMP_KEY_BUFFER_SIZE) != 0 && file_size(temp_buffer_key.c_str()) > 0) {
-#ifdef FLUSH_STAT
-                        if (!is_flush_key) {
-                            log_info("Flush Key in Bucket %d", i);
-                            is_flush_key = true;
+                            uint32_t fid;
+                            uint64_t foff;
+                            tie(fid, foff) = get_key_fid_foff(
+                                    bucket_id, mmap_meta_cnt_[bucket_id] / TMP_KEY_BUFFER_SIZE * TMP_KEY_BUFFER_SIZE);
+                            string temp_key = key_file_path + to_string(fid);
+                            log_info("Flush Key in bucket: %d", bucket_id);
+                            size_t write_length = (mmap_meta_cnt_[bucket_id] % TMP_KEY_BUFFER_SIZE) * sizeof(uint64_t);
+
+                            auto tmp_fd = open(temp_key.c_str(), O_RDWR, FILE_PRIVILEGE);
+                            auto ret = pwrite(tmp_fd, mmap_key_aligned_buffer_[bucket_id], write_length, foff);
+                            if (ret < (long) write_length) {
+                                log_info("~Write Key Err, ret: %d, %s", ret, strerror(errno));
+                            }
+                            close(tmp_fd);
                         }
-#endif
-                        key_buffer_file_dp_[i] = open(temp_buffer_key.c_str(), O_RDWR, FILE_PRIVILEGE);
-                        constexpr size_t tmp_buffer_key_file_size = sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE;
-                        mmap_key_aligned_buffer_[i] = (uint64_t *) mmap(nullptr, tmp_buffer_key_file_size, \
-                        PROT_READ | PROT_WRITE, MAP_SHARED, key_buffer_file_dp_[i], 0);
-
-                        size_t write_length = (mmap_meta_cnt_[i] % TMP_KEY_BUFFER_SIZE) * sizeof(uint64_t);
-                        size_t write_offset = static_cast<uint64_t>(mmap_meta_cnt_[i] / TMP_KEY_BUFFER_SIZE *
-                                                                    TMP_KEY_BUFFER_SIZE) * sizeof(uint64_t);
-                        auto tmp_fd = open(temp_key.c_str(), O_RDWR, FILE_PRIVILEGE);
-                        pwrite(tmp_fd, mmap_key_aligned_buffer_[i], write_length, write_offset);
-                        close(tmp_fd);
-                        ftruncate(key_buffer_file_dp_[i], 0);
+                        log_info("Trunc Key in bucket: %d", bucket_id);
+                        ftruncate(key_buffer_file_dp_[bucket_id], 0);
                     }
                 }
             });
@@ -810,7 +834,7 @@ namespace polar_race {
         }
         vector<thread> workers(NUM_READ_KEY_THREADS);
         for (uint32_t tid = 0; tid < NUM_READ_KEY_THREADS; ++tid) {
-            workers[tid] = thread([tid, local_buffers_g, this]() {
+            workers[tid] = move(thread([tid, local_buffers_g, this]() {
                 uint64_t *local_buffer = local_buffers_g[tid];
                 for (uint32_t key_par_id = tid; key_par_id < BUCKET_NUM; key_par_id += NUM_READ_KEY_THREADS) {
                     uint32_t entry_count = mmap_meta_cnt_[key_par_id];
@@ -818,10 +842,12 @@ namespace polar_race {
                         uint32_t passes = entry_count / KEY_READ_BLOCK_COUNT;
                         uint32_t remain_entries_count = entry_count - passes * KEY_READ_BLOCK_COUNT;
                         uint32_t file_offset = 0;
-                        size_t read_offset = 0;
 
+                        auto fid_foff = get_key_fid_foff(key_par_id, 0);
+                        uint32_t key_fid = fid_foff.first;
+                        size_t read_offset = fid_foff.second;
                         for (uint32_t j = 0; j < passes; ++j) {
-                            auto ret = pread(key_file_dp_[key_par_id], local_buffer,
+                            auto ret = pread(key_file_dp_[key_fid], local_buffer,
                                              KEY_READ_BLOCK_COUNT * sizeof(uint64_t), read_offset);
                             if (ret != KEY_READ_BLOCK_COUNT * sizeof(uint64_t)) {
                                 log_info("ret: %d, err: %s", ret, strerror(errno));
@@ -837,8 +863,7 @@ namespace polar_race {
                         if (remain_entries_count != 0) {
                             size_t num_bytes = (remain_entries_count * sizeof(uint64_t) + FILESYSTEM_BLOCK_SIZE - 1) /
                                                FILESYSTEM_BLOCK_SIZE * FILESYSTEM_BLOCK_SIZE;
-                            auto ret = pread(key_file_dp_[key_par_id], local_buffer,
-                                             num_bytes, read_offset);
+                            auto ret = pread(key_file_dp_[key_fid], local_buffer, num_bytes, read_offset);
                             if (ret < static_cast<ssize_t>(remain_entries_count * sizeof(uint64_t))) {
                                 log_info("ret: %d, err: %s", ret, strerror(errno));
                             }
@@ -857,7 +882,7 @@ namespace polar_race {
                         });
                     }
                 }
-            });
+            }));
         }
         for (uint32_t i = 0; i < NUM_READ_KEY_THREADS; ++i) {
             workers[i].join();
