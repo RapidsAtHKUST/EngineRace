@@ -10,6 +10,8 @@
 
 #include "log.h"
 
+#define PRINT_LOG
+
 using namespace std;
 using namespace std::chrono;
 
@@ -160,9 +162,11 @@ inline void printTS(const char *func, int line, time_point<high_resolution_clock
     char buf[16];
     buf[strftime(buf, sizeof(buf), "%H:%M:%S", lt)] = '\0';
     time_point<high_resolution_clock> clock_now = high_resolution_clock::now();
+#ifdef PRINT_LOG
     fprintf(stderr, "%s (Func: %s, Line: %d), (TS: %.6lf s)-(Elapsed: %.6lf s), (Mem: %.6lf MB) \n", buf, func,
             line, duration_cast<nanoseconds>(clock_now.time_since_epoch()).count() / 1000000000.0,
             duration_cast<nanoseconds>(clock_now - clock_beg).count() / 1000000000.0,
             static_cast<double>(getValue()) / 1024.);
     fprintf(stderr, "\n");
+#endif
 }
