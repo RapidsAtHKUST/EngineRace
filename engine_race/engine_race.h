@@ -27,27 +27,26 @@
 // Key/Value Files.
 #define VALUE_SIZE (4096)
 
-//#define ENABLE_FALLOCATE
-#ifdef ENABLE_FALLOCATE
-#define FALLOCATE_SIZE (4 * 1024 * 1024)
-#define FALLOCATE_POOL_SIZE (32u)
-#define MAX_FALLOCATE_RESERVE_SLICE_NUM (1)
-#endif
-
 // Buckets.
-#define BUCKET_DIGITS (10)      // must be the same for the range query
+#define BUCKET_DIGITS (10)      // k-v-buckets must be the same for the range query
 #define BUCKET_NUM (1 << BUCKET_DIGITS)
+
+// Max Bucket Size * BUCKET_NUM.
+#define MAX_TOTAL_SIZE (72000000)
 
 #define KEY_FILE_DIGITS (5)     // must make sure same bucket in the same file
 #define KEY_FILE_NUM (1 << KEY_FILE_DIGITS)
-#define MAX_KEY_BUCKET_SIZE (72000000 / BUCKET_NUM / FILESYSTEM_BLOCK_SIZE * FILESYSTEM_BLOCK_SIZE)
-#define FALLOCATE_KEY_FILE_SIZE (MAX_KEY_BUCKET_SIZE * sizeof(uint64_t) * (BUCKET_NUM / KEY_FILE_NUM))
+#define MAX_KEY_BUCKET_SIZE (MAX_TOTAL_SIZE / BUCKET_NUM / FILESYSTEM_BLOCK_SIZE * FILESYSTEM_BLOCK_SIZE)
+
+#define VAL_FILE_DIGITS (6)
+#define VAL_FILE_NUM (1 << VAL_FILE_DIGITS)  // must make sure same bucket in the same file
+#define MAX_VAL_BUCKET_SIZE (MAX_TOTAL_SIZE / BUCKET_NUM / FILESYSTEM_BLOCK_SIZE * FILESYSTEM_BLOCK_SIZE)
 
 // Write.
 #define WRITE_BARRIER_NUM (16)
 // Read.
 #define NUM_READ_KEY_THREADS (NUM_THREADS)
-#define NUM_FLUSH_TMP_THREADS (8u)
+#define NUM_FLUSH_TMP_THREADS (32u)
 #define READ_BARRIER_NUM (32)
 #define KEY_READ_BLOCK_COUNT (8192u)
 // Range.
@@ -82,12 +81,7 @@ namespace polar_race {
         char **mmap_value_aligned_buffer_view_;
 
         // Write.
-#ifdef ENABLE_FALLOCATE
-        ThreadPool *fallocate_pool_;
-        vector<queue<shared_future<void>>> fallocate_futures_per_bucket_;
-        vector<uint32_t> fallocate_slice_id_end_;
-#endif
-        mutex *partition_mtx_;
+        mutex *bucket_mtx_;
         Barrier write_barrier_;
 
         // Read.
@@ -151,18 +145,13 @@ namespace polar_race {
                       Visitor &visitor) override;
 
     private:
-#ifdef ENABLE_FALLOCATE
-        void FAllocateForBucket(uint32_t par_bucket_id);
-#endif
-
-    private:
-        void ReadBucketToBuffer(uint32_t bucket_id);
-
         void InitRangeReader();
 
         void InitAIOContext();
 
         void InitForRange(int64_t tid);
+
+        void ReadBucketToBuffer(uint32_t bucket_id);
 
     private:
         void FlushTmpFiles(string dir);
