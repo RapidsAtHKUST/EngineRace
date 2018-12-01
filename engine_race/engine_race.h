@@ -72,12 +72,14 @@ namespace polar_race {
         uint32_t *mmap_meta_cnt_;
 
         int *key_file_dp_;
-        int *key_buffer_file_dp_;
-        uint64_t **mmap_key_aligned_buffer_;
+        int key_buffer_file_dp_;
+        uint64_t *mmap_key_aligned_buffer_;
+        uint64_t **mmap_key_aligned_buffer_view_;
 
         int *value_file_dp_;
-        int *value_buffer_file_dp_;
-        char **mmap_value_aligned_buffer_;
+        int value_buffer_file_dp_;
+        char *mmap_value_aligned_buffer_;
+        char **mmap_value_aligned_buffer_view_;
 
         // Write.
 #ifdef ENABLE_FALLOCATE
