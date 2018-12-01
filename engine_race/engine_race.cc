@@ -65,15 +65,17 @@ namespace polar_race {
     }
 
     inline pair<uint32_t, uint64_t> get_key_fid_foff(uint32_t bucket_id, uint32_t bucket_off) {
-        uint32_t fid = bucket_id / KEY_FILE_NUM;
-        uint64_t foff = MAX_KEY_BUCKET_SIZE * (bucket_id % KEY_FILE_NUM) + bucket_off;
+        constexpr uint32_t BUCKET_NUM_PER_FILE = (BUCKET_NUM / KEY_FILE_NUM);
+        uint32_t fid = bucket_id / BUCKET_NUM_PER_FILE;
+        uint64_t foff = MAX_KEY_BUCKET_SIZE * (bucket_id % BUCKET_NUM_PER_FILE) + bucket_off;
         return make_pair(fid, foff * sizeof(uint64_t));
     }
 
     inline pair<uint32_t, uint64_t> get_value_fid_foff(uint32_t bucket_id, uint32_t bucket_off) {
         // Buckets 0,1,2,3... grouped together.
-        uint32_t fid = bucket_id / VAL_FILE_NUM;
-        uint64_t foff = MAX_VAL_BUCKET_SIZE * (bucket_id % VAL_FILE_NUM) + bucket_off;
+        constexpr uint32_t BUCKET_NUM_PER_FILE = (BUCKET_NUM / VAL_FILE_NUM);
+        uint32_t fid = bucket_id / BUCKET_NUM_PER_FILE;
+        uint64_t foff = MAX_VAL_BUCKET_SIZE * (bucket_id % BUCKET_NUM_PER_FILE) + bucket_off;
         return make_pair(fid, foff * VALUE_SIZE);
     }
 
@@ -812,14 +814,14 @@ namespace polar_race {
             workers[tid] = thread([tid, local_buffers_g, this]() {
                 uint64_t *local_buffer = local_buffers_g[tid];
                 uint32_t avg = BUCKET_NUM / NUM_READ_KEY_THREADS;
-                for (uint32_t key_par_id = tid * avg; key_par_id < (tid + 1) * avg; key_par_id++) {
-                    uint32_t entry_count = mmap_meta_cnt_[key_par_id];
+                for (uint32_t bucket_id = tid * avg; bucket_id < (tid + 1) * avg; bucket_id++) {
+                    uint32_t entry_count = mmap_meta_cnt_[bucket_id];
                     if (entry_count > 0) {
                         uint32_t passes = entry_count / KEY_READ_BLOCK_COUNT;
                         uint32_t remain_entries_count = entry_count - passes * KEY_READ_BLOCK_COUNT;
                         uint32_t file_offset = 0;
 
-                        auto fid_foff = get_key_fid_foff(key_par_id, 0);
+                        auto fid_foff = get_key_fid_foff(bucket_id, 0);
                         uint32_t key_fid = fid_foff.first;
                         size_t read_offset = fid_foff.second;
                         for (uint32_t j = 0; j < passes; ++j) {
@@ -829,8 +831,8 @@ namespace polar_race {
                                 log_info("ret: %d, err: %s", ret, strerror(errno));
                             }
                             for (uint32_t k = 0; k < KEY_READ_BLOCK_COUNT; k++) {
-                                index_[key_par_id][file_offset].key_ = local_buffer[k];
-                                index_[key_par_id][file_offset].value_offset_ = file_offset;
+                                index_[bucket_id][file_offset].key_ = local_buffer[k];
+                                index_[bucket_id][file_offset].value_offset_ = file_offset;
                                 file_offset++;
                             }
                             read_offset += KEY_READ_BLOCK_COUNT * sizeof(uint64_t);
@@ -841,15 +843,15 @@ namespace polar_race {
                                                FILESYSTEM_BLOCK_SIZE * FILESYSTEM_BLOCK_SIZE;
                             auto ret = pread(key_file_dp_[key_fid], local_buffer, num_bytes, read_offset);
                             if (ret < static_cast<ssize_t>(remain_entries_count * sizeof(uint64_t))) {
-                                log_info("ret: %d, err: %s", ret, strerror(errno));
+                                log_info("ret: %d, err: %s, fid:%zu off: %zu", ret, strerror(errno), key_fid, read_offset);
                             }
                             for (uint32_t k = 0; k < remain_entries_count; k++) {
-                                index_[key_par_id][file_offset].key_ = local_buffer[k];
-                                index_[key_par_id][file_offset].value_offset_ = file_offset;
+                                index_[bucket_id][file_offset].key_ = local_buffer[k];
+                                index_[bucket_id][file_offset].value_offset_ = file_offset;
                                 file_offset++;
                             }
                         }
-                        sort(index_[key_par_id], index_[key_par_id] + entry_count, [](KeyEntry l, KeyEntry r) {
+                        sort(index_[bucket_id], index_[bucket_id] + entry_count, [](KeyEntry l, KeyEntry r) {
                             if (l.key_ == r.key_) {
                                 return l.value_offset_ > r.value_offset_;
                             } else {
