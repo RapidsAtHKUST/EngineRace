@@ -19,6 +19,8 @@
 
 //#define STAT
 //#define ENABLE_WRITE_BARRIER
+//#define ENABLE_INDEX_FREE
+//#define ENABLE_VALUE_BUFFER_FREE
 
 namespace polar_race {
     using namespace std;
@@ -188,6 +190,8 @@ namespace polar_race {
                 value_buffer_file_dp_[i] = -1;
                 mmap_value_aligned_buffer_[i] = nullptr;
             }
+            printTS(__FUNCTION__, __LINE__, clock_start);
+
             // Key.
             for (int i = 0; i < BUCKET_NUM; ++i) {
                 string temp_key = key_file_path + to_string(i);
@@ -196,6 +200,8 @@ namespace polar_race {
                 key_buffer_file_dp_[i] = -1;
                 mmap_key_aligned_buffer_[i] = nullptr;
             }
+            printTS(__FUNCTION__, __LINE__, clock_start);
+
             // Thread.
             aligned_read_buffer_ = new char *[NUM_THREADS];
             for (int i = 0; i < NUM_THREADS; ++i) {
@@ -277,13 +283,15 @@ namespace polar_race {
         delete[] mmap_value_aligned_buffer_;
 
         // Free indices.
-//        if (!index_.empty()) {
-//            printTS(__FUNCTION__, __LINE__, clock_start);
-////            for (uint32_t bucket_id = 0; bucket_id < BUCKET_NUM; bucket_id++) {
-////                free(index_[bucket_id]);
-////            }
-//            printTS(__FUNCTION__, __LINE__, clock_start);
-//        }
+#ifdef ENABLE_INDEX_FREE
+        if (!index_.empty()) {
+            printTS(__FUNCTION__, __LINE__, clock_start);
+            for (uint32_t bucket_id = 0; bucket_id < BUCKET_NUM; bucket_id++) {
+                free(index_[bucket_id]);
+            }
+            printTS(__FUNCTION__, __LINE__, clock_start);
+        }
+#endif
 
         // Meta.
         if (mmap_meta_cnt_ != nullptr) {
@@ -300,12 +308,13 @@ namespace polar_race {
             }
         }
         delete range_barrier_ptr_;
+#ifdef EANBLE_VALUE_BUFFER_FREE
         printTS(__FUNCTION__, __LINE__, clock_start);
         for (char *ptr: value_shared_buffers_) {
             free(ptr);
         }
         printTS(__FUNCTION__, __LINE__, clock_start);
-
+#endif
         delete range_io_worker_pool_;
         if (total_time_ != 0) {
             log_info("Total Range Time: %.9lf s, wait: %.9lf s,  io thread sleep: %.9lf s",
