@@ -731,9 +731,19 @@ namespace polar_race {
             mmap_key_aligned_buffer_ = (uint64_t *) mmap(nullptr, tmp_buffer_key_file_size, PROT_READ,
                                                          MAP_PRIVATE | MAP_POPULATE, key_buffer_file_dp_, 0);
             printTS(__FUNCTION__, __LINE__, clock_start);
-
+            vector<int> val_fds(VAL_FILE_NUM);
+            vector<int> key_fds(KEY_FILE_NUM);
+            for (int i = 0; i < VAL_FILE_NUM; i++) {
+                string value_file_path = dir + "/" + value_file_name + to_string(i);
+                val_fds[i] = open(value_file_path.c_str(), O_WRONLY | O_DIRECT, FILE_PRIVILEGE);
+            }
+            for (int i = 0; i < KEY_FILE_NUM; i++) {
+                string key_file_path = dir + "/" + key_file_name + to_string(i);
+                key_fds[i] = open(key_file_path.c_str(), O_WRONLY | O_DIRECT, FILE_PRIVILEGE);
+            }
+            printTS(__FUNCTION__, __LINE__, clock_start);
             for (uint32_t tid = 0; tid < NUM_FLUSH_TMP_THREADS; ++tid) {
-                workers[tid] = thread([tid, this, dir]() {
+                workers[tid] = thread([tid, this, dir, &val_fds, &key_fds]() {
                     // Flush Values.
                     for (uint32_t bucket_id = tid; bucket_id < BUCKET_NUM; bucket_id += NUM_FLUSH_TMP_THREADS) {
                         mmap_value_aligned_buffer_view_[bucket_id] =
@@ -746,11 +756,7 @@ namespace polar_race {
                             tie(fid, foff) = get_value_fid_foff(bucket_id, in_bucked_off);
 
                             size_t write_length = (mmap_meta_cnt_[bucket_id] % TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
-
-                            string value_file_path = dir + "/" + value_file_name + to_string(fid);
-                            auto tmp_fd = open(value_file_path.c_str(), O_RDWR, FILE_PRIVILEGE);
-                            pwrite(tmp_fd, mmap_value_aligned_buffer_view_[bucket_id], write_length, foff);
-                            close(tmp_fd);
+                            pwrite(val_fds[fid], mmap_value_aligned_buffer_view_[bucket_id], write_length, foff);
                         }
                     }
                     // Flush Keys.
@@ -762,19 +768,21 @@ namespace polar_race {
                             uint64_t foff;
                             tie(fid, foff) = get_key_fid_foff(
                                     bucket_id, mmap_meta_cnt_[bucket_id] / TMP_KEY_BUFFER_SIZE * TMP_KEY_BUFFER_SIZE);
-                            size_t write_length =
-                                    (mmap_meta_cnt_[bucket_id] % TMP_KEY_BUFFER_SIZE) * sizeof(uint64_t);
+                            size_t write_length = (TMP_KEY_BUFFER_SIZE) * sizeof(uint64_t);
 
-                            string key_file_path = dir + "/" + key_file_name + to_string(fid);
-                            auto tmp_fd = open(key_file_path.c_str(), O_RDWR, FILE_PRIVILEGE);
-                            pwrite(tmp_fd, mmap_key_aligned_buffer_view_[bucket_id], write_length, foff);
-                            close(tmp_fd);
+                            pwrite(key_fds[fid], mmap_key_aligned_buffer_view_[bucket_id], write_length, foff);
                         }
                     }
                 });
             }
             for (uint32_t tid = 0; tid < NUM_FLUSH_TMP_THREADS; ++tid) {
                 workers[tid].join();
+            }
+            for (int i = 0; i < VAL_FILE_NUM; i++) {
+                close(val_fds[i]);
+            }
+            for (int i = 0; i < KEY_FILE_NUM; i++) {
+                close(key_fds[i]);
             }
             ftruncate(value_buffer_file_dp_, 0);
             ftruncate(key_buffer_file_dp_, 0);
