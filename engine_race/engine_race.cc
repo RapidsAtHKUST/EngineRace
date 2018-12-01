@@ -65,8 +65,8 @@ namespace polar_race {
     }
 
     inline pair<uint32_t, uint64_t> get_key_fid_foff(uint32_t bucket_id, uint32_t bucket_off) {
-        uint32_t fid = bucket_id % KEY_FILE_NUM;
-        uint64_t foff = MAX_KEY_BUCKET_SIZE * (bucket_id / KEY_FILE_NUM) + bucket_off;
+        uint32_t fid = bucket_id / KEY_FILE_NUM;
+        uint64_t foff = MAX_KEY_BUCKET_SIZE * (bucket_id % KEY_FILE_NUM) + bucket_off;
         return make_pair(fid, foff * sizeof(uint64_t));
     }
 
@@ -725,11 +725,11 @@ namespace polar_race {
 
             value_buffer_file_dp_ = open(tmp_value_file_path.c_str(), O_RDWR, FILE_PRIVILEGE);
             mmap_value_aligned_buffer_ = (char *) mmap(nullptr, tmp_buffer_value_file_size, PROT_READ,
-                                                       MAP_PRIVATE | MAP_POPULATE, value_buffer_file_dp_, 0);
+                                                       MAP_PRIVATE, value_buffer_file_dp_, 0);
 
             key_buffer_file_dp_ = open(tmp_key_file_path.c_str(), O_RDWR, FILE_PRIVILEGE);
             mmap_key_aligned_buffer_ = (uint64_t *) mmap(nullptr, tmp_buffer_key_file_size, PROT_READ,
-                                                         MAP_PRIVATE | MAP_POPULATE, key_buffer_file_dp_, 0);
+                                                         MAP_PRIVATE, key_buffer_file_dp_, 0);
             printTS(__FUNCTION__, __LINE__, clock_start);
             vector<int> val_fds(VAL_FILE_NUM);
             vector<int> key_fds(KEY_FILE_NUM);
@@ -811,7 +811,8 @@ namespace polar_race {
         for (uint32_t tid = 0; tid < NUM_READ_KEY_THREADS; ++tid) {
             workers[tid] = thread([tid, local_buffers_g, this]() {
                 uint64_t *local_buffer = local_buffers_g[tid];
-                for (uint32_t key_par_id = tid; key_par_id < BUCKET_NUM; key_par_id += NUM_READ_KEY_THREADS) {
+                uint32_t avg = BUCKET_NUM / NUM_READ_KEY_THREADS;
+                for (uint32_t key_par_id = tid * avg; key_par_id < (tid + 1) * avg; key_par_id++) {
                     uint32_t entry_count = mmap_meta_cnt_[key_par_id];
                     if (entry_count > 0) {
                         uint32_t passes = entry_count / KEY_READ_BLOCK_COUNT;
