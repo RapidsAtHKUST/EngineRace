@@ -26,10 +26,10 @@
 #define TMP_VALUE_BUFFER_SIZE (4)
 // Key/Value Files.
 #define VALUE_SIZE (4096)
-#define FALLOCATE_SIZE (4 * 1024 * 1024)
-#define FALLOCATE_POOL_SIZE (32u)
-#define MAX_FALLOCATE_RESERVE_SLICE_NUM (1)
-#define FALLOCATE_KEY_FILE_SIZE (1024 * 1024)
+//#define FALLOCATE_SIZE (4 * 1024 * 1024)
+//#define FALLOCATE_POOL_SIZE (32u)
+//#define MAX_FALLOCATE_RESERVE_SLICE_NUM (1)
+//#define FALLOCATE_KEY_FILE_SIZE (1024 * 1024)
 // Buckets.
 #define BUCKET_DIGITS (10)      // must be the same for the range query
 #define BUCKET_NUM (1 << BUCKET_DIGITS)
@@ -71,9 +71,9 @@ namespace polar_race {
         char **mmap_value_aligned_buffer_;
 
         // Write.
-        ThreadPool *fallocate_pool_;
-        vector<queue<shared_future<void>>> fallocate_futures_per_bucket_;
-        vector<uint32_t> fallocate_slice_id_end_;
+//        ThreadPool *fallocate_pool_;
+//        vector<queue<shared_future<void>>> fallocate_futures_per_bucket_;
+//        vector<uint32_t> fallocate_slice_id_end_;
         mutex *partition_mtx_;
         Barrier write_barrier_;
 

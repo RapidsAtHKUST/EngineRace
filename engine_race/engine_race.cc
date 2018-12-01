@@ -79,7 +79,8 @@ namespace polar_race {
             mmap_meta_cnt_(nullptr), key_file_dp_(nullptr), key_buffer_file_dp_(nullptr),
             mmap_key_aligned_buffer_(nullptr), value_file_dp_(nullptr), value_buffer_file_dp_(nullptr),
             mmap_value_aligned_buffer_(nullptr),
-            fallocate_pool_(nullptr), partition_mtx_(nullptr), write_barrier_(WRITE_BARRIER_NUM),
+//            fallocate_pool_(nullptr),
+            partition_mtx_(nullptr), write_barrier_(WRITE_BARRIER_NUM),
             aligned_read_buffer_(nullptr), read_barrier_(READ_BARRIER_NUM),
             is_range_init_(false), range_barrier_ptr_(nullptr), polar_keys_(NUM_THREADS),
             total_time_(0), total_io_sleep_time_(0), wait_get_time_(0),
@@ -113,9 +114,9 @@ namespace polar_race {
             memset(mmap_meta_cnt_, 0, sizeof(uint32_t) * (BUCKET_NUM));
 
             // Reserve FAllocate Value File Jobs.
-            fallocate_pool_ = new ThreadPool(FALLOCATE_POOL_SIZE);
-            fallocate_futures_per_bucket_.resize(BUCKET_NUM);
-            fallocate_slice_id_end_.resize(BUCKET_NUM, 0);
+//            fallocate_pool_ = new ThreadPool(FALLOCATE_POOL_SIZE);
+//            fallocate_futures_per_bucket_.resize(BUCKET_NUM);
+//            fallocate_slice_id_end_.resize(BUCKET_NUM, 0);
 
             // Value.
             partition_mtx_ = new mutex[BUCKET_NUM];
@@ -140,12 +141,12 @@ namespace polar_race {
                         PROT_READ | PROT_WRITE, MAP_SHARED, value_buffer_file_dp_[i], 0);
 
                 // Submit FAllocate Value File Jobs.
-                for (int j = 0; j < MAX_FALLOCATE_RESERVE_SLICE_NUM; j++) {
-                    fallocate_futures_per_bucket_[i].push(fallocate_pool_->enqueue([this, i]() {
-                        fallocate(value_file_dp_[i], 0, FALLOCATE_SIZE, fallocate_slice_id_end_[i] * FALLOCATE_SIZE);
-                    }));
-                    fallocate_slice_id_end_[i]++;
-                }
+//                for (int j = 0; j < MAX_FALLOCATE_RESERVE_SLICE_NUM; j++) {
+//                    fallocate_futures_per_bucket_[i].push(fallocate_pool_->enqueue([this, i]() {
+//                        fallocate(value_file_dp_[i], 0, FALLOCATE_SIZE, fallocate_slice_id_end_[i] * FALLOCATE_SIZE);
+//                    }));
+//                    fallocate_slice_id_end_[i]++;
+//                }
             }
 
             // Key.
@@ -153,7 +154,7 @@ namespace polar_race {
                 string temp_key = key_file_path + to_string(i);
                 string temp_buffer_key = tmp_key_file_path + to_string(i);
                 key_file_dp_[i] = open(temp_key.c_str(), O_RDWR | O_CREAT | O_DIRECT, FILE_PRIVILEGE);
-                fallocate(key_file_dp_[i], 0, 0, FALLOCATE_KEY_FILE_SIZE);
+//                fallocate(key_file_dp_[i], 0, 0, FALLOCATE_KEY_FILE_SIZE);
 
                 constexpr size_t tmp_buffer_key_file_size = sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE;
                 key_buffer_file_dp_[i] = open(temp_buffer_key.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
@@ -226,7 +227,7 @@ namespace polar_race {
 #ifdef DSTAT_TESTING
         PrintMemFree();
 #endif
-        delete fallocate_pool_;
+//        delete fallocate_pool_;
         // Thread.
         for (uint32_t i = 0; i < NUM_THREADS; ++i) {
             if (aligned_read_buffer_ != nullptr) {
@@ -260,6 +261,7 @@ namespace polar_race {
         }
         delete[] value_file_dp_;
         delete[] mmap_value_aligned_buffer_;
+        printTS(__FUNCTION__, __LINE__, clock_start);
 
         // Free indices.
         for (KeyEntry *index_partition: index_) {
@@ -297,23 +299,23 @@ namespace polar_race {
     }
 
 // 3. Write a key-value pair into engine
-    void EngineRace::FAllocateForBucket(uint32_t par_bucket_id) {
-        if ((mmap_meta_cnt_[par_bucket_id] * VALUE_SIZE) % (FALLOCATE_SIZE) == 0) {
-            fallocate_futures_per_bucket_[par_bucket_id].front().get();
-            fallocate_futures_per_bucket_[par_bucket_id].pop();
-
-            // Submit FAllocate Job.
-            fallocate_futures_per_bucket_[par_bucket_id].push(fallocate_pool_->enqueue([this, par_bucket_id]() {
-                int ret = fallocate(value_file_dp_[par_bucket_id], 0, FALLOCATE_SIZE,
-                                    fallocate_slice_id_end_[par_bucket_id] * FALLOCATE_SIZE);
-                if (ret < 0) {
-                    log_info("Fallocate Err For Bucket %d, slice id: %d, Ret: %d, Err: %s", par_bucket_id,
-                             fallocate_slice_id_end_[par_bucket_id], ret, strerror(errno));
-                }
-            }));
-            fallocate_slice_id_end_[par_bucket_id]++;
-        }
-    }
+//    void EngineRace::FAllocateForBucket(uint32_t par_bucket_id) {
+//        if ((mmap_meta_cnt_[par_bucket_id] * VALUE_SIZE) % (FALLOCATE_SIZE) == 0) {
+//            fallocate_futures_per_bucket_[par_bucket_id].front().get();
+//            fallocate_futures_per_bucket_[par_bucket_id].pop();
+//
+//            // Submit FAllocate Job.
+//            fallocate_futures_per_bucket_[par_bucket_id].push(fallocate_pool_->enqueue([this, par_bucket_id]() {
+//                int ret = fallocate(value_file_dp_[par_bucket_id], 0, FALLOCATE_SIZE,
+//                                    fallocate_slice_id_end_[par_bucket_id] * FALLOCATE_SIZE);
+//                if (ret < 0) {
+//                    log_info("Fallocate Err For Bucket %d, slice id: %d, Ret: %d, Err: %s", par_bucket_id,
+//                             fallocate_slice_id_end_[par_bucket_id], ret, strerror(errno));
+//                }
+//            }));
+//            fallocate_slice_id_end_[par_bucket_id]++;
+//        }
+//    }
 
     RetCode EngineRace::Write(const PolarString &key, const PolarString &value) {
         static thread_local uint32_t tid = (uint32_t) (++write_num_threads) % NUM_THREADS;
@@ -340,7 +342,7 @@ namespace polar_race {
             memcpy(value_buffer + val_buffer_offset, value.data(), VALUE_SIZE);
 
             // Allocate disk space.
-            FAllocateForBucket(par_bucket_id);
+//            FAllocateForBucket(par_bucket_id);
 
             // Write value to the value file.
             if ((mmap_meta_cnt_[par_bucket_id] + 1) % TMP_VALUE_BUFFER_SIZE == 0) {
@@ -485,6 +487,9 @@ namespace polar_race {
         if (bucket_id % 64 == 63)
             log_info("In bucket %d, Read time %.9lf s", bucket_id, elapsed_time);
 #endif
+        if (bucket_id == BUCKET_NUM - 1) {
+            printTS(__FUNCTION__, __LINE__, clock_start);
+        }
     }
 
     void EngineRace::InitAIOContext() {
@@ -628,7 +633,7 @@ namespace polar_race {
                 futures_[par_bucket_id].get();
                 auto wait_end_clock = high_resolution_clock::now();
                 double elapsed_time = duration_cast<nanoseconds>(wait_end_clock - wait_start_clock).count() /
-                               static_cast<double>(1000000000);
+                                      static_cast<double>(1000000000);
 #ifdef STAT
                 if (par_bucket_id < KEEP_REUSE_BUFFER_NUM) {
                     log_info("Elapsed Wait: %.6lf s", elapsed_time);
