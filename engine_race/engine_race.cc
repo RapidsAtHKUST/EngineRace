@@ -114,6 +114,7 @@ namespace polar_race {
             mmap_meta_cnt_ = (uint32_t *) mmap(nullptr, sizeof(uint32_t) * (BUCKET_NUM),
                                                PROT_READ | PROT_WRITE, MAP_SHARED, meta_cnt_file_dp_, 0);
             memset(mmap_meta_cnt_, 0, sizeof(uint32_t) * (BUCKET_NUM));
+            printTS(__FUNCTION__, __LINE__, clock_start);
 
             // Reserve FAllocate Value File Jobs.
 #ifdef ENABLE_FALLOCATE
@@ -123,6 +124,9 @@ namespace polar_race {
 #endif
             // Value.
             partition_mtx_ = new mutex[BUCKET_NUM];
+
+            printTS(__FUNCTION__, __LINE__, clock_start);
+
             for (int i = 0; i < BUCKET_NUM; ++i) {
                 string temp_value = value_file_path + to_string(i);
                 string temp_buffer_value = tmp_value_file_path + to_string(i);
@@ -153,6 +157,7 @@ namespace polar_race {
                 }
 #endif
             }
+            printTS(__FUNCTION__, __LINE__, clock_start);
 
             // Key.
             for (int i = 0; i < BUCKET_NUM; ++i) {
@@ -168,6 +173,7 @@ namespace polar_race {
                 mmap_key_aligned_buffer_[i] = (uint64_t *) mmap(nullptr, tmp_buffer_key_file_size, \
                         PROT_READ | PROT_WRITE, MAP_SHARED, key_buffer_file_dp_[i], 0);
             }
+            printTS(__FUNCTION__, __LINE__, clock_start);
         } else {
             meta_cnt_file_dp_ = open(meta_file_path.c_str(), O_RDONLY, FILE_PRIVILEGE);
             mmap_meta_cnt_ = (uint32_t *) mmap(nullptr, sizeof(uint32_t) * (BUCKET_NUM),
