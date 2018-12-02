@@ -51,8 +51,8 @@
 #define KEY_READ_BLOCK_COUNT (8192u)
 // Range.
 #define IO_POOL_SIZE (1u)       // have to be one for aio
-#define MAX_RECYCLE_BUFFER_NUM (5u)
-#define KEEP_REUSE_BUFFER_NUM (5u)
+#define MAX_RECYCLE_BUFFER_NUM (4u)
+#define KEEP_REUSE_BUFFER_NUM (6u)
 #define MAX_TOTAL_BUFFER_NUM (MAX_RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
 
 //#define BUSY_WAITING
