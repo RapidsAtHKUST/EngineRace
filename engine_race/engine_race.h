@@ -154,6 +154,8 @@ namespace polar_race {
         void ReadBucketToBuffer(uint32_t bucket_id);
 
     private:
+        void ParallelFlushTmp(int* key_fds, int* val_fds);
+
         void FlushTmpFiles(string dir);
 
         void BuildIndex();

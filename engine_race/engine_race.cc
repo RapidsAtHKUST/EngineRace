@@ -21,6 +21,7 @@
 //#define ENABLE_WRITE_BARRIER
 //#define ENABLE_INDEX_FREE
 //#define ENABLE_VALUE_BUFFER_FREE
+#define FLUSH_IN_WRITER_DESTRUCTOR
 
 namespace polar_race {
     using namespace std;
@@ -260,9 +261,21 @@ namespace polar_race {
         }
         delete[] aligned_read_buffer_;
 
+        // Flush If Writer Reach Here.
+#ifdef FLUSH_IN_WRITER_DESTRUCTOR
+        if (index_.empty()) {
+            printTS(__FUNCTION__, __LINE__, clock_start);
+            ParallelFlushTmp(key_file_dp_, value_file_dp_);
+            printTS(__FUNCTION__, __LINE__, clock_start);
+        }
+#endif
+
         // Key Buffers.
         if (mmap_key_aligned_buffer_ != nullptr) {
-            munmap(mmap_key_aligned_buffer_, sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE * BUCKET_NUM);
+            int ret = munmap(mmap_key_aligned_buffer_, sizeof(uint64_t) * (size_t) TMP_KEY_BUFFER_SIZE * BUCKET_NUM);
+            if (ret < 0) {
+                log_info("Key Buffer Munmap Err: %s", strerror(errno));
+            }
         }
         delete[] mmap_key_aligned_buffer_view_;
         if (key_buffer_file_dp_ != -1) {
@@ -283,6 +296,7 @@ namespace polar_race {
         if (value_buffer_file_dp_ != -1) {
             close(value_buffer_file_dp_);
         }
+        printTS(__FUNCTION__, __LINE__, clock_start);
 
         // Value.
         for (uint32_t i = 0; i < VAL_FILE_NUM; ++i) {
@@ -717,11 +731,52 @@ namespace polar_race {
         return kSucc;
     }
 
+    void EngineRace::ParallelFlushTmp(int *key_fds, int *val_fds) {
+        vector<thread> workers(NUM_FLUSH_TMP_THREADS);
+        for (uint32_t tid = 0; tid < NUM_FLUSH_TMP_THREADS; ++tid) {
+            workers[tid] = thread([tid, this, val_fds, key_fds]() {
+                // Flush Values.
+                for (uint32_t bucket_id = tid; bucket_id < BUCKET_NUM; bucket_id += NUM_FLUSH_TMP_THREADS) {
+                    mmap_value_aligned_buffer_view_[bucket_id] =
+                            mmap_value_aligned_buffer_ + VALUE_SIZE * TMP_VALUE_BUFFER_SIZE * bucket_id;
+                    if (mmap_meta_cnt_[bucket_id] % TMP_VALUE_BUFFER_SIZE != 0) {
+                        uint32_t fid;
+                        uint64_t foff;
+                        uint32_t in_bucked_off = mmap_meta_cnt_[bucket_id] / TMP_VALUE_BUFFER_SIZE *
+                                                 TMP_VALUE_BUFFER_SIZE;
+                        tie(fid, foff) = get_value_fid_foff(bucket_id, in_bucked_off);
+
+                        size_t write_length = (mmap_meta_cnt_[bucket_id] % TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
+                        pwrite(val_fds[fid], mmap_value_aligned_buffer_view_[bucket_id], write_length, foff);
+                    }
+                }
+                // Flush Keys.
+                for (uint32_t bucket_id = tid; bucket_id < BUCKET_NUM; bucket_id += NUM_FLUSH_TMP_THREADS) {
+                    mmap_key_aligned_buffer_view_[bucket_id] =
+                            mmap_key_aligned_buffer_ + TMP_KEY_BUFFER_SIZE * bucket_id;
+                    if ((mmap_meta_cnt_[bucket_id] % TMP_KEY_BUFFER_SIZE) != 0) {
+                        uint32_t fid;
+                        uint64_t foff;
+                        tie(fid, foff) = get_key_fid_foff(
+                                bucket_id, mmap_meta_cnt_[bucket_id] / TMP_KEY_BUFFER_SIZE * TMP_KEY_BUFFER_SIZE);
+                        size_t write_length = (TMP_KEY_BUFFER_SIZE) * sizeof(uint64_t);
+
+                        pwrite(key_fds[fid], mmap_key_aligned_buffer_view_[bucket_id], write_length, foff);
+                    }
+                }
+            });
+        }
+        for (uint32_t tid = 0; tid < NUM_FLUSH_TMP_THREADS; ++tid) {
+            workers[tid].join();
+        }
+        ftruncate(value_buffer_file_dp_, 0);
+        ftruncate(key_buffer_file_dp_, 0);
+    }
+
     void EngineRace::FlushTmpFiles(string dir) {
         const string tmp_value_file_path = dir + value_buf_file_name;
         const string tmp_key_file_path = dir + key_buf_file_name;
 
-        vector<thread> workers(NUM_FLUSH_TMP_THREADS);
         if (file_size(tmp_value_file_path.c_str()) > 0) {
             printTS(__FUNCTION__, __LINE__, clock_start);
 
@@ -744,50 +799,15 @@ namespace polar_race {
                 key_fds[i] = open(key_file_path.c_str(), O_WRONLY | O_DIRECT, FILE_PRIVILEGE);
             }
             printTS(__FUNCTION__, __LINE__, clock_start);
-            for (uint32_t tid = 0; tid < NUM_FLUSH_TMP_THREADS; ++tid) {
-                workers[tid] = thread([tid, this, dir, &val_fds, &key_fds]() {
-                    // Flush Values.
-                    for (uint32_t bucket_id = tid; bucket_id < BUCKET_NUM; bucket_id += NUM_FLUSH_TMP_THREADS) {
-                        mmap_value_aligned_buffer_view_[bucket_id] =
-                                mmap_value_aligned_buffer_ + VALUE_SIZE * TMP_VALUE_BUFFER_SIZE * bucket_id;
-                        if (mmap_meta_cnt_[bucket_id] % TMP_VALUE_BUFFER_SIZE != 0) {
-                            uint32_t fid;
-                            uint64_t foff;
-                            uint32_t in_bucked_off = mmap_meta_cnt_[bucket_id] / TMP_VALUE_BUFFER_SIZE *
-                                                     TMP_VALUE_BUFFER_SIZE;
-                            tie(fid, foff) = get_value_fid_foff(bucket_id, in_bucked_off);
+            ParallelFlushTmp(&key_fds.front(), &val_fds.front());
+            printTS(__FUNCTION__, __LINE__, clock_start);
 
-                            size_t write_length = (mmap_meta_cnt_[bucket_id] % TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
-                            pwrite(val_fds[fid], mmap_value_aligned_buffer_view_[bucket_id], write_length, foff);
-                        }
-                    }
-                    // Flush Keys.
-                    for (uint32_t bucket_id = tid; bucket_id < BUCKET_NUM; bucket_id += NUM_FLUSH_TMP_THREADS) {
-                        mmap_key_aligned_buffer_view_[bucket_id] =
-                                mmap_key_aligned_buffer_ + TMP_KEY_BUFFER_SIZE * bucket_id;
-                        if ((mmap_meta_cnt_[bucket_id] % TMP_KEY_BUFFER_SIZE) != 0) {
-                            uint32_t fid;
-                            uint64_t foff;
-                            tie(fid, foff) = get_key_fid_foff(
-                                    bucket_id, mmap_meta_cnt_[bucket_id] / TMP_KEY_BUFFER_SIZE * TMP_KEY_BUFFER_SIZE);
-                            size_t write_length = (TMP_KEY_BUFFER_SIZE) * sizeof(uint64_t);
-
-                            pwrite(key_fds[fid], mmap_key_aligned_buffer_view_[bucket_id], write_length, foff);
-                        }
-                    }
-                });
-            }
-            for (uint32_t tid = 0; tid < NUM_FLUSH_TMP_THREADS; ++tid) {
-                workers[tid].join();
-            }
             for (int i = 0; i < VAL_FILE_NUM; i++) {
                 close(val_fds[i]);
             }
             for (int i = 0; i < KEY_FILE_NUM; i++) {
                 close(key_fds[i]);
             }
-            ftruncate(value_buffer_file_dp_, 0);
-            ftruncate(key_buffer_file_dp_, 0);
             printTS(__FUNCTION__, __LINE__, clock_start);
         }
 
@@ -843,7 +863,8 @@ namespace polar_race {
                                                FILESYSTEM_BLOCK_SIZE * FILESYSTEM_BLOCK_SIZE;
                             auto ret = pread(key_file_dp_[key_fid], local_buffer, num_bytes, read_offset);
                             if (ret < static_cast<ssize_t>(remain_entries_count * sizeof(uint64_t))) {
-                                log_info("ret: %d, err: %s, fid:%zu off: %zu", ret, strerror(errno), key_fid, read_offset);
+                                log_info("ret: %d, err: %s, fid:%zu off: %zu", ret, strerror(errno), key_fid,
+                                         read_offset);
                             }
                             for (uint32_t k = 0; k < remain_entries_count; k++) {
                                 index_[bucket_id][file_offset].key_ = local_buffer[k];
