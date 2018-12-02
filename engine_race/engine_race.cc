@@ -110,7 +110,9 @@ namespace polar_race {
             is_range_init_(false), range_barrier_ptr_(nullptr), polar_keys_(NUM_THREADS),
             total_time_(0), total_io_sleep_time_(0), wait_get_time_(0),
             val_buffer_max_size_(0), range_io_worker_pool_(nullptr),
+#ifndef BUSY_WAITING
             bucket_mutex_arr_(nullptr), bucket_cond_var_arr_(nullptr),
+#endif
             bucket_is_ready_read_(nullptr), bucket_consumed_num_(nullptr), total_range_num_threads_(0) {
         printTS(__FUNCTION__, __LINE__, clock_start);
 
@@ -567,8 +569,10 @@ namespace polar_race {
             value_shared_buffers_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, val_buffer_max_size_);
         }
         // Value Files.
+#ifndef BUSY_WAITING
         bucket_mutex_arr_ = new mutex[BUCKET_NUM];
         bucket_cond_var_arr_ = new condition_variable[BUCKET_NUM];
+#endif
         bucket_is_ready_read_ = new bool[BUCKET_NUM];
         bucket_consumed_num_ = new atomic_int[BUCKET_NUM];
         futures_.resize(BUCKET_NUM);
@@ -582,7 +586,7 @@ namespace polar_race {
                 auto range_clock_beg = high_resolution_clock::now();
                 InitRangeReader();
                 InitAIOContext();
-                usleep(10000);
+//                usleep(10000);
                 auto range_clock_end = high_resolution_clock::now();
                 double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                                       static_cast<double>(1000000000);
@@ -590,6 +594,11 @@ namespace polar_race {
 
                 // Init Barrier, Notify All.
                 total_range_num_threads_ = range_num_threads_count + 1;
+                if (total_range_num_threads_ > 1 && total_range_num_threads_ != NUM_THREADS) {
+                    // Do not Sleep, But With Calibration.
+                    log_info("Update Number of Threads Correctly");
+                    total_range_num_threads_ = NUM_THREADS;
+                }
                 range_barrier_ptr_ = new Barrier(static_cast<size_t>(total_range_num_threads_));
                 log_info("Total number of range threads: %zu", total_range_num_threads_);
                 is_range_init_ = true;
@@ -603,7 +612,7 @@ namespace polar_race {
 
         // Submit All IO Jobs.
         if (tid == 0) {
-            memset(bucket_is_ready_read_, 0, BUCKET_NUM);
+            memset((bool *) bucket_is_ready_read_, 0, BUCKET_NUM);
             for (uint32_t i = 0; i < MAX_RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM; i++) {
                 bucket_is_ready_read_[i] = true;
             }
@@ -613,6 +622,7 @@ namespace polar_race {
                 bucket_consumed_num_[next_bucket_idx].store(0);
                 futures_[next_bucket_idx] = range_io_worker_pool_->enqueue(
                         [this, next_bucket_idx]() {
+#ifndef BUSY_WAITING
                             unique_lock<mutex> lock(bucket_mutex_arr_[next_bucket_idx]);
                             if (!bucket_is_ready_read_[next_bucket_idx]) {
                                 auto range_clock_beg = high_resolution_clock::now();
@@ -627,6 +637,19 @@ namespace polar_race {
                                         static_cast<double>(1000000000);
                                 total_io_sleep_time_ += sleep_time;
                             }
+#else
+                            if (!bucket_is_ready_read_[next_bucket_idx]) {
+                                auto range_clock_beg = high_resolution_clock::now();
+
+                                while (!bucket_is_ready_read_[next_bucket_idx]);
+
+                                auto range_clock_end = high_resolution_clock::now();
+                                double sleep_time =
+                                        duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
+                                        static_cast<double>(1000000000);
+                                total_io_sleep_time_ += sleep_time;
+                            }
+#endif
                             ReadBucketToBuffer(next_bucket_idx);
                             return;
                         });
@@ -720,9 +743,13 @@ namespace polar_race {
 
                 // Notify
                 if (next_bucket_idx < upper_key_par_id + 1) {
+#ifndef BUSY_WAITING
                     unique_lock<mutex> lock(bucket_mutex_arr_[next_bucket_idx]);
                     bucket_is_ready_read_[next_bucket_idx] = true;
                     bucket_cond_var_arr_[next_bucket_idx].notify_all();
+#else
+                    bucket_is_ready_read_[next_bucket_idx] = true;
+#endif
                 }
             }
         }
