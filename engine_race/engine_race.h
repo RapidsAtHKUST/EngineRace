@@ -28,7 +28,7 @@
 #define VALUE_SIZE (4096)
 
 // Buckets.
-#define BUCKET_DIGITS (10)      // k-v-buckets must be the same for the range query
+#define BUCKET_DIGITS (11)      // k-v-buckets must be the same for the range query
 #define BUCKET_NUM (1 << BUCKET_DIGITS)
 
 // Max Bucket Size * BUCKET_NUM.
@@ -51,8 +51,8 @@
 #define KEY_READ_BLOCK_COUNT (8192u)
 // Range.
 #define IO_POOL_SIZE (1u)       // have to be one for aio
-#define MAX_RECYCLE_BUFFER_NUM (2u)
-#define KEEP_REUSE_BUFFER_NUM (3u)
+#define MAX_RECYCLE_BUFFER_NUM (5u)
+#define KEEP_REUSE_BUFFER_NUM (6u)
 #define MAX_TOTAL_BUFFER_NUM (MAX_RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
 
 //#define BUSY_WAITING
@@ -62,7 +62,7 @@ namespace polar_race {
 
     struct KeyEntry {
         uint64_t key_;
-        uint32_t value_offset_;
+        uint16_t value_offset_;
     }__attribute__((packed));
 
     bool operator<(KeyEntry l, KeyEntry r);
