@@ -17,7 +17,7 @@
 #include "util.h"
 #include "file_util.h"
 
-//#define STAT
+#define STAT
 //#define ENABLE_WRITE_BARRIER
 //#define ENABLE_INDEX_FREE
 //#define ENABLE_VALUE_BUFFER_FREE
