@@ -35,11 +35,11 @@
 // Max Bucket Size * BUCKET_NUM.
 #define MAX_TOTAL_SIZE (68 * 1024 * 1024)
 
-#define KEY_FILE_DIGITS (5)     // must make sure same bucket in the same file
+#define KEY_FILE_DIGITS (6)     // must make sure same bucket in the same file
 #define KEY_FILE_NUM (1 << KEY_FILE_DIGITS)
 #define MAX_KEY_BUCKET_SIZE (MAX_TOTAL_SIZE / BUCKET_NUM / FILESYSTEM_BLOCK_SIZE * FILESYSTEM_BLOCK_SIZE)
 
-#define VAL_FILE_DIGITS (5)
+#define VAL_FILE_DIGITS (6)
 #define VAL_FILE_NUM (1 << VAL_FILE_DIGITS)  // must make sure same bucket in the same file
 #define MAX_VAL_BUCKET_SIZE (MAX_TOTAL_SIZE / BUCKET_NUM / FILESYSTEM_BLOCK_SIZE * FILESYSTEM_BLOCK_SIZE)
 
@@ -56,7 +56,7 @@
 #define KEEP_REUSE_BUFFER_NUM (3u)
 #define MAX_TOTAL_BUFFER_NUM (MAX_RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
 
-#define ENABLE_RAND_READ_CACHE
+//#define ENABLE_RAND_READ_CACHE
 #ifdef ENABLE_RAND_READ_CACHE
 #define MAX_READ_BUFFER_PER_BUCKET (330000 / BUCKET_NUM)
 #endif
@@ -166,8 +166,8 @@ namespace polar_race {
                       Visitor &visitor) override;
 
 #ifdef ENABLE_RAND_READ_CACHE
-    private:
-        void InitRandomReadCache(uint32_t tid);
+        private:
+            void InitRandomReadCache(uint32_t tid);
 
 #endif
 

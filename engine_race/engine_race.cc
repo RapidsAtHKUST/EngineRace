@@ -18,7 +18,7 @@
 #include "util.h"
 #include "file_util.h"
 
-//#define STAT
+#define STAT
 //#define ENABLE_WRITE_BARRIER
 //#define ENABLE_INDEX_FREE
 //#define ENABLE_VALUE_BUFFER_FREE
@@ -511,9 +511,6 @@ namespace polar_race {
             real_access_[bucket_id]++;
             if (!is_visited_[bucket_id][it->value_offset_]) {
                 is_visited_[bucket_id][it->value_offset_] = true;
-                if (bucket_id == 0) {
-                    log_info("Bucket 0 Read Off: %d", it->value_offset_);
-                }
                 if (is_cached_[bucket_id][it->value_offset_] && mmap_meta_cnt_[0] > STAT_BUCKET_SIZE_THRESHOLD) {
                     // Hit
                     uint16_t buffer_off = read_cache_map_[bucket_id][it->value_offset_];
@@ -523,18 +520,13 @@ namespace polar_race {
                     // Free Cache
                     read_cache_map_[bucket_id].erase(read_cache_map_[bucket_id].find(it->value_offset_));
                     free_cache_queue_[bucket_id].push(buffer_off);
-                    if (bucket_id == 0 && mmap_meta_cnt_[0] > STAT_BUCKET_SIZE_THRESHOLD) {
-                        log_info("Bucket 0 Cache Consumption: %d, Free: %d", it->value_offset_,
-                                 free_cache_queue_[bucket_id].size());
-                    }
                 } else {
                     // Not Hit
+                    bool is_able_merge_load = false;
                     if (it->value_offset_ + 1 < mmap_meta_cnt_[bucket_id] &&
-                        !is_visited_[bucket_id][it->value_offset_ + 1] && !free_cache_queue_[bucket_id].empty()) {
-                        if (bucket_id == 0 && mmap_meta_cnt_[0] > STAT_BUCKET_SIZE_THRESHOLD) {
-                            log_info("Bucket 0 Cache Load Off: %d, Free: %d", it->value_offset_ + 1,
-                                     free_cache_queue_[bucket_id].size());
-                        }
+                        !is_visited_[bucket_id][it->value_offset_ + 1] &&
+                        !free_cache_queue_[bucket_id].empty()) {
+                        is_able_merge_load = true;
                         uint16_t buffer_off = free_cache_queue_[bucket_id].front();
                         free_cache_queue_[bucket_id].pop();
 
@@ -552,13 +544,8 @@ namespace polar_race {
                         is_cached_[bucket_id][it->value_offset_ + 1] = true;
 
                         load_hit_stat_[bucket_id].first++;
-                    } else {
-                        if (bucket_id == 0 && mmap_meta_cnt_[0] > STAT_BUCKET_SIZE_THRESHOLD) {
-                            log_info("Bucket 0 Status: Off(%d/%d), IsVisited(%d), Size(%d)", it->value_offset_ + 1,
-                                     mmap_meta_cnt_[bucket_id],
-                                     is_visited_[bucket_id][it->value_offset_ + 1] ? 1 : 0,
-                                     free_cache_queue_[bucket_id].size());
-                        }
+                    }
+                    if (!is_able_merge_load) {
                         pread(value_file_dp_[fid], value_buffer, VALUE_SIZE, foff);
                     }
                 }
@@ -736,7 +723,7 @@ namespace polar_race {
 
         // Submit All IO Jobs.
         if (tid == 0) {
-            memset((bool *) bucket_is_ready_read_, 0, BUCKET_NUM);
+            memset(bucket_is_ready_read_, 0, BUCKET_NUM);
             for (uint32_t i = 0; i < MAX_RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM; i++) {
                 bucket_is_ready_read_[i] = true;
             }
