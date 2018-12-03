@@ -23,10 +23,10 @@
 //#define ENABLE_INDEX_FREE
 //#define ENABLE_VALUE_BUFFER_FREE
 #define FLUSH_IN_WRITER_DESTRUCTOR
-#define DSTAT_TESTING
+//#define DSTAT_TESTING
 #define STAT_BUCKET_SIZE_THRESHOLD (50000)
 
-#define PERFORMANCE_WRITE (1000000)
+#define PERFORMANCE_WRITE (255)
 
 namespace polar_race {
     using namespace std;
@@ -400,11 +400,13 @@ namespace polar_race {
 #endif
         if (local_block_offset == 0) {
             if (is_performance_write_round) {
-                if (tid < NUM_THREADS - WRITE_BARRIER_NUM) {
-                    unique_lock<mutex> lock(wait_mutex_[tid]);
-                    if (!is_half_done_[tid]) {
+                auto complete_tid = NUM_THREADS - 1 - tid;
+                if (complete_tid < NUM_THREADS - WRITE_BARRIER_NUM) {
+                    unique_lock<mutex> lock(wait_mutex_[complete_tid]);
+                    if (!is_half_done_[complete_tid]) {
                         log_info("wait...");
-                        wait_cond_[tid].wait(lock, [this]() { return is_half_done_[tid]; });
+                        wait_cond_[complete_tid].wait(lock,
+                                                      [this, complete_tid]() { return is_half_done_[complete_tid]; });
                     }
                 }
             }
@@ -452,15 +454,16 @@ namespace polar_race {
         }
 #endif
         if (local_block_offset == PERFORMANCE_WRITE) {
-            if (is_performance_write_round && tid >= WRITE_BARRIER_NUM) {
-                uint32_t vote = tid / WRITE_BARRIER_NUM * WRITE_BARRIER_NUM;
-                if (tid >= vote) {
+            auto complete_tid = NUM_THREADS - 1 - tid;
+            if (is_performance_write_round && complete_tid >= WRITE_BARRIER_NUM) {
+                uint32_t vote = complete_tid / WRITE_BARRIER_NUM * WRITE_BARRIER_NUM;
+                if (complete_tid >= vote) {
                     write_barrier_.Wait();
-                    if (tid == vote) {
-                        for (auto i = vote - (WRITE_BARRIER_NUM); i < vote; i++) {
-                            unique_lock<mutex> lock(wait_mutex_[i]);
-                            is_half_done_[i] = true;
-                            wait_cond_[i].notify_all();
+                    if (complete_tid == vote) {
+                        for (auto complete_tid = vote - (WRITE_BARRIER_NUM); complete_tid < vote; complete_tid++) {
+                            unique_lock<mutex> lock(wait_mutex_[complete_tid]);
+                            is_half_done_[complete_tid] = true;
+                            wait_cond_[complete_tid].notify_all();
                         }
                     }
                 }
