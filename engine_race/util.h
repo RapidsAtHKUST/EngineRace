@@ -98,6 +98,8 @@ inline std::string iostat() {
     std::string result;
     std::shared_ptr<FILE> pipe(popen("iostat -d -x -m /dev/nvme0n1 /dev/sda 1 101", "r"), pclose);
     if (!pipe) throw std::runtime_error("popen() failed!");
+    int times = 0;
+    string cached_lines;
     while (!feof(pipe.get())) {
         if (fgets(buffer.data(), 512, pipe.get()) != nullptr) {
             if (memcmp(LINUX_STR, buffer.data(), strlen(LINUX_STR)) == 0 ||
@@ -106,13 +108,19 @@ inline std::string iostat() {
             }
             if (memcmp(DEVICE_STR, buffer.data(), strlen(DEVICE_STR)) == 0 ||
                 memcmp(SPACE_DEVICE_STR, buffer.data(), strlen(SPACE_DEVICE_STR)) == 0) {
-                log_debug("\n%s", result.c_str());
+                if (result.back() != '\n') {
+                    result += '\n';
+                }
+                times++;
+                cached_lines += result;
                 result.clear();
+                if (times % 25 == 0) {
+                    times = 0;
+                    log_debug("\n%s", cached_lines.c_str());
+                    cached_lines.clear();
+                }
             }
             result += buffer.data();
-            if (result.back() != '\n') {
-                result += '\n';
-            }
         }
     }
     return result;
