@@ -23,11 +23,14 @@
 //#define ENABLE_INDEX_FREE
 //#define ENABLE_VALUE_BUFFER_FREE
 #define FLUSH_IN_WRITER_DESTRUCTOR
-
+#define DSTAT_TESTING
 #define STAT_BUCKET_SIZE_THRESHOLD (50000)
+
+#define PERFORMANCE_WRITE (1000000)
 
 namespace polar_race {
     using namespace std;
+    bool is_performance_write_round = false;
 
     atomic_int write_num_threads(-1);
     atomic_int read_num_threads_count(-1);
@@ -109,6 +112,7 @@ namespace polar_race {
             value_file_dp_(nullptr), value_buffer_file_dp_(-1),
             mmap_value_aligned_buffer_(nullptr), mmap_value_aligned_buffer_view_(nullptr),
             bucket_mtx_(nullptr), write_barrier_(WRITE_BARRIER_NUM),
+            wait_mutex_(NUM_THREADS), wait_cond_(NUM_THREADS), is_half_done_(NUM_THREADS, 0),
 #ifdef ENABLE_RAND_READ_CACHE
             read_init_barrier_(NUM_THREADS), preadv_buffers_(nullptr),
 #endif
@@ -246,8 +250,10 @@ namespace polar_race {
         PrintMemFree();
         DstatCorountine();
         IOStatCoroutine();
+        sleep(5);
 #endif
         if (!file_exists(name.c_str())) {
+            is_performance_write_round = true;
             int ret = mkdir(name.c_str(), 0755);
             if (ret != 0) {
                 log_info("Fail to create the target directory %s.", name.c_str());
@@ -392,6 +398,18 @@ namespace polar_race {
             write_barrier_.Wait();
         }
 #endif
+        if (local_block_offset == 0) {
+            if (is_performance_write_round) {
+                if (tid < NUM_THREADS - WRITE_BARRIER_NUM) {
+                    unique_lock<mutex> lock(wait_mutex_[tid]);
+                    if (!is_half_done_[tid]) {
+                        log_info("wait...");
+                        wait_cond_[tid].wait(lock, [this]() { return is_half_done_[tid]; });
+                    }
+                }
+            }
+        }
+
         {
             unique_lock<mutex> lock(bucket_mtx_[bucket_id]);
             // Write value to the value file, with a tmp file as value_buffer.
@@ -433,6 +451,21 @@ namespace polar_race {
                      duration_cast<milliseconds>(last_write_clk.time_since_epoch()).count() / 1000.0);
         }
 #endif
+        if (local_block_offset == PERFORMANCE_WRITE) {
+            if (is_performance_write_round && tid >= WRITE_BARRIER_NUM) {
+                uint32_t vote = tid / WRITE_BARRIER_NUM * WRITE_BARRIER_NUM;
+                if (tid >= vote) {
+                    write_barrier_.Wait();
+                    if (tid == vote) {
+                        for (auto i = vote - (WRITE_BARRIER_NUM); i < vote; i++) {
+                            unique_lock<mutex> lock(wait_mutex_[i]);
+                            is_half_done_[i] = true;
+                            wait_cond_[i].notify_all();
+                        }
+                    }
+                }
+            }
+        }
         return kSucc;
     }
 
@@ -511,7 +544,7 @@ namespace polar_race {
             real_access_[bucket_id]++;
             if (!is_visited_[bucket_id][it->value_offset_]) {
                 is_visited_[bucket_id][it->value_offset_] = true;
-                if (bucket_id == 0) {
+                if (bucket_id == 0 && mmap_meta_cnt_[0] > STAT_BUCKET_SIZE_THRESHOLD) {
                     log_info("Bucket 0 Read Off: %d", it->value_offset_);
                 }
                 if (is_cached_[bucket_id][it->value_offset_] && mmap_meta_cnt_[0] > STAT_BUCKET_SIZE_THRESHOLD) {

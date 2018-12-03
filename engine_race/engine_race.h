@@ -56,7 +56,7 @@
 #define KEEP_REUSE_BUFFER_NUM (3u)
 #define MAX_TOTAL_BUFFER_NUM (MAX_RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
 
-//#define ENABLE_RAND_READ_CACHE
+#define ENABLE_RAND_READ_CACHE
 #ifdef ENABLE_RAND_READ_CACHE
 #define MAX_READ_BUFFER_PER_BUCKET (330000 / BUCKET_NUM)
 #endif
@@ -89,6 +89,10 @@ namespace polar_race {
         // Write.
         mutex *bucket_mtx_;
         Barrier write_barrier_;
+
+        vector<mutex> wait_mutex_;
+        vector<condition_variable> wait_cond_;
+        vector<int > is_half_done_;
 
 #ifdef ENABLE_RAND_READ_CACHE
         // Read Cache Auxiliary.
@@ -143,7 +147,6 @@ namespace polar_race {
         uint32_t queue_depth;
 
         list<iocb *> free_nodes;
-
     public:
         static RetCode Open(const std::string &name, Engine **eptr);
 
