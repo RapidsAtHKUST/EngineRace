@@ -12,6 +12,7 @@
 #include <algorithm>
 
 #include <byteswap.h>
+#include <sys/uio.h>
 
 #include "log.h"
 #include "util.h"
@@ -106,6 +107,7 @@ namespace polar_race {
             value_file_dp_(nullptr), value_buffer_file_dp_(-1),
             mmap_value_aligned_buffer_(nullptr), mmap_value_aligned_buffer_view_(nullptr),
             bucket_mtx_(nullptr), write_barrier_(WRITE_BARRIER_NUM),
+            read_init_barrier_(NUM_THREADS), preadv_buffers_(nullptr),
             aligned_read_buffer_(nullptr), read_barrier_(READ_BARRIER_NUM),
             is_range_init_(false), range_barrier_ptr_(nullptr), polar_keys_(NUM_THREADS),
             total_time_(0), total_io_sleep_time_(0), wait_get_time_(0),
@@ -160,7 +162,7 @@ namespace polar_race {
             }
             ftruncate(value_buffer_file_dp_, tmp_buffer_value_file_size);
             mmap_value_aligned_buffer_ = (char *) mmap(nullptr, tmp_buffer_value_file_size, \
-                        PROT_READ | PROT_WRITE, MAP_SHARED, value_buffer_file_dp_, 0);
+                            PROT_READ | PROT_WRITE, MAP_SHARED, value_buffer_file_dp_, 0);
             for (int i = 0; i < BUCKET_NUM; i++) {
                 mmap_value_aligned_buffer_view_[i] =
                         mmap_value_aligned_buffer_ + VALUE_SIZE * TMP_VALUE_BUFFER_SIZE * i;
@@ -179,7 +181,7 @@ namespace polar_race {
             key_buffer_file_dp_ = open(key_buffers_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
             ftruncate(key_buffer_file_dp_, tmp_buffer_key_file_size);
             mmap_key_aligned_buffer_ = (uint64_t *) mmap(nullptr, tmp_buffer_key_file_size, \
-                        PROT_READ | PROT_WRITE, MAP_SHARED, key_buffer_file_dp_, 0);
+                            PROT_READ | PROT_WRITE, MAP_SHARED, key_buffer_file_dp_, 0);
             for (int i = 0; i < BUCKET_NUM; i++) {
                 mmap_key_aligned_buffer_view_[i] = mmap_key_aligned_buffer_ + TMP_KEY_BUFFER_SIZE * i;
             }
@@ -188,6 +190,10 @@ namespace polar_race {
             meta_cnt_file_dp_ = open(meta_file_path.c_str(), O_RDONLY, FILE_PRIVILEGE);
             mmap_meta_cnt_ = (uint32_t *) mmap(nullptr, sizeof(uint32_t) * (BUCKET_NUM),
                                                PROT_READ, MAP_PRIVATE | MAP_POPULATE, meta_cnt_file_dp_, 0);
+
+            // Random Read Cache Mutex Array.
+            bucket_mtx_ = new mutex[BUCKET_NUM];
+
             // Value.
             for (int i = 0; i < VAL_FILE_NUM; ++i) {
                 string temp_value = value_file_path + to_string(i);
@@ -229,7 +235,7 @@ namespace polar_race {
         printTS(__FUNCTION__, __LINE__, clock_start);
     }
 
-// 1. Open engine
+    // 1. Open engine
     RetCode EngineRace::Open(const std::string &name, Engine **eptr) {
         printTS(__FUNCTION__, __LINE__, clock_start);
 #ifdef DSTAT_TESTING
@@ -317,6 +323,16 @@ namespace polar_race {
         }
 #endif
 
+        // Before Meta. (Read Random Cache Stat)
+        if (!load_hit_stat_.empty()) {
+            log_info("Cache Capacity: %d", MAX_READ_BUFFER_PER_BUCKET);
+            for (uint64_t i = 0; i < load_hit_stat_.size(); i++) {
+                log_info("Load: %d, Hit: %d, All: %d, Duplicates: %d, Real: %d, in Bucket %d",
+                         load_hit_stat_[i].first, load_hit_stat_[i].second,
+                         mmap_meta_cnt_[i], duplicate_access_[i], real_access_[i], i);
+            }
+        }
+
         // Meta.
         if (mmap_meta_cnt_ != nullptr) {
             munmap(mmap_meta_cnt_, sizeof(uint32_t) * (BUCKET_NUM));
@@ -344,6 +360,7 @@ namespace polar_race {
             log_info("Total Range Time: %.9lf s, wait: %.9lf s,  io thread sleep: %.9lf s",
                      total_time_, wait_get_time_, total_io_sleep_time_);
         }
+
 #ifdef DSTAT_TESTING
         PrintMemFree();
 #endif
@@ -351,9 +368,9 @@ namespace polar_race {
         printTS(__FUNCTION__, __LINE__, clock_start);
     }
 
-// 3. Write a key-value pair into engine
+    // 3. Write a key-value pair into engine
     RetCode EngineRace::Write(const PolarString &key, const PolarString &value) {
-        static thread_local uint32_t tid = (uint32_t) (++write_num_threads) % NUM_THREADS;
+        static thread_local uint32_t tid = (uint32_t)(++write_num_threads) % NUM_THREADS;
         static thread_local uint32_t local_block_offset = 0;
         uint64_t key_int_big_endian = bswap_64(TO_UINT64(key.data()));
         uint32_t bucket_id = get_par_bucket_id(key_int_big_endian);
@@ -413,14 +430,43 @@ namespace polar_race {
         return kSucc;
     }
 
-// 4. Read value of a key
+    void EngineRace::InitRandomReadCache(uint32_t tid) {
+        if (tid == 0) {
+            is_visited_.resize(BUCKET_NUM);
+            is_cached_.resize(BUCKET_NUM);
+            read_cache_map_.resize(BUCKET_NUM);
+            free_cache_queue_.resize(BUCKET_NUM);
+            preadv_buffers_ = new char *[BUCKET_NUM];
+            load_hit_stat_.resize(BUCKET_NUM, make_pair(0u, 0u));
+            duplicate_access_.resize(BUCKET_NUM, 0);
+            real_access_.resize(BUCKET_NUM, 0);
+        }
+        read_init_barrier_.Wait();
+        for (uint32_t bucket_id = tid; bucket_id < BUCKET_NUM; bucket_id += NUM_THREADS) {
+            is_cached_[bucket_id] = vector<bool>(mmap_meta_cnt_[bucket_id], false);
+            is_visited_[bucket_id] = vector<bool>(mmap_meta_cnt_[bucket_id], false);
+            for (int i = 0; i < MAX_READ_BUFFER_PER_BUCKET; i++) {
+                free_cache_queue_[bucket_id].emplace(i);
+            }
+            preadv_buffers_[bucket_id] = (char *) memalign(FILESYSTEM_BLOCK_SIZE,
+                                                           VALUE_SIZE * MAX_READ_BUFFER_PER_BUCKET);
+        }
+        read_init_barrier_.Wait();
+    }
+
+    // 4. Read value of a key
     RetCode EngineRace::Read(const PolarString &key, std::string *value) {
         static thread_local int64_t tid = (++read_num_threads_count) % NUM_THREADS;
         static thread_local char *value_buffer = aligned_read_buffer_[tid];
         static thread_local bool is_first_not_found = true;
         static thread_local uint32_t local_block_offset = 0;
+        static thread_local vector<iovec> io_requests(2);
 
         uint64_t big_endian_key_uint = bswap_64(TO_UINT64(key.data()));
+        // Init for Random Read.
+        if (local_block_offset == 0) {
+            InitRandomReadCache(tid);
+        }
 
         KeyEntry tmp{};
         tmp.key_ = big_endian_key_uint;
@@ -443,7 +489,63 @@ namespace polar_race {
         uint32_t fid;
         uint64_t foff;
         std::tie(fid, foff) = get_value_fid_foff(bucket_id, it->value_offset_);
-        pread(value_file_dp_[fid], value_buffer, VALUE_SIZE, foff);
+
+        // Cache Logic Here.
+        {
+            unique_lock<mutex> lock(bucket_mtx_[bucket_id]);
+            real_access_[bucket_id]++;
+            if (!is_visited_[bucket_id][it->value_offset_]) {
+                is_visited_[bucket_id][it->value_offset_] = true;
+                if (bucket_id == 0) {
+                    log_info("Bucket 0 Off: %d", it->value_offset_);
+                }
+                if (is_cached_[bucket_id][it->value_offset_]) {
+                    // Hit
+                    uint16_t buffer_off = read_cache_map_[bucket_id][it->value_offset_];
+                    memcpy(value_buffer, preadv_buffers_[bucket_id] + VALUE_SIZE * buffer_off, VALUE_SIZE);
+                    load_hit_stat_[bucket_id].second++;
+
+                    // Free Cache
+                    read_cache_map_[bucket_id].erase(read_cache_map_[bucket_id].find(it->value_offset_));
+                    free_cache_queue_[bucket_id].push(buffer_off);
+                    if (bucket_id == 0) {
+                        log_info("Bucket 0 Cache Consumption: %d, Free: %d", it->value_offset_,
+                                 free_cache_queue_[bucket_id].size());
+                    }
+                } else {
+                    // Not Hit
+                    if (it->value_offset_ + 1 < mmap_meta_cnt_[bucket_id] &&
+                        !is_cached_[bucket_id][it->value_offset_ + 1] && !free_cache_queue_[bucket_id].empty()) {
+                        if (bucket_id == 0) {
+                            log_info("Bucket 0 Cache Off: %d, Free: %d", it->value_offset_ + 1,
+                                     free_cache_queue_[bucket_id].size());
+                        }
+                        uint16_t buffer_off = free_cache_queue_[bucket_id].front();
+                        free_cache_queue_[bucket_id].pop();
+
+                        // preadv here
+                        io_requests[0].iov_base = value_buffer;
+                        io_requests[0].iov_len = VALUE_SIZE;
+                        io_requests[1].iov_base = preadv_buffers_[bucket_id] + VALUE_SIZE * buffer_off;
+                        io_requests[1].iov_len = VALUE_SIZE;
+
+                        auto ret = preadv(value_file_dp_[fid], &io_requests.front(), 2, foff);
+                        if (ret < VALUE_SIZE * 2) {
+                            log_error("PreadV Err: %d, Err: %s", ret, strerror(errno));
+                        }
+                        read_cache_map_[bucket_id][it->value_offset_ + 1] = buffer_off;
+                        is_cached_[bucket_id][it->value_offset_ + 1] = true;
+
+                        load_hit_stat_[bucket_id].first++;
+                    } else {
+                        pread(value_file_dp_[fid], value_buffer, VALUE_SIZE, foff);
+                    }
+                }
+            } else {
+                duplicate_access_[bucket_id]++;
+                pread(value_file_dp_[fid], value_buffer, VALUE_SIZE, foff);
+            }
+        }
 
         value->assign(value_buffer, VALUE_SIZE);
         return kSucc;
@@ -569,10 +671,8 @@ namespace polar_race {
             value_shared_buffers_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, val_buffer_max_size_);
         }
         // Value Files.
-#ifndef BUSY_WAITING
         bucket_mutex_arr_ = new mutex[BUCKET_NUM];
         bucket_cond_var_arr_ = new condition_variable[BUCKET_NUM];
-#endif
         bucket_is_ready_read_ = new bool[BUCKET_NUM];
         bucket_consumed_num_ = new atomic_int[BUCKET_NUM];
         futures_.resize(BUCKET_NUM);
@@ -586,7 +686,7 @@ namespace polar_race {
                 auto range_clock_beg = high_resolution_clock::now();
                 InitRangeReader();
                 InitAIOContext();
-//                usleep(10000);
+
                 auto range_clock_end = high_resolution_clock::now();
                 double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                                       static_cast<double>(1000000000);
@@ -622,7 +722,6 @@ namespace polar_race {
                 bucket_consumed_num_[next_bucket_idx].store(0);
                 futures_[next_bucket_idx] = range_io_worker_pool_->enqueue(
                         [this, next_bucket_idx]() {
-#ifndef BUSY_WAITING
                             unique_lock<mutex> lock(bucket_mutex_arr_[next_bucket_idx]);
                             if (!bucket_is_ready_read_[next_bucket_idx]) {
                                 auto range_clock_beg = high_resolution_clock::now();
@@ -637,19 +736,6 @@ namespace polar_race {
                                         static_cast<double>(1000000000);
                                 total_io_sleep_time_ += sleep_time;
                             }
-#else
-                            if (!bucket_is_ready_read_[next_bucket_idx]) {
-                                auto range_clock_beg = high_resolution_clock::now();
-
-                                while (!bucket_is_ready_read_[next_bucket_idx]);
-
-                                auto range_clock_end = high_resolution_clock::now();
-                                double sleep_time =
-                                        duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
-                                        static_cast<double>(1000000000);
-                                total_io_sleep_time_ += sleep_time;
-                            }
-#endif
                             ReadBucketToBuffer(next_bucket_idx);
                             return;
                         });
@@ -660,17 +746,17 @@ namespace polar_race {
         range_barrier_ptr_->Wait();
     }
 
-/*
- * NOTICE: Implement 'Range' in quarter-final,
- *         you can skip it in preliminary.
- */
-// 5. Applies the given Vistor::Visit function to the result
-// of every key-value pair in the key range [first, last),
-// in order
-// lower=="" is treated as a key before all keys in the database.
-// upper=="" is treated as a key after all keys in the database.
-// Therefore the following call will traverse the entire database:
-//   Range("", "", visitor)
+    /*
+     * NOTICE: Implement 'Range' in quarter-final,
+     *         you can skip it in preliminary.
+     */
+    // 5. Applies the given Vistor::Visit function to the result
+    // of every key-value pair in the key range [first, last),
+    // in order
+    // lower=="" is treated as a key before all keys in the database.
+    // upper=="" is treated as a key after all keys in the database.
+    // Therefore the following call will traverse the entire database:
+    //   Range("", "", visitor)
     RetCode EngineRace::Range(const PolarString &lower, const PolarString &upper,
                               Visitor &visitor) {
         static thread_local int64_t tid = (++range_num_threads_count) % NUM_THREADS;
@@ -740,16 +826,11 @@ namespace polar_race {
             int32_t my_order = ++bucket_consumed_num_[par_bucket_id];
             if (my_order == total_range_num_threads_) {
                 uint32_t next_bucket_idx = par_bucket_id + MAX_RECYCLE_BUFFER_NUM;
-
                 // Notify
                 if (next_bucket_idx < upper_key_par_id + 1) {
-#ifndef BUSY_WAITING
                     unique_lock<mutex> lock(bucket_mutex_arr_[next_bucket_idx]);
                     bucket_is_ready_read_[next_bucket_idx] = true;
                     bucket_cond_var_arr_[next_bucket_idx].notify_all();
-#else
-                    bucket_is_ready_read_[next_bucket_idx] = true;
-#endif
                 }
             }
         }

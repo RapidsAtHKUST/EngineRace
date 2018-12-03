@@ -7,6 +7,7 @@
 #include <vector>
 #include <atomic>
 #include <list>
+#include <map>
 
 #include <linux/aio_abi.h>
 #include <sys/syscall.h>
@@ -28,7 +29,7 @@
 #define VALUE_SIZE (4096)
 
 // Buckets.
-#define BUCKET_DIGITS (11)      // k-v-buckets must be the same for the range query
+#define BUCKET_DIGITS (10)   // k-v-buckets must be the same for the range query, (assuming >=10 balanced for uint16_t)
 #define BUCKET_NUM (1 << BUCKET_DIGITS)
 
 // Max Bucket Size * BUCKET_NUM.
@@ -51,11 +52,11 @@
 #define KEY_READ_BLOCK_COUNT (8192u)
 // Range.
 #define IO_POOL_SIZE (1u)       // have to be one for aio
-#define MAX_RECYCLE_BUFFER_NUM (5u)
-#define KEEP_REUSE_BUFFER_NUM (6u)
+#define MAX_RECYCLE_BUFFER_NUM (2u)
+#define KEEP_REUSE_BUFFER_NUM (3u)
 #define MAX_TOTAL_BUFFER_NUM (MAX_RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
 
-//#define BUSY_WAITING
+#define MAX_READ_BUFFER_PER_BUCKET (300000 / BUCKET_NUM)
 
 namespace polar_race {
     using namespace std;
@@ -86,9 +87,23 @@ namespace polar_race {
         mutex *bucket_mtx_;
         Barrier write_barrier_;
 
+        // Read Cache Auxiliary.
+        Barrier read_init_barrier_;
+        vector<vector<bool>> is_visited_;
+        // Read Cache.
+        char **preadv_buffers_;
+        vector<vector<bool>> is_cached_;
+        vector<map<uint32_t, uint16_t>> read_cache_map_;
+        vector<queue<uint16_t>> free_cache_queue_;
+        // Read Cache Stat.
+        vector<pair<uint32_t, uint32_t >> load_hit_stat_;
+        vector<uint32_t> duplicate_access_;
+        vector<uint32_t> real_access_;
+
         // Read.
         char **aligned_read_buffer_;
         Barrier read_barrier_;
+
 
         vector<KeyEntry *> index_;
 
@@ -110,13 +125,9 @@ namespace polar_race {
         ThreadPool *range_io_worker_pool_;
 
         // Range Sequential IO.
-#ifndef BUSY_WAITING
         mutex *bucket_mutex_arr_;
         condition_variable *bucket_cond_var_arr_;
         bool *bucket_is_ready_read_;
-#else
-        volatile bool *bucket_is_ready_read_;
-#endif
         atomic_int *bucket_consumed_num_;
         int32_t total_range_num_threads_;
 
@@ -149,6 +160,9 @@ namespace polar_race {
         RetCode Range(const PolarString &lower,
                       const PolarString &upper,
                       Visitor &visitor) override;
+
+    private:
+        void InitRandomReadCache(uint32_t tid);
 
     private:
         void InitRangeReader();
