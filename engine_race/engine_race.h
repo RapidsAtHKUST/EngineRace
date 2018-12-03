@@ -35,11 +35,11 @@
 // Max Bucket Size * BUCKET_NUM.
 #define MAX_TOTAL_SIZE (68 * 1024 * 1024)
 
-#define KEY_FILE_DIGITS (6)     // must make sure same bucket in the same file
+#define KEY_FILE_DIGITS (5)     // must make sure same bucket in the same file
 #define KEY_FILE_NUM (1 << KEY_FILE_DIGITS)
 #define MAX_KEY_BUCKET_SIZE (MAX_TOTAL_SIZE / BUCKET_NUM / FILESYSTEM_BLOCK_SIZE * FILESYSTEM_BLOCK_SIZE)
 
-#define VAL_FILE_DIGITS (6)
+#define VAL_FILE_DIGITS (KEY_FILE_DIGITS)
 #define VAL_FILE_NUM (1 << VAL_FILE_DIGITS)  // must make sure same bucket in the same file
 #define MAX_VAL_BUCKET_SIZE (MAX_TOTAL_SIZE / BUCKET_NUM / FILESYSTEM_BLOCK_SIZE * FILESYSTEM_BLOCK_SIZE)
 
@@ -75,6 +75,7 @@ namespace polar_race {
     public:
         int meta_cnt_file_dp_;
         uint32_t *mmap_meta_cnt_;
+        uint32_t *mmap_meta_val_not_flushed_cnt_;
 
         int *key_file_dp_;
         int key_buffer_file_dp_;
@@ -89,6 +90,9 @@ namespace polar_race {
         // Write.
         mutex *bucket_mtx_;
         Barrier write_barrier_;
+
+        vector<queue<future<void>>> value_write_futures_;
+        vector<ThreadPool *> value_writer_io_ptr_pool_;
 
 #ifdef ENABLE_RAND_READ_CACHE
         // Read Cache Auxiliary.

@@ -133,12 +133,20 @@ namespace polar_race {
         mmap_value_aligned_buffer_view_ = new char *[BUCKET_NUM];
 
         if (!file_exists(meta_file_path.c_str())) {
+            // Value Writer Thread Pool.
+            value_write_futures_ = vector<queue<future<void>>>(BUCKET_NUM);
+            value_writer_io_ptr_pool_ = vector<ThreadPool *>(VAL_FILE_NUM, nullptr);
+            for (int i = 0; i < VAL_FILE_NUM; i++) {
+                value_writer_io_ptr_pool_[i] = new ThreadPool(1);
+            }
+
             // Meta.
             meta_cnt_file_dp_ = open(meta_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
-            ftruncate(meta_cnt_file_dp_, sizeof(uint32_t) * BUCKET_NUM);
-            mmap_meta_cnt_ = (uint32_t *) mmap(nullptr, sizeof(uint32_t) * (BUCKET_NUM),
+            ftruncate(meta_cnt_file_dp_, sizeof(uint32_t) * BUCKET_NUM * 2);
+            mmap_meta_cnt_ = (uint32_t *) mmap(nullptr, sizeof(uint32_t) * (BUCKET_NUM) * 2,
                                                PROT_READ | PROT_WRITE, MAP_SHARED, meta_cnt_file_dp_, 0);
-            memset(mmap_meta_cnt_, 0, sizeof(uint32_t) * (BUCKET_NUM));
+            memset(mmap_meta_cnt_, 0, sizeof(uint32_t) * (BUCKET_NUM) * 2);
+            mmap_meta_val_not_flushed_cnt_ = mmap_meta_cnt_ + BUCKET_NUM;
 
             // Write Mutex Array.
             bucket_mtx_ = new mutex[BUCKET_NUM];
@@ -190,8 +198,9 @@ namespace polar_race {
         } else {
             // Meta.
             meta_cnt_file_dp_ = open(meta_file_path.c_str(), O_RDONLY, FILE_PRIVILEGE);
-            mmap_meta_cnt_ = (uint32_t *) mmap(nullptr, sizeof(uint32_t) * (BUCKET_NUM),
+            mmap_meta_cnt_ = (uint32_t *) mmap(nullptr, sizeof(uint32_t) * (BUCKET_NUM) * 2,
                                                PROT_READ, MAP_PRIVATE | MAP_POPULATE, meta_cnt_file_dp_, 0);
+            mmap_meta_val_not_flushed_cnt_ = mmap_meta_cnt_ + BUCKET_NUM;
 
 #ifdef ENABLE_RAND_READ_CACHE
             // Random Read Cache Mutex Array.
@@ -276,6 +285,17 @@ namespace polar_race {
         // Flush If Writer Reach Here.
 #ifdef FLUSH_IN_WRITER_DESTRUCTOR
         if (index_.empty()) {
+            printTS(__FUNCTION__, __LINE__, clock_start);
+            // Submitted But Not Finished.
+            for (uint32_t bucked_id = 0; bucked_id < BUCKET_NUM; bucked_id++) {
+                if (!value_write_futures_[bucked_id].empty()) {
+                    value_write_futures_[bucked_id].front().get();
+                }
+            }
+            for (int i = 0; i < VAL_FILE_NUM; i++) {
+                delete value_writer_io_ptr_pool_[i];
+            }
+            // Not Submitted.
             printTS(__FUNCTION__, __LINE__, clock_start);
             ParallelFlushTmp(key_file_dp_, value_file_dp_);
             printTS(__FUNCTION__, __LINE__, clock_start);
@@ -362,6 +382,8 @@ namespace polar_race {
         printTS(__FUNCTION__, __LINE__, clock_start);
 #endif
         delete range_io_worker_pool_;
+
+
         if (total_time_ != 0) {
             log_info("Total Range Time: %.9lf s, wait: %.9lf s,  io thread sleep: %.9lf s",
                      total_time_, wait_get_time_, total_io_sleep_time_);
@@ -376,7 +398,7 @@ namespace polar_race {
 
     // 3. Write a key-value pair into engine
     RetCode EngineRace::Write(const PolarString &key, const PolarString &value) {
-        static thread_local uint32_t tid = (uint32_t)(++write_num_threads) % NUM_THREADS;
+        static thread_local uint32_t tid = (uint32_t) (++write_num_threads) % NUM_THREADS;
         static thread_local uint32_t local_block_offset = 0;
         uint64_t key_int_big_endian = bswap_64(TO_UINT64(key.data()));
         uint32_t bucket_id = get_par_bucket_id(key_int_big_endian);
@@ -397,7 +419,14 @@ namespace polar_race {
             // Write value to the value file, with a tmp file as value_buffer.
             uint32_t val_buffer_offset = (mmap_meta_cnt_[bucket_id] % TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
             char *value_buffer = mmap_value_aligned_buffer_view_[bucket_id];
+
+            if (!value_write_futures_[bucket_id].empty()) {
+                value_write_futures_[bucket_id].front().get();
+                value_write_futures_[bucket_id].pop();
+                mmap_meta_val_not_flushed_cnt_[bucket_id] = 0;
+            }
             memcpy(value_buffer + val_buffer_offset, value.data(), VALUE_SIZE);
+            mmap_meta_val_not_flushed_cnt_[bucket_id]++;
 
             // Write value to the value file.
             if ((mmap_meta_cnt_[bucket_id] + 1) % TMP_VALUE_BUFFER_SIZE == 0) {
@@ -405,7 +434,11 @@ namespace polar_race {
                 uint32_t fid;
                 uint64_t foff;
                 tie(fid, foff) = get_value_fid_foff(bucket_id, in_bucket_id);
-                pwrite(value_file_dp_[fid], value_buffer, VALUE_SIZE * TMP_VALUE_BUFFER_SIZE, foff);
+
+                value_write_futures_[bucket_id].push(
+                        value_writer_io_ptr_pool_[fid]->enqueue([this, fid, foff, value_buffer]() {
+                            pwrite(value_file_dp_[fid], value_buffer, VALUE_SIZE * TMP_VALUE_BUFFER_SIZE, foff);
+                        }));
             }
 
             // Write key to the key file.
@@ -858,14 +891,13 @@ namespace polar_race {
                 for (uint32_t bucket_id = tid; bucket_id < BUCKET_NUM; bucket_id += NUM_FLUSH_TMP_THREADS) {
                     mmap_value_aligned_buffer_view_[bucket_id] =
                             mmap_value_aligned_buffer_ + VALUE_SIZE * TMP_VALUE_BUFFER_SIZE * bucket_id;
-                    if (mmap_meta_cnt_[bucket_id] % TMP_VALUE_BUFFER_SIZE != 0) {
+                    if (mmap_meta_val_not_flushed_cnt_[bucket_id] != 0) {
                         uint32_t fid;
                         uint64_t foff;
-                        uint32_t in_bucked_off = mmap_meta_cnt_[bucket_id] / TMP_VALUE_BUFFER_SIZE *
-                                                 TMP_VALUE_BUFFER_SIZE;
+                        uint32_t in_bucked_off = mmap_meta_cnt_[bucket_id] - mmap_meta_val_not_flushed_cnt_[bucket_id];
                         tie(fid, foff) = get_value_fid_foff(bucket_id, in_bucked_off);
 
-                        size_t write_length = (mmap_meta_cnt_[bucket_id] % TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
+                        size_t write_length = (mmap_meta_val_not_flushed_cnt_[bucket_id]) * VALUE_SIZE;
                         pwrite(val_fds[fid], mmap_value_aligned_buffer_view_[bucket_id], write_length, foff);
                     }
                 }
