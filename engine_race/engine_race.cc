@@ -24,6 +24,8 @@
 //#define ENABLE_VALUE_BUFFER_FREE
 #define FLUSH_IN_WRITER_DESTRUCTOR
 
+#define STAT_BUCKET_SIZE_THRESHOLD (50000)
+
 namespace polar_race {
     using namespace std;
 
@@ -324,7 +326,7 @@ namespace polar_race {
 #endif
 
         // Before Meta. (Read Random Cache Stat)
-        if (!load_hit_stat_.empty()) {
+        if (!load_hit_stat_.empty() && mmap_meta_cnt_[0] > STAT_BUCKET_SIZE_THRESHOLD) {
             log_info("Cache Capacity: %d", MAX_READ_BUFFER_PER_BUCKET);
             for (uint64_t i = 0; i < load_hit_stat_.size(); i++) {
                 log_info("Load: %d, Hit: %d, All: %d, Duplicates: %d, Real: %d, in Bucket %d",
@@ -497,7 +499,7 @@ namespace polar_race {
             if (!is_visited_[bucket_id][it->value_offset_]) {
                 is_visited_[bucket_id][it->value_offset_] = true;
                 if (bucket_id == 0) {
-                    log_info("Bucket 0 Off: %d", it->value_offset_);
+                    log_info("Bucket 0 Read Off: %d", it->value_offset_);
                 }
                 if (is_cached_[bucket_id][it->value_offset_]) {
                     // Hit
@@ -508,16 +510,16 @@ namespace polar_race {
                     // Free Cache
                     read_cache_map_[bucket_id].erase(read_cache_map_[bucket_id].find(it->value_offset_));
                     free_cache_queue_[bucket_id].push(buffer_off);
-                    if (bucket_id == 0) {
+                    if (bucket_id == 0 && mmap_meta_cnt_[0] > STAT_BUCKET_SIZE_THRESHOLD) {
                         log_info("Bucket 0 Cache Consumption: %d, Free: %d", it->value_offset_,
                                  free_cache_queue_[bucket_id].size());
                     }
                 } else {
                     // Not Hit
                     if (it->value_offset_ + 1 < mmap_meta_cnt_[bucket_id] &&
-                        !is_cached_[bucket_id][it->value_offset_ + 1] && !free_cache_queue_[bucket_id].empty()) {
-                        if (bucket_id == 0) {
-                            log_info("Bucket 0 Cache Off: %d, Free: %d", it->value_offset_ + 1,
+                        !is_visited_[bucket_id][it->value_offset_ + 1] && !free_cache_queue_[bucket_id].empty()) {
+                        if (bucket_id == 0 && mmap_meta_cnt_[0] > STAT_BUCKET_SIZE_THRESHOLD) {
+                            log_info("Bucket 0 Cache Load Off: %d, Free: %d", it->value_offset_ + 1,
                                      free_cache_queue_[bucket_id].size());
                         }
                         uint16_t buffer_off = free_cache_queue_[bucket_id].front();
@@ -538,6 +540,12 @@ namespace polar_race {
 
                         load_hit_stat_[bucket_id].first++;
                     } else {
+                        if (bucket_id == 0 && mmap_meta_cnt_[0] > STAT_BUCKET_SIZE_THRESHOLD) {
+                            log_info("Bucket 0 Status: Off(%d/%d), IsVisited(%d), Size(%d)", it->value_offset_ + 1,
+                                     mmap_meta_cnt_[bucket_id],
+                                     is_visited_[bucket_id][it->value_offset_ + 1] ? 1 : 0,
+                                     free_cache_queue_[bucket_id].size());
+                        }
                         pread(value_file_dp_[fid], value_buffer, VALUE_SIZE, foff);
                     }
                 }
