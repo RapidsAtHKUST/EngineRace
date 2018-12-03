@@ -562,7 +562,7 @@ namespace polar_race {
                     }
                 } else {
                     // Not Hit
-                    if (it->value_offset_ + 1 < mmap_meta_cnt_[bucket_id] &&
+                    if (it->value_offset_ + 1 < mmap_meta_cnt_[bucket_id] / 2 &&
                         !is_visited_[bucket_id][it->value_offset_ + 1] && !free_cache_queue_[bucket_id].empty()) {
                         if (bucket_id == 0 && mmap_meta_cnt_[0] > STAT_BUCKET_SIZE_THRESHOLD) {
                             log_info("Bucket 0 Cache Load Off: %d, Free: %d", it->value_offset_ + 1,
