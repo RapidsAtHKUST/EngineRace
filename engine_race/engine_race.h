@@ -56,7 +56,10 @@
 #define KEEP_REUSE_BUFFER_NUM (3u)
 #define MAX_TOTAL_BUFFER_NUM (MAX_RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
 
+#define ENABLE_RAND_READ_CACHE
+#ifdef ENABLE_RAND_READ_CACHE
 #define MAX_READ_BUFFER_PER_BUCKET (330000 / BUCKET_NUM)
+#endif
 
 namespace polar_race {
     using namespace std;
@@ -87,6 +90,7 @@ namespace polar_race {
         mutex *bucket_mtx_;
         Barrier write_barrier_;
 
+#ifdef ENABLE_RAND_READ_CACHE
         // Read Cache Auxiliary.
         Barrier read_init_barrier_;
         vector<vector<bool>> is_visited_;
@@ -99,11 +103,11 @@ namespace polar_race {
         vector<pair<uint32_t, uint32_t >> load_hit_stat_;
         vector<uint32_t> duplicate_access_;
         vector<uint32_t> real_access_;
+#endif
 
         // Read.
         char **aligned_read_buffer_;
         Barrier read_barrier_;
-
 
         vector<KeyEntry *> index_;
 
@@ -161,8 +165,11 @@ namespace polar_race {
                       const PolarString &upper,
                       Visitor &visitor) override;
 
+#ifdef ENABLE_RAND_READ_CACHE
     private:
         void InitRandomReadCache(uint32_t tid);
+
+#endif
 
     private:
         void InitRangeReader();

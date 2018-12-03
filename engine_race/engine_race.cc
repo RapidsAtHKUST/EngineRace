@@ -109,14 +109,14 @@ namespace polar_race {
             value_file_dp_(nullptr), value_buffer_file_dp_(-1),
             mmap_value_aligned_buffer_(nullptr), mmap_value_aligned_buffer_view_(nullptr),
             bucket_mtx_(nullptr), write_barrier_(WRITE_BARRIER_NUM),
+#ifdef ENABLE_RAND_READ_CACHE
             read_init_barrier_(NUM_THREADS), preadv_buffers_(nullptr),
+#endif
             aligned_read_buffer_(nullptr), read_barrier_(READ_BARRIER_NUM),
             is_range_init_(false), range_barrier_ptr_(nullptr), polar_keys_(NUM_THREADS),
             total_time_(0), total_io_sleep_time_(0), wait_get_time_(0),
             val_buffer_max_size_(0), range_io_worker_pool_(nullptr),
-#ifndef BUSY_WAITING
             bucket_mutex_arr_(nullptr), bucket_cond_var_arr_(nullptr),
-#endif
             bucket_is_ready_read_(nullptr), bucket_consumed_num_(nullptr), total_range_num_threads_(0) {
         printTS(__FUNCTION__, __LINE__, clock_start);
 
@@ -193,8 +193,10 @@ namespace polar_race {
             mmap_meta_cnt_ = (uint32_t *) mmap(nullptr, sizeof(uint32_t) * (BUCKET_NUM),
                                                PROT_READ, MAP_PRIVATE | MAP_POPULATE, meta_cnt_file_dp_, 0);
 
+#ifdef ENABLE_RAND_READ_CACHE
             // Random Read Cache Mutex Array.
             bucket_mtx_ = new mutex[BUCKET_NUM];
+#endif
 
             // Value.
             for (int i = 0; i < VAL_FILE_NUM; ++i) {
@@ -325,6 +327,7 @@ namespace polar_race {
         }
 #endif
 
+#ifdef ENABLE_RAND_READ_CACHE
         // Before Meta. (Read Random Cache Stat)
         if (!load_hit_stat_.empty() && mmap_meta_cnt_[0] > STAT_BUCKET_SIZE_THRESHOLD) {
             log_info("Cache Capacity: %d", MAX_READ_BUFFER_PER_BUCKET);
@@ -334,6 +337,7 @@ namespace polar_race {
                          mmap_meta_cnt_[i], duplicate_access_[i], real_access_[i], i);
             }
         }
+#endif
 
         // Meta.
         if (mmap_meta_cnt_ != nullptr) {
@@ -432,6 +436,8 @@ namespace polar_race {
         return kSucc;
     }
 
+#ifdef ENABLE_RAND_READ_CACHE
+
     void EngineRace::InitRandomReadCache(uint32_t tid) {
         if (tid == 0) {
             is_visited_.resize(BUCKET_NUM);
@@ -456,19 +462,25 @@ namespace polar_race {
         read_init_barrier_.Wait();
     }
 
+#endif
+
     // 4. Read value of a key
     RetCode EngineRace::Read(const PolarString &key, std::string *value) {
         static thread_local int64_t tid = (++read_num_threads_count) % NUM_THREADS;
         static thread_local char *value_buffer = aligned_read_buffer_[tid];
         static thread_local bool is_first_not_found = true;
         static thread_local uint32_t local_block_offset = 0;
+#ifdef ENABLE_RAND_READ_CACHE
         static thread_local vector<iovec> io_requests(2);
-
+#endif
         uint64_t big_endian_key_uint = bswap_64(TO_UINT64(key.data()));
+
+#ifdef ENABLE_RAND_READ_CACHE
         // Init for Random Read.
         if (local_block_offset == 0) {
             InitRandomReadCache(tid);
         }
+#endif
 
         KeyEntry tmp{};
         tmp.key_ = big_endian_key_uint;
@@ -493,6 +505,7 @@ namespace polar_race {
         std::tie(fid, foff) = get_value_fid_foff(bucket_id, it->value_offset_);
 
         // Cache Logic Here.
+#ifdef ENABLE_RAND_READ_CACHE
         {
             unique_lock<mutex> lock(bucket_mtx_[bucket_id]);
             real_access_[bucket_id]++;
@@ -501,7 +514,7 @@ namespace polar_race {
                 if (bucket_id == 0) {
                     log_info("Bucket 0 Read Off: %d", it->value_offset_);
                 }
-                if (is_cached_[bucket_id][it->value_offset_]) {
+                if (is_cached_[bucket_id][it->value_offset_] && mmap_meta_cnt_[0] > STAT_BUCKET_SIZE_THRESHOLD) {
                     // Hit
                     uint16_t buffer_off = read_cache_map_[bucket_id][it->value_offset_];
                     memcpy(value_buffer, preadv_buffers_[bucket_id] + VALUE_SIZE * buffer_off, VALUE_SIZE);
@@ -554,6 +567,9 @@ namespace polar_race {
                 pread(value_file_dp_[fid], value_buffer, VALUE_SIZE, foff);
             }
         }
+#else
+        pread(value_file_dp_[fid], value_buffer, VALUE_SIZE, foff);
+#endif
 
         value->assign(value_buffer, VALUE_SIZE);
         return kSucc;
