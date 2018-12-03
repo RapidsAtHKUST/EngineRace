@@ -96,7 +96,7 @@ inline void DstatCorountine() {
 inline std::string iostat() {
     std::array<char, 512> buffer;
     std::string result;
-    std::shared_ptr<FILE> pipe(popen("iostat -d -x -k /dev/nvme0n1 /dev/sda 1 101", "r"), pclose);
+    std::shared_ptr<FILE> pipe(popen("iostat -d -x -m /dev/nvme0n1 /dev/sda 1 101", "r"), pclose);
     if (!pipe) throw std::runtime_error("popen() failed!");
     while (!feof(pipe.get())) {
         if (fgets(buffer.data(), 512, pipe.get()) != nullptr) {

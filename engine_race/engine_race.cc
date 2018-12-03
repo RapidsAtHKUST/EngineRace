@@ -23,9 +23,10 @@
 //#define ENABLE_INDEX_FREE
 //#define ENABLE_VALUE_BUFFER_FREE
 #define FLUSH_IN_WRITER_DESTRUCTOR
-//#define DSTAT_TESTING
+#define DSTAT_TESTING
 #define STAT_BUCKET_SIZE_THRESHOLD (50000)
 
+//#define PERFORMANCE_WRITE (255)
 #define PERFORMANCE_WRITE (1000000)
 
 namespace polar_race {
@@ -404,9 +405,10 @@ namespace polar_race {
                 if (complete_tid < NUM_THREADS - WRITE_BARRIER_NUM) {
                     unique_lock<mutex> lock(wait_mutex_[complete_tid]);
                     if (!is_half_done_[complete_tid]) {
-                        log_info("wait...");
+                        log_info("wait...%d, %d", tid, complete_tid);
                         wait_cond_[complete_tid].wait(lock,
                                                       [this, complete_tid]() { return is_half_done_[complete_tid]; });
+                        log_info("awake...%d, %d", tid, complete_tid);
                     }
                 }
             }
