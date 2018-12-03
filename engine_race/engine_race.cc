@@ -26,7 +26,7 @@
 //#define DSTAT_TESTING
 #define STAT_BUCKET_SIZE_THRESHOLD (50000)
 
-#define PERFORMANCE_WRITE (255)
+#define PERFORMANCE_WRITE (1000000)
 
 namespace polar_race {
     using namespace std;
