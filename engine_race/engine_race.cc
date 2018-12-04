@@ -571,7 +571,8 @@ namespace polar_race {
         log_info("Max Buffer Size: %zu B", val_buffer_max_size_);
         value_shared_buffers_ = vector<char *>(MAX_TOTAL_BUFFER_NUM);
         for (uint32_t i = 0; i < MAX_TOTAL_BUFFER_NUM; i++) {
-            value_shared_buffers_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, val_buffer_max_size_);
+            value_shared_buffers_[i] = (char *) mmap(nullptr, val_buffer_max_size_, PROT_READ | PROT_WRITE,
+                                                     MAP_ANONYMOUS | MAP_PRIVATE | MAP_POPULATE, -1, 0);
         }
         // Value Files.
         bucket_mutex_arr_ = new mutex[BUCKET_NUM];
