@@ -574,7 +574,7 @@ namespace polar_race {
         std::tie(fid, foff) = get_value_fid_foff(bucket_id, 0);
 
         // Replace with AIO.
-        uint32_t value_agg_num = 512;
+        uint32_t value_agg_num = 1024;
         uint32_t value_num = mmap_meta_cnt_[bucket_id];
         uint32_t remain_value_num = value_num % value_agg_num;
         uint32_t total_block_num = (remain_value_num == 0 ? (value_num / value_agg_num) :
@@ -660,7 +660,7 @@ namespace polar_race {
     void EngineRace::InitAIOContext() {
         // AIO
         // Init aio context.
-        queue_depth = 8;
+        queue_depth = 1;
         aio_ctx_tls_ = vector<aio_context_t>(IO_POOL_SIZE, 0);
         iocb_ptrs_tls_ = vector<iocb **>(IO_POOL_SIZE, nullptr);
         iocbs_tls_ = vector<iocb *>(IO_POOL_SIZE, nullptr);
