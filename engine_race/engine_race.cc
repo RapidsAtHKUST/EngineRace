@@ -574,7 +574,7 @@ namespace polar_race {
         std::tie(fid, foff) = get_value_fid_foff(bucket_id, 0);
 
         // Replace with AIO.
-        uint32_t value_agg_num = 1024;
+        uint32_t value_agg_num = 32;
         uint32_t value_num = mmap_meta_cnt_[bucket_id];
         uint32_t remain_value_num = value_num % value_agg_num;
         uint32_t total_block_num = (remain_value_num == 0 ? (value_num / value_agg_num) :
@@ -648,25 +648,22 @@ namespace polar_race {
         double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                               static_cast<double>(1000000000);
         total_time_ += elapsed_time;
-//#ifdef STAT
-//        if (bucket_id % 64 == 63)
-        log_info("Tid: %d, In bucket %d, Read time %.9lf s", tid, bucket_id, elapsed_time);
-//#endif
+#ifdef STAT
+        log_info("In bucket %d, Read time %.9lf s", bucket_id, elapsed_time);
+#endif
         if (bucket_id == BUCKET_NUM - 1) {
             printTS(__FUNCTION__, __LINE__, clock_start);
         }
     }
 
     void EngineRace::InitAIOContext() {
-        // AIO
-        // Init aio context.
-        queue_depth = 1;
+        queue_depth = 32;
         aio_ctx_tls_ = vector<aio_context_t>(IO_POOL_SIZE, 0);
         iocb_ptrs_tls_ = vector<iocb **>(IO_POOL_SIZE, nullptr);
         iocbs_tls_ = vector<iocb *>(IO_POOL_SIZE, nullptr);
         io_events_tls_ = vector<io_event *>(IO_POOL_SIZE, nullptr);
         free_nodes_tls_ = vector<list<iocb *>>(IO_POOL_SIZE);
-        for (int tid = 0; tid < IO_POOL_SIZE; tid++) {
+        for (uint32_t tid = 0; tid < IO_POOL_SIZE; tid++) {
             iocb_ptrs_tls_[tid] = new iocb *[queue_depth];
             iocbs_tls_[tid] = new iocb[queue_depth];
             io_events_tls_[tid] = new io_event[queue_depth];
@@ -848,6 +845,12 @@ namespace polar_race {
                                              VALUE_SIZE);
                 // Visit Key/Value.
                 visitor.Visit(*polar_key_ptr_, polar_val_ptr_);
+
+                // 4MB barrier
+                local_block_offset++;
+                if (local_block_offset % 1000 == 0) {
+                    range_barrier_ptr_->Wait();
+                }
             }
             // End of inner loop, Submit IO Jobs.
             int32_t my_order = ++bucket_consumed_num_[par_bucket_id];
