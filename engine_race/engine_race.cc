@@ -379,7 +379,7 @@ namespace polar_race {
 
     // 3. Write a key-value pair into engine
     RetCode EngineRace::Write(const PolarString &key, const PolarString &value) {
-        static thread_local uint32_t tid = (uint32_t) (++write_num_threads) % NUM_THREADS;
+        static thread_local uint32_t tid = (uint32_t)(++write_num_threads) % NUM_THREADS;
         static thread_local uint32_t local_block_offset = 0;
         uint64_t key_int_big_endian = bswap_64(TO_UINT64(key.data()));
         uint32_t bucket_id = get_par_bucket_id(key_int_big_endian);
@@ -748,6 +748,16 @@ namespace polar_race {
                 }
             }
         }
+
+        if (is_first && tid < MAX_TOTAL_BUFFER_NUM) {
+            // Really populate the physical memory.
+            log_info("Tid: %d, Load Physical Mem %d", tid, tid);
+            for (uint32_t off = 0; off < val_buffer_max_size_; off += FILESYSTEM_BLOCK_SIZE) {
+                value_shared_buffers_[tid][off] = -1;
+            }
+            log_info("Tid: %d, Load Physical Mem Finish %d", tid, tid);
+        }
+        range_barrier_ptr_->Wait();
 
         // Submit All IO Jobs.
         if (tid == 0) {
