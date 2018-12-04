@@ -20,12 +20,7 @@
 
 #define STAT
 #define DSTAT_TESTING
-//#define ENABLE_WRITE_BARRIER
-//#define ENABLE_INDEX_FREE
-//#define ENABLE_VALUE_BUFFER_FREE
 #define FLUSH_IN_WRITER_DESTRUCTOR
-
-#define STAT_BUCKET_SIZE_THRESHOLD (50000)
 
 namespace polar_race {
     using namespace std;
@@ -70,6 +65,7 @@ namespace polar_race {
     }
 
     inline pair<uint32_t, uint64_t> get_key_fid_foff(uint32_t bucket_id, uint32_t bucket_off) {
+        // Buckets 0,1,2,3... grouped together.
         constexpr uint32_t BUCKET_NUM_PER_FILE = (BUCKET_NUM / KEY_FILE_NUM);
         uint32_t fid = bucket_id / BUCKET_NUM_PER_FILE;
         uint64_t foff = MAX_KEY_BUCKET_SIZE * (bucket_id % BUCKET_NUM_PER_FILE) + bucket_off;
@@ -101,7 +97,7 @@ namespace polar_race {
 
     Engine::~Engine() = default;
 
-    /*
+/*
  * Complete the functions below to implement you own engine
  */
     EngineRace::EngineRace(const std::string &dir) :
@@ -110,9 +106,6 @@ namespace polar_race {
             value_file_dp_(nullptr), value_buffer_file_dp_(-1),
             mmap_value_aligned_buffer_(nullptr), mmap_value_aligned_buffer_view_(nullptr),
             bucket_mtx_(nullptr), write_barrier_(WRITE_BARRIER_NUM),
-#ifdef ENABLE_RAND_READ_CACHE
-            read_init_barrier_(NUM_THREADS), preadv_buffers_(nullptr),
-#endif
             aligned_read_buffer_(nullptr), read_barrier_(READ_BARRIER_NUM),
             is_range_init_(false), range_barrier_ptr_(nullptr), polar_keys_(NUM_THREADS),
             total_time_(0), total_io_sleep_time_(0), wait_get_time_(0),
@@ -203,11 +196,6 @@ namespace polar_race {
                                                PROT_READ, MAP_PRIVATE | MAP_POPULATE, meta_cnt_file_dp_, 0);
             mmap_meta_val_not_flushed_cnt_ = mmap_meta_cnt_ + BUCKET_NUM;
 
-#ifdef ENABLE_RAND_READ_CACHE
-            // Random Read Cache Mutex Array.
-            bucket_mtx_ = new mutex[BUCKET_NUM];
-#endif
-
             // Value.
             for (int i = 0; i < VAL_FILE_NUM; ++i) {
                 string temp_value = value_file_path + to_string(i);
@@ -272,9 +260,6 @@ namespace polar_race {
 
     EngineRace::~EngineRace() {
         printTS(__FUNCTION__, __LINE__, clock_start);
-#ifdef DSTAT_TESTING
-        PrintMemFree();
-#endif
         // Thread.
         for (uint32_t i = 0; i < NUM_THREADS; ++i) {
             if (aligned_read_buffer_ != nullptr) {
@@ -337,29 +322,6 @@ namespace polar_race {
         }
         delete[] value_file_dp_;
 
-        // Free indices.
-#ifdef ENABLE_INDEX_FREE
-        if (!index_.empty()) {
-            printTS(__FUNCTION__, __LINE__, clock_start);
-            for (uint32_t bucket_id = 0; bucket_id < BUCKET_NUM; bucket_id++) {
-                free(index_[bucket_id]);
-            }
-            printTS(__FUNCTION__, __LINE__, clock_start);
-        }
-#endif
-
-#ifdef ENABLE_RAND_READ_CACHE
-        // Before Meta. (Read Random Cache Stat)
-        if (!load_hit_stat_.empty() && mmap_meta_cnt_[0] > STAT_BUCKET_SIZE_THRESHOLD) {
-            log_info("Cache Capacity: %d", MAX_READ_BUFFER_PER_BUCKET);
-            for (uint64_t i = 0; i < load_hit_stat_.size(); i++) {
-                log_info("Load: %d, Hit: %d, All: %d, Duplicates: %d, Real: %d, in Bucket %d",
-                         load_hit_stat_[i].first, load_hit_stat_[i].second,
-                         mmap_meta_cnt_[i], duplicate_access_[i], real_access_[i], i);
-            }
-        }
-#endif
-
         // Meta.
         if (mmap_meta_cnt_ != nullptr) {
             munmap(mmap_meta_cnt_, sizeof(uint32_t) * (BUCKET_NUM));
@@ -375,24 +337,13 @@ namespace polar_race {
             }
         }
         delete range_barrier_ptr_;
-#ifdef EANBLE_VALUE_BUFFER_FREE
-        printTS(__FUNCTION__, __LINE__, clock_start);
-        for (char *ptr: value_shared_buffers_) {
-            free(ptr);
-        }
-        printTS(__FUNCTION__, __LINE__, clock_start);
-#endif
         delete range_io_worker_pool_;
-
 
         if (total_time_ != 0) {
             log_info("Total Range Time: %.9lf s, wait: %.9lf s,  io thread sleep: %.9lf s",
                      total_time_, wait_get_time_, total_io_sleep_time_);
         }
 
-#ifdef DSTAT_TESTING
-        PrintMemFree();
-#endif
         clock_end = high_resolution_clock::now();
         printTS(__FUNCTION__, __LINE__, clock_start);
     }
@@ -408,11 +359,6 @@ namespace polar_race {
         static thread_local std::chrono::time_point<std::chrono::high_resolution_clock> last_write_clk;
         if (local_block_offset == 0) {
             first_write_clk = high_resolution_clock::now();
-        }
-#endif
-#ifdef ENABLE_WRITE_BARRIER
-        if (local_block_offset % 100000 == 0 && local_block_offset < 1000000 && tid < WRITE_BARRIER_NUM) {
-            write_barrier_.Wait();
         }
 #endif
         {
@@ -470,51 +416,13 @@ namespace polar_race {
         return kSucc;
     }
 
-#ifdef ENABLE_RAND_READ_CACHE
-
-    void EngineRace::InitRandomReadCache(uint32_t tid) {
-        if (tid == 0) {
-            is_visited_.resize(BUCKET_NUM);
-            is_cached_.resize(BUCKET_NUM);
-            read_cache_map_.resize(BUCKET_NUM);
-            free_cache_queue_.resize(BUCKET_NUM);
-            preadv_buffers_ = new char *[BUCKET_NUM];
-            load_hit_stat_.resize(BUCKET_NUM, make_pair(0u, 0u));
-            duplicate_access_.resize(BUCKET_NUM, 0);
-            real_access_.resize(BUCKET_NUM, 0);
-        }
-        read_init_barrier_.Wait();
-        for (uint32_t bucket_id = tid; bucket_id < BUCKET_NUM; bucket_id += NUM_THREADS) {
-            is_cached_[bucket_id] = vector<bool>(mmap_meta_cnt_[bucket_id], false);
-            is_visited_[bucket_id] = vector<bool>(mmap_meta_cnt_[bucket_id], false);
-            for (int i = 0; i < MAX_READ_BUFFER_PER_BUCKET; i++) {
-                free_cache_queue_[bucket_id].emplace(i);
-            }
-            preadv_buffers_[bucket_id] = (char *) memalign(FILESYSTEM_BLOCK_SIZE,
-                                                           VALUE_SIZE * MAX_READ_BUFFER_PER_BUCKET);
-        }
-        read_init_barrier_.Wait();
-    }
-
-#endif
-
     // 4. Read value of a key
     RetCode EngineRace::Read(const PolarString &key, std::string *value) {
         static thread_local int64_t tid = (++read_num_threads_count) % NUM_THREADS;
         static thread_local char *value_buffer = aligned_read_buffer_[tid];
         static thread_local bool is_first_not_found = true;
         static thread_local uint32_t local_block_offset = 0;
-#ifdef ENABLE_RAND_READ_CACHE
-        static thread_local vector<iovec> io_requests(2);
-#endif
         uint64_t big_endian_key_uint = bswap_64(TO_UINT64(key.data()));
-
-#ifdef ENABLE_RAND_READ_CACHE
-        // Init for Random Read.
-        if (local_block_offset == 0) {
-            InitRandomReadCache(tid);
-        }
-#endif
 
         KeyEntry tmp{};
         tmp.key_ = big_endian_key_uint;
@@ -538,60 +446,7 @@ namespace polar_race {
         uint64_t foff;
         std::tie(fid, foff) = get_value_fid_foff(bucket_id, it->value_offset_);
 
-        // Cache Logic Here.
-#ifdef ENABLE_RAND_READ_CACHE
-        {
-            unique_lock<mutex> lock(bucket_mtx_[bucket_id]);
-            real_access_[bucket_id]++;
-            if (!is_visited_[bucket_id][it->value_offset_]) {
-                is_visited_[bucket_id][it->value_offset_] = true;
-                if (is_cached_[bucket_id][it->value_offset_] && mmap_meta_cnt_[0] > STAT_BUCKET_SIZE_THRESHOLD) {
-                    // Hit
-                    uint16_t buffer_off = read_cache_map_[bucket_id][it->value_offset_];
-                    memcpy(value_buffer, preadv_buffers_[bucket_id] + VALUE_SIZE * buffer_off, VALUE_SIZE);
-                    load_hit_stat_[bucket_id].second++;
-
-                    // Free Cache
-                    read_cache_map_[bucket_id].erase(read_cache_map_[bucket_id].find(it->value_offset_));
-                    free_cache_queue_[bucket_id].push(buffer_off);
-                } else {
-                    // Not Hit
-                    bool is_able_merge_load = false;
-                    if (it->value_offset_ + 1 < mmap_meta_cnt_[bucket_id] &&
-                        !is_visited_[bucket_id][it->value_offset_ + 1] &&
-                        !free_cache_queue_[bucket_id].empty()) {
-                        is_able_merge_load = true;
-                        uint16_t buffer_off = free_cache_queue_[bucket_id].front();
-                        free_cache_queue_[bucket_id].pop();
-
-                        // preadv here
-                        io_requests[0].iov_base = value_buffer;
-                        io_requests[0].iov_len = VALUE_SIZE;
-                        io_requests[1].iov_base = preadv_buffers_[bucket_id] + VALUE_SIZE * buffer_off;
-                        io_requests[1].iov_len = VALUE_SIZE;
-
-                        auto ret = preadv(value_file_dp_[fid], &io_requests.front(), 2, foff);
-                        if (ret < VALUE_SIZE * 2) {
-                            log_error("PreadV Err: %d, Err: %s", ret, strerror(errno));
-                        }
-                        read_cache_map_[bucket_id][it->value_offset_ + 1] = buffer_off;
-                        is_cached_[bucket_id][it->value_offset_ + 1] = true;
-
-                        load_hit_stat_[bucket_id].first++;
-                    }
-                    if (!is_able_merge_load) {
-                        pread(value_file_dp_[fid], value_buffer, VALUE_SIZE, foff);
-                    }
-                }
-            } else {
-                duplicate_access_[bucket_id]++;
-                pread(value_file_dp_[fid], value_buffer, VALUE_SIZE, foff);
-            }
-        }
-#else
         pread(value_file_dp_[fid], value_buffer, VALUE_SIZE, foff);
-#endif
-
         value->assign(value_buffer, VALUE_SIZE);
         return kSucc;
     }
@@ -678,8 +533,11 @@ namespace polar_race {
                               static_cast<double>(1000000000);
         total_time_ += elapsed_time;
 #ifdef STAT
-        if (bucket_id % 64 == 63)
-            log_info("In bucket %d, Read time %.9lf s", bucket_id, elapsed_time);
+        if (bucket_id < 32) {
+            double bucket_size = static_cast<double>(mmap_meta_cnt_[bucket_id] * VALUE_SIZE) / (1024. * 1024.);
+            log_info("In Bucket %d, Read time %.9lf s, Bucket size: %.6lf MB, Speed: %.6lf MB/s", bucket_id,
+                     elapsed_time, bucket_size, bucket_size / elapsed_time);
+        }
 #endif
         if (bucket_id == BUCKET_NUM - 1) {
             printTS(__FUNCTION__, __LINE__, clock_start);
@@ -791,13 +649,8 @@ namespace polar_race {
         range_barrier_ptr_->Wait();
     }
 
-    /*
-     * NOTICE: Implement 'Range' in quarter-final,
-     *         you can skip it in preliminary.
-     */
     // 5. Applies the given Vistor::Visit function to the result
-    // of every key-value pair in the key range [first, last),
-    // in order
+    // of every key-value pair in the key range [first, last), in order
     // lower=="" is treated as a key before all keys in the database.
     // upper=="" is treated as a key after all keys in the database.
     // Therefore the following call will traverse the entire database:
