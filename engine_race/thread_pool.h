@@ -11,6 +11,8 @@
 #include <stdexcept>
 #include "util.h"
 
+//#define ENABLE_AFFINITY
+
 // https://github.com/progschj/ThreadPool
 class ThreadPool {
 public:
@@ -37,12 +39,17 @@ private:
 // the constructor just launches some amount of workers
 ThreadPool::ThreadPool(size_t threads) : stop(false) {
     workers.reserve(threads);
+#ifdef ENABLE_AFFINITY
     std::vector<int32_t> affinity_arr_ = {0, 1, 2, 3};
+#endif
     for (size_t i = 0; i < threads; ++i)
         workers.emplace_back(
+#ifdef ENABLE_AFFINITY
                 [this, i, &affinity_arr_] {
                     setThreadSelfAffinity(affinity_arr_[i]);
-//                [this] {
+#else
+                    [this] {
+#endif
                     for (;;) {
                         std::function<void()> task;
                         {

@@ -56,7 +56,9 @@
 #define KEEP_REUSE_BUFFER_NUM (3u)
 #define MAX_TOTAL_BUFFER_NUM (MAX_RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
 
+#ifdef ENABLE_AFFINITY
 #define BUSY_WAITING
+#endif
 
 //#define ENABLE_RAND_READ_CACHE
 #ifdef ENABLE_RAND_READ_CACHE
@@ -114,7 +116,9 @@ namespace polar_race {
         vector<KeyEntry *> index_;
 
         // Range.
+#ifdef ENABLE_AFFINITY
         std::vector<int32_t> affinity_arr_;
+#endif
         volatile bool is_range_init_;
         Barrier *range_barrier_ptr_;
         vector<PolarString *> polar_keys_;
@@ -149,7 +153,7 @@ namespace polar_race {
         vector<aio_context_t> aio_ctx_tls_;
         uint32_t queue_depth;
 
-        vector<list < iocb * >> free_nodes_tls_;
+        vector<list<iocb *>> free_nodes_tls_;
 
     public:
         static RetCode Open(const std::string &name, Engine **eptr);
