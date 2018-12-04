@@ -18,12 +18,12 @@
 #include "util.h"
 #include "file_util.h"
 
+//#define DSTAT_TESTING
 #define STAT
 //#define ENABLE_WRITE_BARRIER
 //#define ENABLE_INDEX_FREE
 //#define ENABLE_VALUE_BUFFER_FREE
 #define FLUSH_IN_WRITER_DESTRUCTOR
-
 #define STAT_BUCKET_SIZE_THRESHOLD (50000)
 
 namespace polar_race {
@@ -573,7 +573,7 @@ namespace polar_race {
         std::tie(fid, foff) = get_value_fid_foff(bucket_id, 0);
 
         // Replace with AIO.
-        uint32_t value_agg_num = 32;
+        uint32_t value_agg_num = 8;
         uint32_t value_num = mmap_meta_cnt_[bucket_id];
         uint32_t remain_value_num = value_num % value_agg_num;
         uint32_t total_block_num = (remain_value_num == 0 ? (value_num / value_agg_num) :
