@@ -574,7 +574,7 @@ namespace polar_race {
         std::tie(fid, foff) = get_value_fid_foff(bucket_id, 0);
 
         // Replace with AIO.
-        uint32_t value_agg_num = 128;
+        uint32_t value_agg_num = 512;
         uint32_t value_num = mmap_meta_cnt_[bucket_id];
         uint32_t remain_value_num = value_num % value_agg_num;
         uint32_t total_block_num = (remain_value_num == 0 ? (value_num / value_agg_num) :
