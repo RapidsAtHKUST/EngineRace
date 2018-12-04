@@ -18,8 +18,8 @@
 #include "util.h"
 #include "file_util.h"
 
-//#define DSTAT_TESTING
 #define STAT
+#define DSTAT_TESTING
 //#define ENABLE_WRITE_BARRIER
 //#define ENABLE_INDEX_FREE
 //#define ENABLE_VALUE_BUFFER_FREE
@@ -651,7 +651,9 @@ namespace polar_race {
                               static_cast<double>(1000000000);
         total_time_ += elapsed_time;
 #ifdef STAT
-        log_info("In bucket %d, Read time %.9lf s", bucket_id, elapsed_time);
+        double bucket_size = static_cast<double>(mmap_meta_cnt_[bucket_id] * VALUE_SIZE) / (1024. * 1024.);
+        log_info("In Bucket %d, Read time %.9lf s, Bucket size: %.6lf MB, Speed: %.6lf MB/s", bucket_id, elapsed_time,
+                 bucket_size, bucket_size / elapsed_time);
 #endif
         if (bucket_id == BUCKET_NUM - 1) {
             printTS(__FUNCTION__, __LINE__, clock_start);
