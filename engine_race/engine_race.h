@@ -51,9 +51,9 @@
 #define READ_BARRIER_NUM (32)
 #define KEY_READ_BLOCK_COUNT (8192u)
 // Range.
-#define IO_POOL_SIZE (1u)       // have to be one for aio
-#define MAX_RECYCLE_BUFFER_NUM (2u)
-#define KEEP_REUSE_BUFFER_NUM (3u)
+#define IO_POOL_SIZE (2u)       // have to be one for aio
+#define MAX_RECYCLE_BUFFER_NUM (3u)
+#define KEEP_REUSE_BUFFER_NUM (2u)
 #define MAX_TOTAL_BUFFER_NUM (MAX_RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
 
 //#define ENABLE_RAND_READ_CACHE
@@ -136,13 +136,13 @@ namespace polar_race {
         int32_t total_range_num_threads_;
 
         // AIO.
-        iocb **iocb_ptrs;
-        iocb *iocbs;
-        io_event *io_events;
-        aio_context_t aio_ctx;
+        vector<iocb **>iocb_ptrs_tls_;
+        vector<iocb *>iocbs_tls_;
+        vector<io_event *>io_events_tls_;
+        vector<aio_context_t> aio_ctx_tls_;
         uint32_t queue_depth;
 
-        list<iocb *> free_nodes;
+        vector<list<iocb *>> free_nodes_tls_;
 
     public:
         static RetCode Open(const std::string &name, Engine **eptr);

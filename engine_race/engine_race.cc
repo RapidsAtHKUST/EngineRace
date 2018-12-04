@@ -32,6 +32,7 @@ namespace polar_race {
     atomic_int write_num_threads(-1);
     atomic_int read_num_threads_count(-1);
     atomic_int range_num_threads_count(-1);
+    atomic_int io_threads_count(-1);
 
     const char *key_file_name = "polar.keys";
     const char *value_file_name = "polar.values";
@@ -564,7 +565,7 @@ namespace polar_race {
 
     void EngineRace::ReadBucketToBuffer(uint32_t bucket_id) {
         auto range_clock_beg = high_resolution_clock::now();
-
+        static thread_local auto tid = ++io_threads_count;
         auto buffer_id = get_buffer_id(bucket_id);
 
         // get fid, and off
@@ -583,6 +584,10 @@ namespace polar_race {
         uint32_t last_block_size = (remain_value_num == 0 ? (VALUE_SIZE * value_agg_num) :
                                     (remain_value_num * VALUE_SIZE));
 
+        auto &free_nodes = free_nodes_tls_[tid];
+        auto &iocb_ptrs = iocb_ptrs_tls_[tid];
+        auto &aio_ctx = aio_ctx_tls_[tid];
+        auto &io_events = io_events_tls_[tid];
         while (completed_block_num < total_block_num) {
             uint32_t free_nodes_num = (uint32_t) free_nodes.size();
             uint32_t remain_block_num = total_block_num - submitted_block_num;
@@ -645,7 +650,7 @@ namespace polar_race {
         total_time_ += elapsed_time;
 //#ifdef STAT
 //        if (bucket_id % 64 == 63)
-        log_info("In bucket %d, Read time %.9lf s", bucket_id, elapsed_time);
+        log_info("Tid: %d, In bucket %d, Read time %.9lf s", tid, bucket_id, elapsed_time);
 //#endif
         if (bucket_id == BUCKET_NUM - 1) {
             printTS(__FUNCTION__, __LINE__, clock_start);
@@ -656,17 +661,28 @@ namespace polar_race {
         // AIO
         // Init aio context.
         queue_depth = 8;
-        aio_ctx = 0;
-        iocb_ptrs = new iocb *[queue_depth];
-        iocbs = new iocb[queue_depth];
-        io_events = new io_event[queue_depth];
-        for (uint32_t i = 0; i < queue_depth; ++i) {
-            free_nodes.push_back(&iocbs[i]);
+        aio_ctx_tls_ = vector<aio_context_t>(IO_POOL_SIZE, 0);
+        iocb_ptrs_tls_ = vector<iocb **>(IO_POOL_SIZE, nullptr);
+        iocbs_tls_ = vector<iocb *>(IO_POOL_SIZE, nullptr);
+        io_events_tls_ = vector<io_event *>(IO_POOL_SIZE, nullptr);
+        free_nodes_tls_ = vector<list<iocb *>>(IO_POOL_SIZE);
+        for (int tid = 0; tid < IO_POOL_SIZE; tid++) {
+            iocb_ptrs_tls_[tid] = new iocb *[queue_depth];
+            iocbs_tls_[tid] = new iocb[queue_depth];
+            io_events_tls_[tid] = new io_event[queue_depth];
         }
 
-        if (io_setup(queue_depth, &aio_ctx) < 0) {
-            log_info("Setup fail\n");
-            exit(-1);
+        for (uint32_t tid = 0; tid < IO_POOL_SIZE; tid++) {
+            for (uint32_t i = 0; i < queue_depth; ++i) {
+                free_nodes_tls_[tid].push_back(&iocbs_tls_[tid][i]);
+            }
+        }
+
+        for (uint32_t i = 0; i < IO_POOL_SIZE; i++) {
+            if (io_setup(queue_depth, &aio_ctx_tls_[i]) < 0) {
+                log_info("Setup fail\n");
+                exit(-1);
+            }
         }
     }
 
