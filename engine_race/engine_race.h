@@ -56,6 +56,8 @@
 #define KEEP_REUSE_BUFFER_NUM (3u)
 #define MAX_TOTAL_BUFFER_NUM (MAX_RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
 
+#define BUSY_WAITING
+
 //#define ENABLE_RAND_READ_CACHE
 #ifdef ENABLE_RAND_READ_CACHE
 #define MAX_READ_BUFFER_PER_BUCKET (330000 / BUCKET_NUM)
@@ -112,6 +114,7 @@ namespace polar_race {
         vector<KeyEntry *> index_;
 
         // Range.
+        std::vector<int32_t> affinity_arr_;
         volatile bool is_range_init_;
         Barrier *range_barrier_ptr_;
         vector<PolarString *> polar_keys_;
@@ -129,9 +132,13 @@ namespace polar_race {
         ThreadPool *range_io_worker_pool_;
 
         // Range Sequential IO.
+#ifdef BUSY_WAITING
+        volatile bool *bucket_is_ready_read_;
+#else
         mutex *bucket_mutex_arr_;
         condition_variable *bucket_cond_var_arr_;
         bool *bucket_is_ready_read_;
+#endif
         atomic_int *bucket_consumed_num_;
         int32_t total_range_num_threads_;
 

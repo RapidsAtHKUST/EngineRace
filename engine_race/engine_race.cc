@@ -117,7 +117,9 @@ namespace polar_race {
             is_range_init_(false), range_barrier_ptr_(nullptr), polar_keys_(NUM_THREADS),
             total_time_(0), total_io_sleep_time_(0), wait_get_time_(0),
             val_buffer_max_size_(0), range_io_worker_pool_(nullptr),
+#ifndef BUSY_WAITING
             bucket_mutex_arr_(nullptr), bucket_cond_var_arr_(nullptr),
+#endif
             bucket_is_ready_read_(nullptr), bucket_consumed_num_(nullptr), total_range_num_threads_(0) {
         printTS(__FUNCTION__, __LINE__, clock_start);
 
@@ -695,8 +697,10 @@ namespace polar_race {
             value_shared_buffers_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, val_buffer_max_size_);
         }
         // Value Files.
+#ifndef BUSY_WAITING
         bucket_mutex_arr_ = new mutex[BUCKET_NUM];
         bucket_cond_var_arr_ = new condition_variable[BUCKET_NUM];
+#endif
         bucket_is_ready_read_ = new bool[BUCKET_NUM];
         bucket_consumed_num_ = new atomic_int[BUCKET_NUM];
         futures_.resize(BUCKET_NUM);
@@ -708,6 +712,13 @@ namespace polar_race {
             unique_lock<mutex> lock(range_mtx_);
             if (tid == 0) {
                 auto range_clock_beg = high_resolution_clock::now();
+                affinity_arr_ = {
+                        60, 61, 62, 63, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+                        16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+                        32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+                        48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63
+                };
+
                 InitRangeReader();
                 InitAIOContext();
 
@@ -736,7 +747,7 @@ namespace polar_race {
 
         // Submit All IO Jobs.
         if (tid == 0) {
-            memset(bucket_is_ready_read_, 0, BUCKET_NUM);
+            memset((bool *) bucket_is_ready_read_, 0, BUCKET_NUM);
             for (uint32_t i = 0; i < MAX_RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM; i++) {
                 bucket_is_ready_read_[i] = true;
             }
@@ -746,6 +757,20 @@ namespace polar_race {
                 bucket_consumed_num_[next_bucket_idx].store(0);
                 futures_[next_bucket_idx] = range_io_worker_pool_->enqueue(
                         [this, next_bucket_idx]() {
+#ifdef BUSY_WAITING
+                            if (!bucket_is_ready_read_[next_bucket_idx]) {
+                                auto range_clock_beg = high_resolution_clock::now();
+
+                                while (!bucket_is_ready_read_[next_bucket_idx]);
+
+                                auto range_clock_end = high_resolution_clock::now();
+                                double sleep_time =
+                                        duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
+                                        static_cast<double>(1000000000);
+                                total_io_sleep_time_ += sleep_time;
+                                log_info("Spin For Bucket: %d, time %.6lf", next_bucket_idx, sleep_time);
+                            }
+#else
                             unique_lock<mutex> lock(bucket_mutex_arr_[next_bucket_idx]);
                             if (!bucket_is_ready_read_[next_bucket_idx]) {
                                 auto range_clock_beg = high_resolution_clock::now();
@@ -759,13 +784,16 @@ namespace polar_race {
                                         duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                                         static_cast<double>(1000000000);
                                 total_io_sleep_time_ += sleep_time;
+                                log_info("Sleep For Bucket: %d, time %.6lf", next_bucket_idx, sleep_time);
                             }
+#endif
                             ReadBucketToBuffer(next_bucket_idx);
                             return;
                         });
             }
         }
 
+        setThreadSelfAffinity(affinity_arr_[tid]);
         is_first = false;
         range_barrier_ptr_->Wait();
     }
@@ -845,12 +873,6 @@ namespace polar_race {
                                              VALUE_SIZE);
                 // Visit Key/Value.
                 visitor.Visit(*polar_key_ptr_, polar_val_ptr_);
-
-                // 4MB barrier
-                local_block_offset++;
-                if (local_block_offset % 1000 == 0) {
-                    range_barrier_ptr_->Wait();
-                }
             }
             // End of inner loop, Submit IO Jobs.
             int32_t my_order = ++bucket_consumed_num_[par_bucket_id];
@@ -858,9 +880,13 @@ namespace polar_race {
                 uint32_t next_bucket_idx = par_bucket_id + MAX_RECYCLE_BUFFER_NUM;
                 // Notify
                 if (next_bucket_idx < upper_key_par_id + 1) {
+#ifdef BUSY_WAITING
+                    bucket_is_ready_read_[next_bucket_idx] = true;
+#else
                     unique_lock<mutex> lock(bucket_mutex_arr_[next_bucket_idx]);
                     bucket_is_ready_read_[next_bucket_idx] = true;
                     bucket_cond_var_arr_[next_bucket_idx].notify_all();
+#endif
                 }
             }
         }
