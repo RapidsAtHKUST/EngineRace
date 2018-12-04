@@ -376,7 +376,7 @@ namespace polar_race {
 
     // 3. Write a key-value pair into engine
     RetCode EngineRace::Write(const PolarString &key, const PolarString &value) {
-        static thread_local uint32_t tid = (uint32_t)(++write_num_threads) % NUM_THREADS;
+        static thread_local uint32_t tid = (uint32_t) (++write_num_threads) % NUM_THREADS;
         static thread_local uint32_t local_block_offset = 0;
         uint64_t key_int_big_endian = bswap_64(TO_UINT64(key.data()));
         uint32_t bucket_id = get_par_bucket_id(key_int_big_endian);
@@ -643,10 +643,10 @@ namespace polar_race {
         double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                               static_cast<double>(1000000000);
         total_time_ += elapsed_time;
-#ifdef STAT
-        if (bucket_id % 64 == 63)
-            log_info("In bucket %d, Read time %.9lf s", bucket_id, elapsed_time);
-#endif
+//#ifdef STAT
+//        if (bucket_id % 64 == 63)
+        log_info("In bucket %d, Read time %.9lf s", bucket_id, elapsed_time);
+//#endif
         if (bucket_id == BUCKET_NUM - 1) {
             printTS(__FUNCTION__, __LINE__, clock_start);
         }
