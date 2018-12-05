@@ -28,6 +28,7 @@ namespace polar_race {
     atomic_int write_num_threads(-1);
     atomic_int read_num_threads_count(-1);
     atomic_int range_num_threads_count(-1);
+    atomic_int write_io_threads_count(-1);
 
     const char *key_file_name = "polar.keys";
     const char *value_file_name = "polar.values";
@@ -35,6 +36,8 @@ namespace polar_race {
 
     const char *key_buf_file_name = "/polar.keybuffers";
     const char *value_buf_file_name = "/polar.valbuffers";
+    const char *aio_value_buf_file_name = "/polar.aio_valbuffers";
+    const char *aio_value_buf_meta_file_name = "/polar.aio_valbuffers_meta";
 
     constexpr size_t tmp_buffer_value_file_size = static_cast<size_t>(VALUE_SIZE) * TMP_VALUE_BUFFER_SIZE * BUCKET_NUM;
     constexpr size_t tmp_buffer_key_file_size = sizeof(uint64_t) * TMP_KEY_BUFFER_SIZE * BUCKET_NUM;
@@ -97,6 +100,31 @@ namespace polar_race {
 
     Engine::~Engine() = default;
 
+    void EngineRace::InitWriteAIOContext() {
+        write_queue_depth = 32;
+        aio_ctx_tls_ = vector<aio_context_t>(VAL_FILE_NUM, 0);
+        iocbs_tls_ = vector<iocb *>(VAL_FILE_NUM, nullptr);
+        io_events_tls_ = vector<io_event *>(VAL_FILE_NUM, nullptr);
+        free_nodes_tls_ = vector<list<iocb *>>(VAL_FILE_NUM);
+        for (uint32_t tid = 0; tid < VAL_FILE_NUM; tid++) {
+            iocbs_tls_[tid] = new iocb[write_queue_depth];
+            io_events_tls_[tid] = new io_event[write_queue_depth];
+        }
+
+        for (uint32_t tid = 0; tid < VAL_FILE_NUM; tid++) {
+            for (uint32_t i = 0; i < write_queue_depth; ++i) {
+                free_nodes_tls_[tid].push_back(&iocbs_tls_[tid][i]);
+            }
+        }
+
+        for (uint32_t i = 0; i < VAL_FILE_NUM; i++) {
+            if (io_setup(write_queue_depth, &aio_ctx_tls_[i]) < 0) {
+                log_info("Setup fail\n");
+                exit(-1);
+            }
+        }
+    }
+
 /*
  * Complete the functions below to implement you own engine
  */
@@ -119,6 +147,8 @@ namespace polar_race {
         const string key_buffers_file_path = dir + key_buf_file_name;
         const string value_file_path = dir + "/" + value_file_name;
         const string value_buffers_file_path = dir + value_buf_file_name;
+        const string aio_buf_file_path = dir + aio_value_buf_file_name;
+        const string aio_buf_file_meta_path = dir + aio_value_buf_meta_file_name;
 
         key_file_dp_ = new int[KEY_FILE_NUM];
         mmap_key_aligned_buffer_view_ = new uint64_t *[BUCKET_NUM];
@@ -127,11 +157,28 @@ namespace polar_race {
         mmap_value_aligned_buffer_view_ = new char *[BUCKET_NUM];
 
         if (!file_exists(meta_file_path.c_str())) {
+            log_info("Writer");
+            InitWriteAIOContext();
+            // Init AIO Buffer.
+            aio_value_buffer_file_dp_ = open(aio_buf_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
+            uint64_t aio_file_size = (write_queue_depth + NUM_THREADS) * VALUE_SIZE * TMP_VALUE_BUFFER_SIZE;
+            ftruncate(aio_value_buffer_file_dp_, aio_file_size);
+            mmap_aio_value_aligned_buffer_ = (char *) mmap(nullptr, aio_file_size, \
+                            PROT_READ | PROT_WRITE, MAP_SHARED, aio_value_buffer_file_dp_, 0);
+            for (uint32_t i = 0; i < NUM_THREADS + write_queue_depth; i++) {
+                free_buffers_.push(mmap_aio_value_aligned_buffer_ + i * VALUE_SIZE * TMP_VALUE_BUFFER_SIZE);
+            }
+
+            aio_meta_file_dp_ = open(aio_buf_file_meta_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
+            uint64_t aio_meta_size = (write_queue_depth + NUM_THREADS) * sizeof(uint64_t);
+            ftruncate(aio_meta_file_dp_, aio_meta_size);
+            mmap_aio_off_ = (uint64_t *) mmap(nullptr, aio_meta_size, \
+                            PROT_READ | PROT_WRITE, MAP_SHARED, aio_meta_file_dp_, 0);
+
             // Value Writer Thread Pool.
-            value_write_futures_ = vector<queue<future<void>>>(BUCKET_NUM);
-            value_writer_io_ptr_pool_ = vector<ThreadPool *>(VAL_FILE_NUM, nullptr);
+            writer_value_io_ptr_pool_ = vector<ThreadPool *>(VAL_FILE_NUM, nullptr);
             for (int i = 0; i < VAL_FILE_NUM; i++) {
-                value_writer_io_ptr_pool_[i] = new ThreadPool(1);
+                writer_value_io_ptr_pool_[i] = new ThreadPool(1);
             }
 
             // Meta.
@@ -167,6 +214,7 @@ namespace polar_race {
             ftruncate(value_buffer_file_dp_, tmp_buffer_value_file_size);
             mmap_value_aligned_buffer_ = (char *) mmap(nullptr, tmp_buffer_value_file_size, \
                             PROT_READ | PROT_WRITE, MAP_SHARED, value_buffer_file_dp_, 0);
+
             for (int i = 0; i < BUCKET_NUM; i++) {
                 mmap_value_aligned_buffer_view_[i] =
                         mmap_value_aligned_buffer_ + VALUE_SIZE * TMP_VALUE_BUFFER_SIZE * i;
@@ -190,6 +238,8 @@ namespace polar_race {
                 mmap_key_aligned_buffer_view_[i] = mmap_key_aligned_buffer_ + TMP_KEY_BUFFER_SIZE * i;
             }
         } else {
+            log_info("Reader");
+
             // Meta.
             meta_cnt_file_dp_ = open(meta_file_path.c_str(), O_RDONLY, FILE_PRIVILEGE);
             mmap_meta_cnt_ = (uint32_t *) mmap(nullptr, sizeof(uint32_t) * (BUCKET_NUM) * 2,
@@ -241,7 +291,6 @@ namespace polar_race {
     RetCode EngineRace::Open(const std::string &name, Engine **eptr) {
         printTS(__FUNCTION__, __LINE__, clock_start);
 #ifdef DSTAT_TESTING
-        PrintMemFree();
         DstatCorountine();
         IOStatCoroutine();
 #endif
@@ -272,15 +321,16 @@ namespace polar_race {
 #ifdef FLUSH_IN_WRITER_DESTRUCTOR
         if (index_.empty()) {
             printTS(__FUNCTION__, __LINE__, clock_start);
-            // Submitted But Not Finished.
-            for (uint32_t bucked_id = 0; bucked_id < BUCKET_NUM; bucked_id++) {
-                if (!value_write_futures_[bucked_id].empty()) {
-                    value_write_futures_[bucked_id].front().get();
-                }
+            // Shutdown
+            for (int i = 0; i < VAL_FILE_NUM; i++) {
+                writer_value_io_ptr_pool_[i]->enqueue([i, this]() {
+                    SyncAIOContext(i);
+                });
             }
             for (int i = 0; i < VAL_FILE_NUM; i++) {
-                delete value_writer_io_ptr_pool_[i];
+                delete writer_value_io_ptr_pool_[i];
             }
+
             // Not Submitted.
             printTS(__FUNCTION__, __LINE__, clock_start);
             ParallelFlushTmp(key_file_dp_, value_file_dp_);
@@ -348,9 +398,85 @@ namespace polar_race {
         printTS(__FUNCTION__, __LINE__, clock_start);
     }
 
-    // 3. Write a key-value pair into engine
+
+    void EngineRace::WriteBufferToFile(uint32_t bucket_id, uint32_t fid, uint64_t foff, const char *value_buffer) {
+//        pwrite(value_file_dp_[fid], value_buffer, VALUE_SIZE * TMP_VALUE_BUFFER_SIZE, foff);
+        static thread_local auto tid = ++write_io_threads_count;
+        static thread_local auto write_cnt = 0;
+
+        write_cnt++;
+//        log_info("Write Cnt: %d", write_cnt);
+        auto &free_nodes = free_nodes_tls_[tid];
+        auto &aio_ctx = aio_ctx_tls_[tid];
+        auto &io_events = io_events_tls_[tid];
+        // Wait for Queue.
+        while (free_nodes.empty()) {
+            uint32_t in_flight = write_queue_depth;
+            uint32_t expected = 0;
+
+            auto completed = io_getevents(aio_ctx, expected, in_flight, io_events, nullptr);
+            if (completed < 0) {
+                log_info("Get error.");
+                exit(-1);
+            }
+            for (uint32_t j = 0; j < completed; ++j) {
+                io_event *complete_event = &io_events[j];
+                if (complete_event->res2 != 0 || complete_event->res < VALUE_SIZE) {
+                    log_info("Return error.\n");
+                    exit(-1);
+                }
+
+                iocb *iocb_ptr = (iocb *) complete_event->data;
+                free_nodes.push_back(iocb_ptr);
+                free_buffers_.push((char *const &) buffer_dict_[iocb_ptr]);
+            }
+        }
+        // Submit.
+        iocb *iocb_ptr = free_nodes.front();
+        free_nodes.pop_front();
+
+        size_t offset = foff;
+        size_t size = TMP_VALUE_BUFFER_SIZE * VALUE_SIZE;
+        fill_aio_node(value_file_dp_[fid], iocb_ptr, (char *) value_buffer, offset, size, IOCB_CMD_PWRITE);
+        buffer_dict_[iocb_ptr] = value_buffer;
+        auto ret = io_submit(aio_ctx, 1, &iocb_ptr);
+        if (ret != 1) {
+            log_info("Commit error %d", ret);
+            exit(-1);
+        }
+    }
+
+    void EngineRace::SyncAIOContext(uint32_t tid) {
+        log_info("Sync AIO Context in Tid: %d", tid);
+        auto &free_nodes = free_nodes_tls_[tid];
+        auto &aio_ctx = aio_ctx_tls_[tid];
+        auto &io_events = io_events_tls_[tid];
+        // Wait for Queue.
+        while (free_nodes.size() != write_queue_depth) {
+            uint32_t in_flight = write_queue_depth - free_nodes.size();
+            uint32_t expected = (0 <= in_flight ? 0 : in_flight);
+
+            auto completed = io_getevents(aio_ctx, expected, in_flight, io_events, NULL);
+            if (completed < 0) {
+                log_info("Get error.");
+                exit(-1);
+            }
+            for (uint32_t j = 0; j < completed; ++j) {
+                io_event *complete_event = &io_events[j];
+                if (complete_event->res2 != 0 || complete_event->res < VALUE_SIZE) {
+                    log_info("Return error.\n");
+                    exit(-1);
+                }
+
+                iocb *iocb_ptr = (iocb *) complete_event->data;
+                free_nodes.push_back(iocb_ptr);
+            }
+        }
+    }
+
+// 3. Write a key-value pair into engine
     RetCode EngineRace::Write(const PolarString &key, const PolarString &value) {
-        static thread_local uint32_t tid = (uint32_t)(++write_num_threads) % NUM_THREADS;
+        static thread_local uint32_t tid = (uint32_t) (++write_num_threads) % NUM_THREADS;
         static thread_local uint32_t local_block_offset = 0;
         uint64_t key_int_big_endian = bswap_64(TO_UINT64(key.data()));
         uint32_t bucket_id = get_par_bucket_id(key_int_big_endian);
@@ -361,17 +487,15 @@ namespace polar_race {
             first_write_clk = high_resolution_clock::now();
         }
 #endif
+
+
         {
             unique_lock<mutex> lock(bucket_mtx_[bucket_id]);
+
             // Write value to the value file, with a tmp file as value_buffer.
             uint32_t val_buffer_offset = (mmap_meta_cnt_[bucket_id] % TMP_VALUE_BUFFER_SIZE) * VALUE_SIZE;
             char *value_buffer = mmap_value_aligned_buffer_view_[bucket_id];
 
-            if (!value_write_futures_[bucket_id].empty()) {
-                value_write_futures_[bucket_id].front().get();
-                value_write_futures_[bucket_id].pop();
-                mmap_meta_val_not_flushed_cnt_[bucket_id] = 0;
-            }
             memcpy(value_buffer + val_buffer_offset, value.data(), VALUE_SIZE);
             mmap_meta_val_not_flushed_cnt_[bucket_id]++;
 
@@ -382,10 +506,12 @@ namespace polar_race {
                 uint64_t foff;
                 tie(fid, foff) = get_value_fid_foff(bucket_id, in_bucket_id);
 
-                value_write_futures_[bucket_id].push(
-                        value_writer_io_ptr_pool_[fid]->enqueue([this, fid, foff, value_buffer]() {
-                            pwrite(value_file_dp_[fid], value_buffer, VALUE_SIZE * TMP_VALUE_BUFFER_SIZE, foff);
-                        }));
+                char *value_buffer_tmp = free_buffers_.pop();
+                memcpy(value_buffer_tmp, value_buffer, TMP_VALUE_BUFFER_SIZE * VALUE_SIZE);
+                writer_value_io_ptr_pool_[fid]->enqueue([this, bucket_id, fid, foff, value_buffer_tmp]() {
+                    WriteBufferToFile(bucket_id, fid, foff, value_buffer_tmp);
+                });
+                mmap_meta_val_not_flushed_cnt_[bucket_id] = 0;
             }
 
             // Write key to the key file.
@@ -416,7 +542,7 @@ namespace polar_race {
         return kSucc;
     }
 
-    // 4. Read value of a key
+// 4. Read value of a key
     RetCode EngineRace::Read(const PolarString &key, std::string *value) {
         static thread_local int64_t tid = (++read_num_threads_count) % NUM_THREADS;
         static thread_local char *value_buffer = aligned_read_buffer_[tid];
@@ -544,7 +670,7 @@ namespace polar_race {
         }
     }
 
-    void EngineRace::InitAIOContext() {
+    void EngineRace::InitRangeAIOContext() {
         // AIO
         // Init aio context.
         queue_depth = 32;
@@ -593,7 +719,7 @@ namespace polar_race {
             if (tid == 0) {
                 auto range_clock_beg = high_resolution_clock::now();
                 InitRangeReader();
-                InitAIOContext();
+                InitRangeAIOContext();
 
                 auto range_clock_end = high_resolution_clock::now();
                 double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
@@ -654,12 +780,12 @@ namespace polar_race {
         range_barrier_ptr_->Wait();
     }
 
-    // 5. Applies the given Vistor::Visit function to the result
-    // of every key-value pair in the key range [first, last), in order
-    // lower=="" is treated as a key before all keys in the database.
-    // upper=="" is treated as a key after all keys in the database.
-    // Therefore the following call will traverse the entire database:
-    //   Range("", "", visitor)
+// 5. Applies the given Vistor::Visit function to the result
+// of every key-value pair in the key range [first, last), in order
+// lower=="" is treated as a key before all keys in the database.
+// upper=="" is treated as a key after all keys in the database.
+// Therefore the following call will traverse the entire database:
+//   Range("", "", visitor)
     RetCode EngineRace::Range(const PolarString &lower, const PolarString &upper,
                               Visitor &visitor) {
         static thread_local int64_t tid = (++range_num_threads_count) % NUM_THREADS;

@@ -15,6 +15,7 @@
 #include "include/engine.h"
 #include "barrier.h"
 #include "thread_pool.h"
+#include "blocking_queue.h"
 
 #define TO_UINT64(buffer) (*(uint64_t*)(buffer))
 
@@ -24,7 +25,7 @@
 
 // Buffers.
 #define TMP_KEY_BUFFER_SIZE (512)
-#define TMP_VALUE_BUFFER_SIZE (64)
+#define TMP_VALUE_BUFFER_SIZE (4)
 // Key/Value Files.
 #define VALUE_SIZE (4096)
 
@@ -39,7 +40,7 @@
 #define KEY_FILE_NUM (1 << KEY_FILE_DIGITS)
 #define MAX_KEY_BUCKET_SIZE (MAX_TOTAL_SIZE / BUCKET_NUM / FILESYSTEM_BLOCK_SIZE * FILESYSTEM_BLOCK_SIZE)
 
-#define VAL_FILE_DIGITS (KEY_FILE_DIGITS)
+#define VAL_FILE_DIGITS (0)
 #define VAL_FILE_NUM (1 << VAL_FILE_DIGITS)  // must make sure same bucket in the same file
 #define MAX_VAL_BUCKET_SIZE (MAX_TOTAL_SIZE / BUCKET_NUM / FILESYSTEM_BLOCK_SIZE * FILESYSTEM_BLOCK_SIZE)
 
@@ -68,6 +69,7 @@ namespace polar_race {
 
     class EngineRace : public Engine {
     public:
+        // 1) wal cnt, 2) mmap buffer cnt
         int meta_cnt_file_dp_;
         uint32_t *mmap_meta_cnt_;
         uint32_t *mmap_meta_val_not_flushed_cnt_;
@@ -80,14 +82,29 @@ namespace polar_race {
         int *value_file_dp_;
         int value_buffer_file_dp_;
         char *mmap_value_aligned_buffer_;
+
+        // AIO Files.
+        int aio_meta_file_dp_;
+        uint64_t *mmap_aio_off_;        // Max To Represent No Need to Flush
+        int aio_value_buffer_file_dp_;
+        char *mmap_aio_value_aligned_buffer_;
+
         char **mmap_value_aligned_buffer_view_;
+        blocking_queue<char *> free_buffers_;
+        map<iocb *, const char *> buffer_dict_;
+
+        // AIO Context.
+        vector<iocb *> iocbs_tls_;
+        vector<io_event *> io_events_tls_;
+        vector<aio_context_t> aio_ctx_tls_;
+        uint32_t write_queue_depth;
+        vector<std::list<iocb * >> free_nodes_tls_;
 
         // Write.
         mutex *bucket_mtx_;
         Barrier write_barrier_;
 
-        vector<queue<future<void>>> value_write_futures_;
-        vector<ThreadPool *> value_writer_io_ptr_pool_;
+        vector<ThreadPool *> writer_value_io_ptr_pool_;
 
         // Read.
         char **aligned_read_buffer_;
@@ -149,9 +166,16 @@ namespace polar_race {
                       Visitor &visitor) override;
 
     private:
+        void InitWriteAIOContext();
+
+        void WriteBufferToFile(uint32_t bucket_id, uint32_t fid, uint64_t foff, const char *value_buffer);
+
+        void SyncAIOContext(uint32_t tid);
+
+    private:
         void InitRangeReader();
 
-        void InitAIOContext();
+        void InitRangeAIOContext();
 
         void InitForRange(int64_t tid);
 
