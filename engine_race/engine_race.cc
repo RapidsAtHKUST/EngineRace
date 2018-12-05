@@ -350,7 +350,7 @@ namespace polar_race {
 
     // 3. Write a key-value pair into engine
     RetCode EngineRace::Write(const PolarString &key, const PolarString &value) {
-        static thread_local uint32_t tid = (uint32_t) (++write_num_threads) % NUM_THREADS;
+        static thread_local uint32_t tid = (uint32_t)(++write_num_threads) % NUM_THREADS;
         static thread_local uint32_t local_block_offset = 0;
         uint64_t key_int_big_endian = bswap_64(TO_UINT64(key.data()));
         uint32_t bucket_id = get_par_bucket_id(key_int_big_endian);
@@ -570,9 +570,13 @@ namespace polar_race {
         val_buffer_max_size_ *= VALUE_SIZE;
         log_info("Max Buffer Size: %zu B", val_buffer_max_size_);
         value_shared_buffers_ = vector<char *>(MAX_TOTAL_BUFFER_NUM);
+
+        ThreadPool pool(MAX_TOTAL_BUFFER_NUM);
         for (uint32_t i = 0; i < MAX_TOTAL_BUFFER_NUM; i++) {
-            value_shared_buffers_[i] = (char *) mmap(nullptr, val_buffer_max_size_, PROT_READ | PROT_WRITE,
-                                                     MAP_ANONYMOUS | MAP_PRIVATE | MAP_POPULATE, -1, 0);
+            pool.enqueue([this, i]() {
+                value_shared_buffers_[i] = (char *) mmap(nullptr, val_buffer_max_size_, PROT_READ | PROT_WRITE,
+                                                         MAP_ANONYMOUS | MAP_PRIVATE | MAP_POPULATE, -1, 0);
+            });
         }
         // Value Files.
         bucket_mutex_arr_ = new mutex[BUCKET_NUM];
