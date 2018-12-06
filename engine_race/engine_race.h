@@ -40,7 +40,7 @@
 #define KEY_FILE_NUM (1 << KEY_FILE_DIGITS)
 #define MAX_KEY_BUCKET_SIZE (MAX_TOTAL_SIZE / BUCKET_NUM / FILESYSTEM_BLOCK_SIZE * FILESYSTEM_BLOCK_SIZE)
 
-#define VAL_FILE_DIGITS (0)
+#define VAL_FILE_DIGITS (6)
 #define VAL_FILE_NUM (1 << VAL_FILE_DIGITS)  // must make sure same bucket in the same file
 #define MAX_VAL_BUCKET_SIZE (MAX_TOTAL_SIZE / BUCKET_NUM / FILESYSTEM_BLOCK_SIZE * FILESYSTEM_BLOCK_SIZE)
 
@@ -65,6 +65,11 @@ namespace polar_race {
         uint16_t value_offset_;
     }__attribute__((packed));
 
+    struct AIOFileInfo {
+        uint32_t file_id_;
+        uint64_t file_off_;
+    };
+
     bool operator<(KeyEntry l, KeyEntry r);
 
     class EngineRace : public Engine {
@@ -85,7 +90,7 @@ namespace polar_race {
 
         // AIO Files.
         int aio_meta_file_dp_;
-        uint64_t *mmap_aio_off_;        // Max To Represent No Need to Flush
+        AIOFileInfo *mmap_aio_off_;        // Max To Represent No Need to Flush
         int aio_value_buffer_file_dp_;
         char *mmap_aio_value_aligned_buffer_;
 
@@ -97,7 +102,7 @@ namespace polar_race {
         vector<iocb *> iocbs_tls_;
         vector<io_event *> io_events_tls_;
         vector<aio_context_t> aio_ctx_tls_;
-       
+
         vector<std::list<iocb * >> free_nodes_tls_;
 
         // Write.
