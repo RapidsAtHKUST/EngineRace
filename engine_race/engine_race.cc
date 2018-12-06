@@ -22,7 +22,9 @@
 #define DSTAT_TESTING
 #define FLUSH_IN_WRITER_DESTRUCTOR
 
-#define AIO_NUM (1u)
+#define AIO_NUM (8u)
+#define WRITE_QUEUE_DEPTH (16u)
+#define AIO_BUFFER_PER_THREAD (WRITE_QUEUE_DEPTH + NUM_THREADS)
 #define ENABLE_FALLOCATE
 
 namespace polar_race {
@@ -44,7 +46,6 @@ namespace polar_race {
 
     constexpr size_t tmp_buffer_value_file_size = static_cast<size_t>(VALUE_SIZE) * TMP_VALUE_BUFFER_SIZE * BUCKET_NUM;
     constexpr size_t tmp_buffer_key_file_size = sizeof(uint64_t) * TMP_KEY_BUFFER_SIZE * BUCKET_NUM;
-    constexpr uint32_t write_queue_depth = 32;
 
     using namespace std::chrono;
     std::chrono::time_point<std::chrono::high_resolution_clock> clock_start;
@@ -95,6 +96,10 @@ namespace polar_race {
         }
     }
 
+    inline uint64_t fid_to_aio_pool_id(uint32_t fid) {
+        return fid % AIO_NUM;
+    }
+
     RetCode Engine::Open(const std::string &name, Engine **eptr) {
         clock_start = high_resolution_clock::now();
         log_info("sizeof %d, %d, %d", sizeof(off_t), sizeof(off64_t), sizeof(KeyEntry));
@@ -110,18 +115,18 @@ namespace polar_race {
         io_events_tls_ = vector<io_event *>(AIO_NUM, nullptr);
         free_nodes_tls_ = vector<list<iocb *>>(AIO_NUM);
         for (uint32_t tid = 0; tid < AIO_NUM; tid++) {
-            iocbs_tls_[tid] = new iocb[write_queue_depth];
-            io_events_tls_[tid] = new io_event[write_queue_depth];
+            iocbs_tls_[tid] = new iocb[WRITE_QUEUE_DEPTH];
+            io_events_tls_[tid] = new io_event[WRITE_QUEUE_DEPTH];
         }
 
         for (uint32_t tid = 0; tid < AIO_NUM; tid++) {
-            for (uint32_t i = 0; i < write_queue_depth; ++i) {
+            for (uint32_t i = 0; i < WRITE_QUEUE_DEPTH; ++i) {
                 free_nodes_tls_[tid].push_back(&iocbs_tls_[tid][i]);
             }
         }
 
         for (uint32_t i = 0; i < AIO_NUM; i++) {
-            if (io_setup(write_queue_depth, &aio_ctx_tls_[i]) < 0) {
+            if (io_setup(WRITE_QUEUE_DEPTH, &aio_ctx_tls_[i]) < 0) {
                 log_info("Setup fail\n");
                 exit(-1);
             }
@@ -164,20 +169,26 @@ namespace polar_race {
             InitWriteAIOContext();
             // Init AIO Buffer.
             aio_value_buffer_file_dp_ = open(aio_buf_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
-            uint64_t aio_file_size = (write_queue_depth + NUM_THREADS) * VALUE_SIZE * TMP_VALUE_BUFFER_SIZE;
+            uint64_t aio_file_size = (AIO_BUFFER_PER_THREAD) * VALUE_SIZE * TMP_VALUE_BUFFER_SIZE * AIO_NUM;
             ftruncate(aio_value_buffer_file_dp_, aio_file_size);
             mmap_aio_value_aligned_buffer_ = (char *) mmap(nullptr, aio_file_size, \
                             PROT_READ | PROT_WRITE, MAP_SHARED, aio_value_buffer_file_dp_, 0);
-            for (uint32_t i = 0; i < NUM_THREADS + write_queue_depth; i++) {
-                free_buffers_.push(mmap_aio_value_aligned_buffer_ + i * VALUE_SIZE * TMP_VALUE_BUFFER_SIZE);
+            free_buffers_tls_ = new blocking_queue<char *>[AIO_NUM];
+            for (uint32_t aio_id = 0; aio_id < AIO_NUM; aio_id++) {
+                for (uint32_t i = 0; i < NUM_THREADS + WRITE_QUEUE_DEPTH; i++) {
+                    free_buffers_tls_[aio_id].push(
+                            mmap_aio_value_aligned_buffer_ +
+                            aio_id * VALUE_SIZE * TMP_VALUE_BUFFER_SIZE * AIO_BUFFER_PER_THREAD +
+                            i * VALUE_SIZE * TMP_VALUE_BUFFER_SIZE);
+                }
             }
 
             aio_meta_file_dp_ = open(aio_buf_file_meta_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
-            uint64_t aio_meta_size = (write_queue_depth + NUM_THREADS) * sizeof(AIOFileInfo);
+            uint64_t aio_meta_size = (AIO_BUFFER_PER_THREAD) * sizeof(AIOFileInfo) * AIO_NUM;
             ftruncate(aio_meta_file_dp_, aio_meta_size);
             mmap_aio_off_ = (AIOFileInfo *) mmap(nullptr, aio_meta_size, \
                             PROT_READ | PROT_WRITE, MAP_SHARED, aio_meta_file_dp_, 0);
-            for (uint32_t i = 0; i < write_queue_depth + NUM_THREADS; i++) {
+            for (uint32_t i = 0; i < AIO_BUFFER_PER_THREAD; i++) {
                 mmap_aio_off_[i].file_id_ = UINT32_MAX;
             }
 
@@ -423,7 +434,7 @@ namespace polar_race {
         auto &io_events = io_events_tls_[tid];
         // Wait for Queue.
         while (free_nodes.empty()) {
-            uint32_t in_flight = write_queue_depth;
+            uint32_t in_flight = WRITE_QUEUE_DEPTH;
             uint32_t expected = 0;
 
             auto completed = io_getevents(aio_ctx, expected, in_flight, io_events, nullptr);
@@ -444,7 +455,7 @@ namespace polar_race {
                 uint64_t aio_idx = (buffer_dict_[iocb_ptr] - mmap_aio_value_aligned_buffer_) /
                                    (TMP_VALUE_BUFFER_SIZE * VALUE_SIZE);
                 mmap_aio_off_[aio_idx].file_id_ = UINT32_MAX;
-                free_buffers_.push((char *const &) buffer_dict_[iocb_ptr]);
+                free_buffers_tls_[fid_to_aio_pool_id(fid)].push((char *const &) buffer_dict_[iocb_ptr]);
             }
         }
         // Submit.
@@ -468,8 +479,8 @@ namespace polar_race {
         auto &aio_ctx = aio_ctx_tls_[tid];
         auto &io_events = io_events_tls_[tid];
         // Wait for Queue.
-        while (free_nodes.size() != write_queue_depth) {
-            uint32_t in_flight = write_queue_depth - free_nodes.size();
+        while (free_nodes.size() != WRITE_QUEUE_DEPTH) {
+            uint32_t in_flight = WRITE_QUEUE_DEPTH - free_nodes.size();
             uint32_t expected = (0 <= in_flight ? 0 : in_flight);
 
             auto completed = io_getevents(aio_ctx, expected, in_flight, io_events, NULL);
@@ -522,16 +533,17 @@ namespace polar_race {
                 uint64_t foff;
                 tie(fid, foff) = get_value_fid_foff(bucket_id, in_bucket_id);
 
-                char *value_buffer_tmp = free_buffers_.pop();
+                char *value_buffer_tmp = free_buffers_tls_[fid_to_aio_pool_id(fid)].pop();
                 memcpy(value_buffer_tmp, value_buffer, TMP_VALUE_BUFFER_SIZE * VALUE_SIZE);
 
-                uint64_t aio_id = (value_buffer_tmp - mmap_aio_value_aligned_buffer_) /
-                                  (TMP_VALUE_BUFFER_SIZE * VALUE_SIZE);
-                mmap_aio_off_[aio_id].file_id_ = fid;
-                mmap_aio_off_[aio_id].file_off_ = foff;
-                writer_value_io_ptr_pool_[0]->enqueue([this, bucket_id, fid, foff, value_buffer_tmp]() {
-                    WriteBufferToFile(bucket_id, fid, foff, value_buffer_tmp);
-                });
+                uint64_t global_aio_id = (value_buffer_tmp - mmap_aio_value_aligned_buffer_) /
+                                         (TMP_VALUE_BUFFER_SIZE * VALUE_SIZE);
+                mmap_aio_off_[global_aio_id].file_id_ = fid;
+                mmap_aio_off_[global_aio_id].file_off_ = foff;
+                writer_value_io_ptr_pool_[fid_to_aio_pool_id(fid)]->enqueue(
+                        [this, bucket_id, fid, foff, value_buffer_tmp]() {
+                            WriteBufferToFile(bucket_id, fid, foff, value_buffer_tmp);
+                        });
                 mmap_meta_val_not_flushed_cnt_[bucket_id] = 0;
             }
 
@@ -960,16 +972,16 @@ namespace polar_race {
             printTS(__FUNCTION__, __LINE__, clock_start);
             const string aio_buf_file_path = dir + aio_value_buf_file_name;
             aio_value_buffer_file_dp_ = open(aio_buf_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
-            uint64_t aio_file_size = (write_queue_depth + NUM_THREADS) * VALUE_SIZE * TMP_VALUE_BUFFER_SIZE;
+            uint64_t aio_file_size = (AIO_BUFFER_PER_THREAD) * VALUE_SIZE * TMP_VALUE_BUFFER_SIZE * AIO_NUM;
             mmap_aio_value_aligned_buffer_ = (char *) mmap(nullptr, aio_file_size, \
                             PROT_READ | PROT_WRITE, MAP_SHARED, aio_value_buffer_file_dp_, 0);
 
             const string aio_buf_file_meta_path = dir + aio_value_buf_meta_file_name;
             aio_meta_file_dp_ = open(aio_buf_file_meta_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
-            uint64_t aio_meta_size = (write_queue_depth + NUM_THREADS) * sizeof(AIOFileInfo);
+            uint64_t aio_meta_size = (AIO_BUFFER_PER_THREAD) * sizeof(AIOFileInfo) * AIO_NUM;
             mmap_aio_off_ = (AIOFileInfo *) mmap(nullptr, aio_meta_size, \
                             PROT_READ | PROT_WRITE, MAP_SHARED, aio_meta_file_dp_, 0);
-            for (uint32_t aio_idx = 0; aio_idx < write_queue_depth + NUM_THREADS; aio_idx++) {
+            for (uint32_t aio_idx = 0; aio_idx < AIO_BUFFER_PER_THREAD * AIO_NUM; aio_idx++) {
                 if (mmap_aio_off_[aio_idx].file_id_ != UINT32_MAX) {
                     log_info("Flush To backup idx: %d, %zu", aio_idx, mmap_aio_off_[aio_idx]);
                     pwrite(val_fds[mmap_aio_off_[aio_idx].file_id_],
