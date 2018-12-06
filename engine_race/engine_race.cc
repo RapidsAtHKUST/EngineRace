@@ -22,10 +22,10 @@
 #define DSTAT_TESTING
 #define FLUSH_IN_WRITER_DESTRUCTOR
 
-#define AIO_NUM (8u)
+#define AIO_NUM (16u)
 #define WRITE_QUEUE_DEPTH (8u)
 #define AIO_BUFFER_PER_THREAD (WRITE_QUEUE_DEPTH + NUM_THREADS)
-//#define ENABLE_FALLOCATE
+#define ENABLE_FALLOCATE
 
 namespace polar_race {
     using namespace std;
