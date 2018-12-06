@@ -25,7 +25,7 @@
 
 // Buffers.
 #define TMP_KEY_BUFFER_SIZE (512)
-#define TMP_VALUE_BUFFER_SIZE (4)
+#define TMP_VALUE_BUFFER_SIZE (8)
 // Key/Value Files.
 #define VALUE_SIZE (4096)
 
@@ -40,7 +40,7 @@
 #define KEY_FILE_NUM (1 << KEY_FILE_DIGITS)
 #define MAX_KEY_BUCKET_SIZE (MAX_TOTAL_SIZE / BUCKET_NUM / FILESYSTEM_BLOCK_SIZE * FILESYSTEM_BLOCK_SIZE)
 
-#define VAL_FILE_DIGITS (6)
+#define VAL_FILE_DIGITS (5)
 #define VAL_FILE_NUM (1 << VAL_FILE_DIGITS)  // must make sure same bucket in the same file
 #define MAX_VAL_BUCKET_SIZE (MAX_TOTAL_SIZE / BUCKET_NUM / FILESYSTEM_BLOCK_SIZE * FILESYSTEM_BLOCK_SIZE)
 
@@ -95,7 +95,7 @@ namespace polar_race {
         char *mmap_aio_value_aligned_buffer_;
 
         char **mmap_value_aligned_buffer_view_;
-        blocking_queue<char *>* free_buffers_tls_;
+        blocking_queue<char *> *free_buffers_tls_;
         map<iocb *, const char *> buffer_dict_;
 
         // AIO Context.
