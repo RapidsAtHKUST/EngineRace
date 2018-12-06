@@ -25,7 +25,7 @@
 
 // Buffers.
 #define TMP_KEY_BUFFER_SIZE (512)
-#define TMP_VALUE_BUFFER_SIZE (32)
+#define TMP_VALUE_BUFFER_SIZE (256)
 // Key/Value Files.
 #define VALUE_SIZE (4096)
 
