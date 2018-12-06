@@ -97,7 +97,7 @@ namespace polar_race {
         vector<iocb *> iocbs_tls_;
         vector<io_event *> io_events_tls_;
         vector<aio_context_t> aio_ctx_tls_;
-        uint32_t write_queue_depth;
+       
         vector<std::list<iocb * >> free_nodes_tls_;
 
         // Write.
