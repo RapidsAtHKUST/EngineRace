@@ -205,6 +205,9 @@ namespace polar_race {
                     log_info("fd err of %d: %d, err info: %s", i, value_file_dp_[i], strerror(errno));
                     exit(-1);
                 }
+                size_t file_size = static_cast<uint64_t>(MAX_VAL_BUCKET_SIZE) * VALUE_SIZE * BUCKET_NUM;
+                log_info("File size: %zu", file_size);
+                fallocate(value_file_dp_[i], 0, 0, file_size);
             }
             printTS(__FUNCTION__, __LINE__, clock_start);
 
