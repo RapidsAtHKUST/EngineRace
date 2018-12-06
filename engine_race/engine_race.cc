@@ -22,7 +22,7 @@
 #define DSTAT_TESTING
 #define FLUSH_IN_WRITER_DESTRUCTOR
 
-#define AIO_NUM (16u)
+#define AIO_NUM (32u)
 #define WRITE_QUEUE_DEPTH (8u)
 #define AIO_BUFFER_PER_THREAD (WRITE_QUEUE_DEPTH + NUM_THREADS)
 #define ENABLE_FALLOCATE
@@ -161,7 +161,7 @@ namespace polar_race {
         key_file_dp_ = new int[KEY_FILE_NUM];
         mmap_key_aligned_buffer_view_ = new uint64_t *[BUCKET_NUM];
 
-        value_file_dp_ = new int[BUCKET_NUM];
+        value_file_dp_ = new int[VAL_FILE_NUM];
         mmap_value_aligned_buffer_view_ = new char *[BUCKET_NUM];
 
         if (!file_exists(meta_file_path.c_str())) {
@@ -188,7 +188,7 @@ namespace polar_race {
             ftruncate(aio_meta_file_dp_, aio_meta_size);
             mmap_aio_off_ = (AIOFileInfo *) mmap(nullptr, aio_meta_size, \
                             PROT_READ | PROT_WRITE, MAP_SHARED, aio_meta_file_dp_, 0);
-            for (uint32_t i = 0; i < AIO_BUFFER_PER_THREAD; i++) {
+            for (uint32_t i = 0; i < AIO_BUFFER_PER_THREAD * AIO_NUM; i++) {
                 mmap_aio_off_[i].file_id_ = UINT32_MAX;
             }
 
@@ -423,7 +423,6 @@ namespace polar_race {
 
 
     void EngineRace::WriteBufferToFile(uint32_t bucket_id, uint32_t fid, uint64_t foff, const char *value_buffer) {
-//        pwrite(value_file_dp_[fid], value_buffer, VALUE_SIZE * TMP_VALUE_BUFFER_SIZE, foff);
         static thread_local auto tid = ++write_io_threads_count;
         static thread_local auto write_cnt = 0;
 
@@ -515,7 +514,6 @@ namespace polar_race {
         }
 #endif
 
-
         {
             unique_lock<mutex> lock(bucket_mtx_[bucket_id]);
 
@@ -538,8 +536,8 @@ namespace polar_race {
 
                 uint64_t global_aio_id = (value_buffer_tmp - mmap_aio_value_aligned_buffer_) /
                                          (TMP_VALUE_BUFFER_SIZE * VALUE_SIZE);
-                mmap_aio_off_[global_aio_id].file_id_ = fid;
                 mmap_aio_off_[global_aio_id].file_off_ = foff;
+                mmap_aio_off_[global_aio_id].file_id_ = fid;
                 writer_value_io_ptr_pool_[fid_to_aio_pool_id(fid)]->enqueue(
                         [this, bucket_id, fid, foff, value_buffer_tmp]() {
                             WriteBufferToFile(bucket_id, fid, foff, value_buffer_tmp);
@@ -981,12 +979,13 @@ namespace polar_race {
             uint64_t aio_meta_size = (AIO_BUFFER_PER_THREAD) * sizeof(AIOFileInfo) * AIO_NUM;
             mmap_aio_off_ = (AIOFileInfo *) mmap(nullptr, aio_meta_size, \
                             PROT_READ | PROT_WRITE, MAP_SHARED, aio_meta_file_dp_, 0);
-            for (uint32_t aio_idx = 0; aio_idx < AIO_BUFFER_PER_THREAD * AIO_NUM; aio_idx++) {
-                if (mmap_aio_off_[aio_idx].file_id_ != UINT32_MAX) {
-                    log_info("Flush To backup idx: %d, %zu", aio_idx, mmap_aio_off_[aio_idx]);
-                    pwrite(val_fds[mmap_aio_off_[aio_idx].file_id_],
-                           mmap_aio_value_aligned_buffer_ + aio_idx * TMP_VALUE_BUFFER_SIZE * VALUE_SIZE,
-                           TMP_VALUE_BUFFER_SIZE * VALUE_SIZE, mmap_aio_off_[aio_idx].file_off_);
+            for (uint32_t global_aio_idx = 0; global_aio_idx < AIO_BUFFER_PER_THREAD * AIO_NUM; global_aio_idx++) {
+                if (mmap_aio_off_[global_aio_idx].file_id_ != UINT32_MAX) {
+                    log_info("Flush To backup idx: %d, FID: %zu, Off: %zu", global_aio_idx,
+                             mmap_aio_off_[global_aio_idx].file_id_, mmap_aio_off_[global_aio_idx].file_off_);
+                    pwrite(val_fds[mmap_aio_off_[global_aio_idx].file_id_],
+                           mmap_aio_value_aligned_buffer_ + global_aio_idx * TMP_VALUE_BUFFER_SIZE * VALUE_SIZE,
+                           TMP_VALUE_BUFFER_SIZE * VALUE_SIZE, mmap_aio_off_[global_aio_idx].file_off_);
                 }
             }
             printTS(__FUNCTION__, __LINE__, clock_start);
