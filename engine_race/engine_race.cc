@@ -23,6 +23,7 @@
 #define FLUSH_IN_WRITER_DESTRUCTOR
 
 #define AIO_NUM (1u)
+#define ENABLE_FALLOCATE
 
 namespace polar_race {
     using namespace std;
