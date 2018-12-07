@@ -608,6 +608,7 @@ namespace polar_race {
         if (tid == 0) {
             // Submit All IO Jobs.
             // Odd Round.
+            printTS(__FUNCTION__, __LINE__, clock_start);
             promises_.resize(BUCKET_NUM * 2);
             for (int i = 0; i < BUCKET_NUM * 2; i++) {
                 futures_[i] = promises_[i].get_future();
@@ -657,13 +658,15 @@ namespace polar_race {
                 }
                 log_info("In Range IO, Finish Even Round");
             });
+            printTS(__FUNCTION__, __LINE__, clock_start);
 
-            for (uint32_t i = 0; i < BUCKET_NUM * 2; i++) {
-                bucket_consumed_num_[i].store(0);
-            }
             for (uint32_t i = 0; i < MAX_TOTAL_BUFFER_NUM; i++) {
                 free_buffers_->push(value_shared_buffers_[i]);
             }
+            for (uint32_t i = 0; i < BUCKET_NUM * 2; i++) {
+                bucket_consumed_num_[i].store(0);
+            }
+            printTS(__FUNCTION__, __LINE__, clock_start);
         }
 
         range_barrier_ptr_->Wait();
