@@ -55,8 +55,6 @@
 #define KEEP_REUSE_BUFFER_NUM (6u)
 #define MAX_TOTAL_BUFFER_NUM (MAX_RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
 
-//#define BUSY_WAITING
-
 namespace polar_race {
     using namespace std;
 
@@ -110,13 +108,9 @@ namespace polar_race {
         ThreadPool *range_io_worker_pool_;
 
         // Range Sequential IO.
-#ifndef BUSY_WAITING
         mutex *bucket_mutex_arr_;
         condition_variable *bucket_cond_var_arr_;
         bool *bucket_is_ready_read_;
-#else
-        volatile bool *bucket_is_ready_read_;
-#endif
         atomic_int *bucket_consumed_num_;
         int32_t total_range_num_threads_;
 
