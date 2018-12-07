@@ -98,7 +98,8 @@ namespace polar_race {
             aligned_read_buffer_(nullptr), read_barrier_(READ_BARRIER_NUM),
             is_range_init_(false), range_barrier_ptr_(nullptr), polar_keys_(NUM_THREADS),
             total_time_(0), total_blocking_queue_time_(0), total_io_sleep_time_(0), wait_get_time_(0),
-            val_buffer_max_size_(0), range_io_worker_pool_(nullptr),
+            val_buffer_max_size_(0),
+            single_range_io_worker_(nullptr),
             bucket_consumed_num_(nullptr), total_range_num_threads_(0) {
         printTS(__FUNCTION__, __LINE__, clock_start);
 
@@ -249,7 +250,7 @@ namespace polar_race {
             for (int next_future_idx = 0; next_future_idx < BUCKET_NUM * 2; next_future_idx++) {
                 free_buffers_->push(nullptr);
             }
-            delete range_io_worker_pool_;
+            single_range_io_worker_->join();
             delete range_barrier_ptr_;
             if (total_time_ != 0) {
                 log_info("Total Range Time: %.9lf s, wait: %.9lf s,  io thread sleep: %.9lf s, bq-pop: %.9lf s",
@@ -442,10 +443,11 @@ namespace polar_race {
     }
 
     void EngineRace::ReadBucketToBuffer(uint32_t bucket_id, char *value_buffer) {
+        auto range_clock_beg = high_resolution_clock::now();
+
         if (value_buffer == nullptr) {
             return;
         }
-        auto range_clock_beg = high_resolution_clock::now();
 
         // get fid, and off
         uint32_t fid;
@@ -524,14 +526,14 @@ namespace polar_race {
                               static_cast<double>(1000000000);
         total_time_ += elapsed_time;
 #ifdef STAT
-//        if (bucket_id < MAX_TOTAL_BUFFER_NUM + 16 || bucket_id % 256 == 255) {
-        double bucket_size = static_cast<double>(mmap_meta_cnt_[bucket_id] * VALUE_SIZE) / (1024. * 1024.);
-        log_info(
-                "In Bucket %d, Free Buf: %d, Read time %.9lf s, Acc time: %.9lf s, "
-                "Bucket size: %.6lf MB, Speed: %.6lf MB/s",
-                bucket_id, free_buffers_->size(), elapsed_time,
-                total_time_, bucket_size, bucket_size / elapsed_time);
-//        }
+        if (bucket_id < MAX_TOTAL_BUFFER_NUM + 8 || bucket_id % 256 == 255) {
+            double bucket_size = static_cast<double>(mmap_meta_cnt_[bucket_id] * VALUE_SIZE) / (1024. * 1024.);
+            log_info(
+                    "In Bucket %d, Free Buf: %d, Read time %.9lf s, Acc time: %.9lf s, "
+                    "Bucket size: %.6lf MB, Speed: %.6lf MB/s",
+                    bucket_id, free_buffers_->size(), elapsed_time,
+                    total_time_, bucket_size, bucket_size / elapsed_time);
+        }
 #endif
         if (bucket_id == BUCKET_NUM - 1) {
             printTS(__FUNCTION__, __LINE__, clock_start);
@@ -557,7 +559,6 @@ namespace polar_race {
     }
 
     void EngineRace::InitRangeReader() {
-        range_io_worker_pool_ = new ThreadPool(IO_POOL_SIZE);
         for (int i = 0; i < BUCKET_NUM; i++) {
             val_buffer_max_size_ = max<uint64_t>(val_buffer_max_size_, mmap_meta_cnt_[i]);
         }
@@ -604,53 +605,67 @@ namespace polar_race {
             }
         }
 
-        // Submit All IO Jobs.
-        // Odd Round.
         if (tid == 0) {
+            // Submit All IO Jobs.
+            // Odd Round.
+            promises_.resize(BUCKET_NUM * 2);
+            for (int i = 0; i < BUCKET_NUM * 2; i++) {
+                futures_[i] = promises_[i].get_future();
+            }
+            if (single_range_io_worker_ != nullptr) {
+                single_range_io_worker_->join();
+            }
+            single_range_io_worker_ = new thread([this]() {
+                // Odd Round.
+                log_info("In Range IO");
+                for (uint32_t next_bucket_idx = 0; next_bucket_idx < BUCKET_NUM; next_bucket_idx++) {
+                    // 1st: Pop Buffer.
+                    auto range_clock_beg = high_resolution_clock::now();
+                    char *buffer = free_buffers_->pop(total_io_sleep_time_);
+                    auto range_clock_end = high_resolution_clock::now();
+                    double elapsed_time =
+                            duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
+                            static_cast<double>(1000000000);
+                    total_blocking_queue_time_ += elapsed_time;
+
+                    // 2nd: Read
+                    ReadBucketToBuffer(next_bucket_idx, buffer);
+                    promises_[next_bucket_idx].set_value(buffer);
+                }
+                log_info("In Range IO, Finish Odd Round");
+
+                // Even Round.
+                for (uint32_t next_bucket_idx = 0; next_bucket_idx < BUCKET_NUM; next_bucket_idx++) {
+                    uint32_t future_id = next_bucket_idx + BUCKET_NUM;
+                    char *buffer;
+                    if (next_bucket_idx >= KEEP_REUSE_BUFFER_NUM) {
+                        // 1st: Pop Buffer.
+                        auto range_clock_beg = high_resolution_clock::now();
+                        buffer = free_buffers_->pop(total_io_sleep_time_);
+                        auto range_clock_end = high_resolution_clock::now();
+                        double elapsed_time =
+                                duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
+                                static_cast<double>(1000000000);
+                        total_blocking_queue_time_ += elapsed_time;
+
+                        // 2nd: Read
+                        ReadBucketToBuffer(next_bucket_idx, buffer);
+                    } else {
+                        buffer = cached_front_buffers_[next_bucket_idx];
+                    }
+                    promises_[future_id].set_value(buffer);
+                }
+                log_info("In Range IO, Finish Even Round");
+            });
+
+            for (uint32_t i = 0; i < BUCKET_NUM * 2; i++) {
+                bucket_consumed_num_[i].store(0);
+            }
             for (uint32_t i = 0; i < MAX_TOTAL_BUFFER_NUM; i++) {
                 free_buffers_->push(value_shared_buffers_[i]);
             }
-            for (uint32_t next_bucket_idx = 0; next_bucket_idx < BUCKET_NUM; next_bucket_idx++) {
-                bucket_consumed_num_[next_bucket_idx].store(0);
-                futures_[next_bucket_idx] = range_io_worker_pool_->enqueue(
-                        [this, next_bucket_idx]() {
-                            auto range_clock_beg = high_resolution_clock::now();
-                            char *buffer = free_buffers_->pop(total_io_sleep_time_);
-                            auto range_clock_end = high_resolution_clock::now();
-                            double elapsed_time =
-                                    duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
-                                    static_cast<double>(1000000000);
-                            total_blocking_queue_time_ += elapsed_time;
-                            ReadBucketToBuffer(next_bucket_idx, buffer);
+        }
 
-                            return buffer;
-                        });
-            }
-        }
-        // Even Round.
-        if (tid == 0) {
-            printTS(__FUNCTION__, __LINE__, clock_start);
-            for (uint32_t next_bucket_idx = 0; next_bucket_idx < BUCKET_NUM; next_bucket_idx++) {
-                uint32_t future_id = next_bucket_idx + BUCKET_NUM;
-                bucket_consumed_num_[future_id].store(0);
-                futures_[future_id] = range_io_worker_pool_->enqueue(
-                        [this, next_bucket_idx]() {
-                            if (next_bucket_idx >= KEEP_REUSE_BUFFER_NUM) {
-                                auto range_clock_beg = high_resolution_clock::now();
-                                char *buffer = free_buffers_->pop(total_io_sleep_time_);
-                                auto range_clock_end = high_resolution_clock::now();
-                                double elapsed_time =
-                                        duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
-                                        static_cast<double>(1000000000);
-                                total_blocking_queue_time_ += elapsed_time;
-                                ReadBucketToBuffer(next_bucket_idx, buffer);
-                                return buffer;
-                            }
-                            return cached_front_buffers_[next_bucket_idx];
-                        });
-            }
-            printTS(__FUNCTION__, __LINE__, clock_start);
-        }
         range_barrier_ptr_->Wait();
     }
 

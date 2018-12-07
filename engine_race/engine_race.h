@@ -100,6 +100,7 @@ namespace polar_race {
         condition_variable range_init_cond_;
         vector<char *> value_shared_buffers_;
 
+        vector<promise<char *>> promises_;
         vector<shared_future<char *>> futures_;
         double total_time_;
         double total_blocking_queue_time_;
@@ -107,7 +108,7 @@ namespace polar_race {
 
         double wait_get_time_;
         uint64_t val_buffer_max_size_;
-        ThreadPool *range_io_worker_pool_;
+        thread* single_range_io_worker_;
 
         // Range Sequential IO.
         blocking_queue<char *> *free_buffers_;
