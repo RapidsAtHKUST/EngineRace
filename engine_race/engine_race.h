@@ -29,7 +29,7 @@
 #define VALUE_SIZE (4096)
 
 // Buckets.
-#define BUCKET_DIGITS (11)      // k-v-buckets must be the same for the range query
+#define BUCKET_DIGITS (12)      // k-v-buckets must be the same for the range query
 #define BUCKET_NUM (1 << BUCKET_DIGITS)
 
 // Max Bucket Size * BUCKET_NUM.
@@ -53,7 +53,7 @@
 // Range.
 #define IO_POOL_SIZE (1u)       // have to be one for aio
 #define RECYCLE_BUFFER_NUM (2u)
-#define KEEP_REUSE_BUFFER_NUM (9u)
+#define KEEP_REUSE_BUFFER_NUM (20u)
 #define MAX_TOTAL_BUFFER_NUM (RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
 
 namespace polar_race {
@@ -100,7 +100,7 @@ namespace polar_race {
         condition_variable range_init_cond_;
         vector<char *> value_shared_buffers_;
 
-        vector<shared_future<char*>> futures_;
+        vector<shared_future<char *>> futures_;
         double total_time_;
         double total_io_sleep_time_;
 
@@ -109,8 +109,8 @@ namespace polar_race {
         ThreadPool *range_io_worker_pool_;
 
         // Range Sequential IO.
-        blocking_queue<char*>* free_buffers_;
-        vector<char*> cached_front_buffers_;
+        blocking_queue<char *> *free_buffers_;
+        vector<char *> cached_front_buffers_;
         atomic_int *bucket_consumed_num_;
         int32_t total_range_num_threads_;
 
@@ -151,7 +151,7 @@ namespace polar_race {
 
         void InitForRange(int64_t tid);
 
-        void ReadBucketToBuffer(uint32_t bucket_id, char* value_buffer);
+        void ReadBucketToBuffer(uint32_t bucket_id, char *value_buffer);
 
     private:
         void ParallelFlushTmp(int *key_fds, int *val_fds);

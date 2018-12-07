@@ -9,7 +9,14 @@
 #include <future>
 #include <functional>
 #include <stdexcept>
+#include <chrono>
 //#include "util.h"
+#include "log.h"
+
+using namespace std;
+using namespace std::chrono;
+
+#define POOL_STAT
 
 // https://github.com/progschj/ThreadPool
 class ThreadPool {
@@ -31,11 +38,20 @@ private:
     // synchronization
     std::mutex queue_mutex;
     std::condition_variable condition;
+#ifdef POOL_STAT
+    double iter_time;
+    double wait_time;
+    double task_time;
+#endif
     bool stop;
 };
 
 // the constructor just launches some amount of workers
-ThreadPool::ThreadPool(size_t threads) : stop(false) {
+ThreadPool::ThreadPool(size_t threads) :
+#ifdef POOL_STAT
+        iter_time(0), wait_time(0), task_time(0),
+#endif
+        stop(false) {
     workers.reserve(threads);
 //    std::vector<int32_t> affinity_arr_ = {44, 45, 46, 47, 60, 61, 62, 63};
     for (size_t i = 0; i < threads; ++i)
@@ -46,15 +62,37 @@ ThreadPool::ThreadPool(size_t threads) : stop(false) {
                     for (;;) {
                         std::function<void()> task;
                         {
+#ifdef POOL_STAT
+                            auto clock_beg = high_resolution_clock::now();
+#endif
                             std::unique_lock<std::mutex> lock(this->queue_mutex);
                             this->condition.wait(lock, [this] { return this->stop || !this->tasks.empty(); });
 
+#ifdef POOL_STAT
+                            auto clock_end = high_resolution_clock::now();
+                            wait_time += duration_cast<nanoseconds>(clock_end - clock_beg).count() /
+                                         static_cast<double>(1000000000);
+
+                            clock_beg = high_resolution_clock::now();
+#endif
                             if (this->stop && this->tasks.empty()) { return; }
 
                             task = std::move(this->tasks.front());
                             this->tasks.pop();
+#ifdef POOL_STAT
+
+                            clock_end = high_resolution_clock::now();
+                            iter_time += duration_cast<nanoseconds>(clock_end - clock_beg).count() /
+                                         static_cast<double>(1000000000);
+#endif
                         }
+                        auto clock_beg = high_resolution_clock::now();
                         task();
+                        auto clock_end = high_resolution_clock::now();
+#ifdef POOL_STAT
+                        task_time += duration_cast<nanoseconds>(clock_end - clock_beg).count() /
+                                     static_cast<double>(1000000000);
+#endif
                     }
                 }
         );
@@ -84,6 +122,9 @@ auto ThreadPool::enqueue(F &&f, Args &&... args) -> std::future<typename std::re
 
 // the destructor joins all threads
 ThreadPool::~ThreadPool() {
+#ifdef POOL_STAT
+    log_info("Pool QueueOp Time: %.6lf s, CondWait Time: %.6lf s, Task Time: %.6lf s", iter_time, wait_time, task_time);
+#endif
     {
         std::unique_lock<std::mutex> lock(queue_mutex);
         stop = true;

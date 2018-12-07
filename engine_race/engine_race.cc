@@ -524,11 +524,14 @@ namespace polar_race {
                               static_cast<double>(1000000000);
         total_time_ += elapsed_time;
 #ifdef STAT
-//        if (bucket_id < 32) {
-        double bucket_size = static_cast<double>(mmap_meta_cnt_[bucket_id] * VALUE_SIZE) / (1024. * 1024.);
-        log_info("In Bucket %d, Free Buf: %d, Read time %.9lf s, Bucket size: %.6lf MB, Speed: %.6lf MB/s", bucket_id,
-                 free_buffers_->size(), elapsed_time, bucket_size, bucket_size / elapsed_time);
-//        }
+        if (bucket_id < MAX_TOTAL_BUFFER_NUM + 16 || bucket_id % 256 == 255) {
+            double bucket_size = static_cast<double>(mmap_meta_cnt_[bucket_id] * VALUE_SIZE) / (1024. * 1024.);
+            log_info(
+                    "In Bucket %d, Free Buf: %d, Read time %.9lf s, Acc time: %.9lf s, "
+                    "Bucket size: %.6lf MB, Speed: %.6lf MB/s",
+                    bucket_id, free_buffers_->size(), elapsed_time,
+                    total_time_, bucket_size, bucket_size / elapsed_time);
+        }
 #endif
         if (bucket_id == BUCKET_NUM - 1) {
             printTS(__FUNCTION__, __LINE__, clock_start);
