@@ -526,8 +526,8 @@ namespace polar_race {
 #ifdef STAT
 //        if (bucket_id < 32) {
         double bucket_size = static_cast<double>(mmap_meta_cnt_[bucket_id] * VALUE_SIZE) / (1024. * 1024.);
-        log_info("In Bucket %d, Read time %.9lf s, Bucket size: %.6lf MB, Speed: %.6lf MB/s", bucket_id,
-                 elapsed_time, bucket_size, bucket_size / elapsed_time);
+        log_info("In Bucket %d, Free Buf: %d, Read time %.9lf s, Bucket size: %.6lf MB, Speed: %.6lf MB/s", bucket_id,
+                 free_buffers_->size(), elapsed_time, bucket_size, bucket_size / elapsed_time);
 //        }
 #endif
         if (bucket_id == BUCKET_NUM - 1) {

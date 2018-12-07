@@ -37,4 +37,9 @@ public:
         total_io_sleep_time_ += sleep_time;
         return rc;
     }
+
+    size_t size(){
+        std::unique_lock<std::mutex> lock(this->d_mutex);
+        return d_queue.size();
+    }
 };
