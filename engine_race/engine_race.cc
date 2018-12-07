@@ -77,14 +77,6 @@ namespace polar_race {
         return make_pair(fid, foff * VALUE_SIZE);
     }
 
-    inline uint32_t get_buffer_id(uint32_t bucket_id) {
-        if (bucket_id >= KEEP_REUSE_BUFFER_NUM) {
-            return (bucket_id % MAX_RECYCLE_BUFFER_NUM) + KEEP_REUSE_BUFFER_NUM;
-        } else {
-            return bucket_id;
-        }
-    }
-
     RetCode Engine::Open(const std::string &name, Engine **eptr) {
         clock_start = high_resolution_clock::now();
         log_info("sizeof %d, %d, %d", sizeof(off_t), sizeof(off64_t), sizeof(KeyEntry));
@@ -107,8 +99,7 @@ namespace polar_race {
             is_range_init_(false), range_barrier_ptr_(nullptr), polar_keys_(NUM_THREADS),
             total_time_(0), total_io_sleep_time_(0), wait_get_time_(0),
             val_buffer_max_size_(0), range_io_worker_pool_(nullptr),
-            bucket_mutex_arr_(nullptr), bucket_cond_var_arr_(nullptr),
-            bucket_is_ready_read_(nullptr), bucket_consumed_num_(nullptr), total_range_num_threads_(0) {
+            bucket_consumed_num_(nullptr), total_range_num_threads_(0) {
         printTS(__FUNCTION__, __LINE__, clock_start);
 
         const string meta_file_path = dir + meta_file_name;
@@ -247,6 +238,25 @@ namespace polar_race {
 
     EngineRace::~EngineRace() {
         printTS(__FUNCTION__, __LINE__, clock_start);
+        // Range: Thread.
+        if (is_range_init_) {
+            for (auto &kv_pair : polar_keys_) {
+                if (kv_pair != nullptr)
+                    delete[] kv_pair->data();
+                delete kv_pair;
+            }
+            // Avoid Dead Lock.
+            for (int next_future_idx = 0; next_future_idx < BUCKET_NUM * 2; next_future_idx++) {
+                free_buffers_->push(nullptr);
+            }
+            delete range_io_worker_pool_;
+            delete range_barrier_ptr_;
+            if (total_time_ != 0) {
+                log_info("Total Range Time: %.9lf s, wait: %.9lf s,  io thread sleep: %.9lf s",
+                         total_time_, wait_get_time_, total_io_sleep_time_);
+            }
+        }
+
 #ifdef DSTAT_TESTING
         PrintMemFree();
 #endif
@@ -318,15 +328,6 @@ namespace polar_race {
         }
         close(meta_cnt_file_dp_);
 
-        // Range: Thread.
-        if (is_range_init_) {
-            for (auto &kv_pair : polar_keys_) {
-                if (kv_pair != nullptr)
-                    delete[] kv_pair->data();
-                delete kv_pair;
-            }
-        }
-        delete range_barrier_ptr_;
 #ifdef EANBLE_VALUE_BUFFER_FREE
         printTS(__FUNCTION__, __LINE__, clock_start);
         for (char *ptr: value_shared_buffers_) {
@@ -334,11 +335,7 @@ namespace polar_race {
         }
         printTS(__FUNCTION__, __LINE__, clock_start);
 #endif
-        delete range_io_worker_pool_;
-        if (total_time_ != 0) {
-            log_info("Total Range Time: %.9lf s, wait: %.9lf s,  io thread sleep: %.9lf s",
-                     total_time_, wait_get_time_, total_io_sleep_time_);
-        }
+
 #ifdef DSTAT_TESTING
         PrintMemFree();
 #endif
@@ -348,7 +345,7 @@ namespace polar_race {
 
 // 3. Write a key-value pair into engine
     RetCode EngineRace::Write(const PolarString &key, const PolarString &value) {
-        static thread_local uint32_t tid = (uint32_t) (++write_num_threads) % NUM_THREADS;
+        static thread_local uint32_t tid = (uint32_t)(++write_num_threads) % NUM_THREADS;
         static thread_local uint32_t local_block_offset = 0;
         uint64_t key_int_big_endian = bswap_64(TO_UINT64(key.data()));
         uint32_t bucket_id = get_par_bucket_id(key_int_big_endian);
@@ -444,10 +441,11 @@ namespace polar_race {
         return kSucc;
     }
 
-    void EngineRace::ReadBucketToBuffer(uint32_t bucket_id) {
+    void EngineRace::ReadBucketToBuffer(uint32_t bucket_id, char *value_buffer) {
+        if (value_buffer == nullptr) {
+            return;
+        }
         auto range_clock_beg = high_resolution_clock::now();
-
-        auto buffer_id = get_buffer_id(bucket_id);
 
         // get fid, and off
         uint32_t fid;
@@ -480,7 +478,7 @@ namespace polar_race {
                     size_t offset = block_id * (size_t) value_agg_num * VALUE_SIZE;
                     size_t size = (block_id == (total_block_num - 1) ? last_block_size : (value_agg_num * VALUE_SIZE));
                     fill_aio_node(value_file_dp_[fid], iocb_ptr,
-                                  value_shared_buffers_[buffer_id] + offset, offset + foff, size, IOCB_CMD_PREAD);
+                                  value_buffer + offset, offset + foff, size, IOCB_CMD_PREAD);
 
                     iocb_ptrs[i] = iocb_ptr;
                 }
@@ -526,8 +524,11 @@ namespace polar_race {
                               static_cast<double>(1000000000);
         total_time_ += elapsed_time;
 #ifdef STAT
-        if (bucket_id % 64 == 63)
-            log_info("In bucket %d, Read time %.9lf s", bucket_id, elapsed_time);
+//        if (bucket_id < 32) {
+        double bucket_size = static_cast<double>(mmap_meta_cnt_[bucket_id] * VALUE_SIZE) / (1024. * 1024.);
+        log_info("In Bucket %d, Read time %.9lf s, Bucket size: %.6lf MB, Speed: %.6lf MB/s", bucket_id,
+                 elapsed_time, bucket_size, bucket_size / elapsed_time);
+//        }
 #endif
         if (bucket_id == BUCKET_NUM - 1) {
             printTS(__FUNCTION__, __LINE__, clock_start);
@@ -564,22 +565,19 @@ namespace polar_race {
             value_shared_buffers_[i] = (char *) memalign(FILESYSTEM_BLOCK_SIZE, val_buffer_max_size_);
         }
         // Value Files.
-        bucket_mutex_arr_ = new mutex[BUCKET_NUM];
-        bucket_cond_var_arr_ = new condition_variable[BUCKET_NUM];
-        bucket_is_ready_read_ = new bool[BUCKET_NUM];
-        bucket_consumed_num_ = new atomic_int[BUCKET_NUM];
-        futures_.resize(BUCKET_NUM);
+        free_buffers_ = new blocking_queue<char *>();
+        bucket_consumed_num_ = new atomic_int[BUCKET_NUM * 2];
+        futures_.resize(BUCKET_NUM * 2);
+        cached_front_buffers_.resize(KEEP_REUSE_BUFFER_NUM);
     }
 
     void EngineRace::InitForRange(int64_t tid) {
-        static thread_local bool is_first = true;
         if (!is_range_init_) {
             unique_lock<mutex> lock(range_mtx_);
             if (tid == 0) {
                 auto range_clock_beg = high_resolution_clock::now();
                 InitRangeReader();
                 InitAIOContext();
-//                usleep(10000);
                 auto range_clock_end = high_resolution_clock::now();
                 double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                                       static_cast<double>(1000000000);
@@ -604,38 +602,39 @@ namespace polar_race {
         }
 
         // Submit All IO Jobs.
+        // Odd Round.
         if (tid == 0) {
-            memset((bool *) bucket_is_ready_read_, 0, BUCKET_NUM);
-            for (uint32_t i = 0; i < MAX_RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM; i++) {
-                bucket_is_ready_read_[i] = true;
+            for (uint32_t i = 0; i < MAX_TOTAL_BUFFER_NUM; i++) {
+                free_buffers_->push(value_shared_buffers_[i]);
             }
-
-            for (uint32_t next_bucket_idx = (is_first ? 0 : KEEP_REUSE_BUFFER_NUM);
-                 next_bucket_idx < BUCKET_NUM; next_bucket_idx++) {
+            for (uint32_t next_bucket_idx = 0; next_bucket_idx < BUCKET_NUM; next_bucket_idx++) {
                 bucket_consumed_num_[next_bucket_idx].store(0);
                 futures_[next_bucket_idx] = range_io_worker_pool_->enqueue(
                         [this, next_bucket_idx]() {
-                            unique_lock<mutex> lock(bucket_mutex_arr_[next_bucket_idx]);
-                            if (!bucket_is_ready_read_[next_bucket_idx]) {
-                                auto range_clock_beg = high_resolution_clock::now();
-
-                                bucket_cond_var_arr_[next_bucket_idx].wait(lock, [this, next_bucket_idx]() {
-                                    return bucket_is_ready_read_[next_bucket_idx];
-                                });
-
-                                auto range_clock_end = high_resolution_clock::now();
-                                double sleep_time =
-                                        duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
-                                        static_cast<double>(1000000000);
-                                total_io_sleep_time_ += sleep_time;
-                            }
-                            ReadBucketToBuffer(next_bucket_idx);
-                            return;
+                            char *buffer = free_buffers_->pop(total_io_sleep_time_);
+                            ReadBucketToBuffer(next_bucket_idx, buffer);
+                            return buffer;
                         });
             }
         }
-
-        is_first = false;
+        // Even Round.
+        if (tid == 0) {
+            printTS(__FUNCTION__, __LINE__, clock_start);
+            for (uint32_t next_bucket_idx = 0; next_bucket_idx < BUCKET_NUM; next_bucket_idx++) {
+                uint32_t future_id = next_bucket_idx + BUCKET_NUM;
+                bucket_consumed_num_[future_id].store(0);
+                futures_[future_id] = range_io_worker_pool_->enqueue(
+                        [this, next_bucket_idx]() {
+                            if (next_bucket_idx >= KEEP_REUSE_BUFFER_NUM) {
+                                char *buffer = free_buffers_->pop(total_io_sleep_time_);
+                                ReadBucketToBuffer(next_bucket_idx, buffer);
+                                return buffer;
+                            }
+                            return cached_front_buffers_[next_bucket_idx];
+                        });
+            }
+            printTS(__FUNCTION__, __LINE__, clock_start);
+        }
         range_barrier_ptr_->Wait();
     }
 
@@ -653,18 +652,20 @@ namespace polar_race {
     RetCode EngineRace::Range(const PolarString &lower, const PolarString &upper,
                               Visitor &visitor) {
         static thread_local int64_t tid = (++range_num_threads_count) % NUM_THREADS;
-        static thread_local uint32_t local_block_offset = 0;
+        static thread_local uint32_t bucket_future_id_beg = 0;
 
         static thread_local PolarString *polar_key_ptr_;
         static thread_local PolarString polar_val_ptr_;
 
         // Thread Local Key/Value Init.
-        if (local_block_offset == 0) {
+        if (bucket_future_id_beg == 0) {
             char *key_chars = new char[sizeof(uint64_t)];
             polar_keys_[tid] = new PolarString(key_chars, sizeof(uint64_t));
             polar_key_ptr_ = polar_keys_[tid];
         }
-        InitForRange(tid);
+        if (bucket_future_id_beg % (BUCKET_NUM * 2) == 0) {
+            InitForRange(tid);
+        }
 
         if (tid == 0) {
             printTS(__FUNCTION__, __LINE__, clock_start);
@@ -672,32 +673,38 @@ namespace polar_race {
         // 2-level Loop.
         uint32_t lower_key_par_id = 0;
         uint32_t upper_key_par_id = BUCKET_NUM - 1;
-        for (uint32_t par_bucket_id = lower_key_par_id; par_bucket_id < upper_key_par_id + 1; par_bucket_id++) {
+        for (uint32_t bucket_id = lower_key_par_id; bucket_id < upper_key_par_id + 1; bucket_id++) {
             range_barrier_ptr_->Wait();
 
-            if (tid == 0) {
-                auto wait_start_clock = high_resolution_clock::now();
-                futures_[par_bucket_id].get();
-                auto wait_end_clock = high_resolution_clock::now();
-                double elapsed_time = duration_cast<nanoseconds>(wait_end_clock - wait_start_clock).count() /
-                                      static_cast<double>(1000000000);
-#ifdef STAT
-                if (par_bucket_id < KEEP_REUSE_BUFFER_NUM) {
-                    log_info("Elapsed Wait: %.6lf s", elapsed_time);
-                }
-#endif
-                wait_get_time_ += elapsed_time;
+            uint32_t future_id = bucket_id + bucket_future_id_beg;
+            char *shared_buffer;
+            uint32_t relative_id = future_id % (2 * BUCKET_NUM);
+            if (relative_id >= BUCKET_NUM && relative_id < BUCKET_NUM + KEEP_REUSE_BUFFER_NUM) {
+                shared_buffer = cached_front_buffers_[relative_id - BUCKET_NUM];
             } else {
-                futures_[par_bucket_id].get();
+                if (tid == 0) {
+                    auto wait_start_clock = high_resolution_clock::now();
+                    shared_buffer = futures_[future_id].get();
+                    auto wait_end_clock = high_resolution_clock::now();
+                    double elapsed_time = duration_cast<nanoseconds>(wait_end_clock - wait_start_clock).count() /
+                                          static_cast<double>(1000000000);
+#ifdef STAT
+                    if (bucket_id < KEEP_REUSE_BUFFER_NUM) {
+                        log_info("Elapsed Wait For Bucket %d: %.6lf s", bucket_id, elapsed_time);
+                    }
+#endif
+                    wait_get_time_ += elapsed_time;
+                } else {
+                    shared_buffer = futures_[future_id].get();
+                }
             }
 
             uint32_t in_par_id_beg = 0;
-            uint32_t in_par_id_end = mmap_meta_cnt_[par_bucket_id];
+            uint32_t in_par_id_end = mmap_meta_cnt_[bucket_id];
             uint64_t prev_key = 0;
-            uint32_t buffer_id = get_buffer_id(par_bucket_id);
             for (uint32_t in_par_id = in_par_id_beg; in_par_id < in_par_id_end; in_par_id++) {
                 // Skip the equalities.
-                uint64_t big_endian_key = index_[par_bucket_id][in_par_id].key_;
+                uint64_t big_endian_key = index_[bucket_id][in_par_id].key_;
                 if (in_par_id != in_par_id_beg) {
                     if (big_endian_key == prev_key) {
                         continue;
@@ -709,25 +716,24 @@ namespace polar_race {
                 (*(uint64_t *) polar_key_ptr_->data()) = bswap_64(big_endian_key);
 
                 // Value.
-                uint64_t val_id = index_[par_bucket_id][in_par_id].value_offset_;
-                polar_val_ptr_ = PolarString(value_shared_buffers_[buffer_id] + val_id * VALUE_SIZE,
-                                             VALUE_SIZE);
+                uint64_t val_id = index_[bucket_id][in_par_id].value_offset_;
+                polar_val_ptr_ = PolarString(shared_buffer + val_id * VALUE_SIZE, VALUE_SIZE);
                 // Visit Key/Value.
                 visitor.Visit(*polar_key_ptr_, polar_val_ptr_);
             }
-            // End of inner loop, Submit IO Jobs.
-            int32_t my_order = ++bucket_consumed_num_[par_bucket_id];
-            if (my_order == total_range_num_threads_) {
-                uint32_t next_bucket_idx = par_bucket_id + MAX_RECYCLE_BUFFER_NUM;
 
-                // Notify
-                if (next_bucket_idx < upper_key_par_id + 1) {
-                    unique_lock<mutex> lock(bucket_mutex_arr_[next_bucket_idx]);
-                    bucket_is_ready_read_[next_bucket_idx] = true;
-                    bucket_cond_var_arr_[next_bucket_idx].notify_all();
+            // End of inner loop, Submit IO Jobs.
+            int32_t my_order = ++bucket_consumed_num_[future_id];
+            if (my_order == total_range_num_threads_) {
+                if ((future_id % (2 * BUCKET_NUM)) < KEEP_REUSE_BUFFER_NUM) {
+                    cached_front_buffers_[future_id] = shared_buffer;
+                } else {
+                    free_buffers_->push(shared_buffer);
                 }
             }
         }
+
+        bucket_future_id_beg += BUCKET_NUM;
         if (tid == 0) { log_info("one round ok..."); }
         range_barrier_ptr_->Wait();
         return kSucc;
