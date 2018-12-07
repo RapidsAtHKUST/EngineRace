@@ -97,7 +97,7 @@ namespace polar_race {
             bucket_mtx_(nullptr), write_barrier_(WRITE_BARRIER_NUM),
             aligned_read_buffer_(nullptr), read_barrier_(READ_BARRIER_NUM),
             is_range_init_(false), range_barrier_ptr_(nullptr), polar_keys_(NUM_THREADS),
-            total_time_(0), total_io_sleep_time_(0), wait_get_time_(0),
+            total_time_(0), total_blocking_queue_time_(0), total_io_sleep_time_(0), wait_get_time_(0),
             val_buffer_max_size_(0), range_io_worker_pool_(nullptr),
             bucket_consumed_num_(nullptr), total_range_num_threads_(0) {
         printTS(__FUNCTION__, __LINE__, clock_start);
@@ -252,8 +252,8 @@ namespace polar_race {
             delete range_io_worker_pool_;
             delete range_barrier_ptr_;
             if (total_time_ != 0) {
-                log_info("Total Range Time: %.9lf s, wait: %.9lf s,  io thread sleep: %.9lf s",
-                         total_time_, wait_get_time_, total_io_sleep_time_);
+                log_info("Total Range Time: %.9lf s, wait: %.9lf s,  io thread sleep: %.9lf s, bq-pop: %.9lf s",
+                         total_time_, wait_get_time_, total_io_sleep_time_, total_blocking_queue_time_);
             }
         }
 
@@ -345,7 +345,7 @@ namespace polar_race {
 
 // 3. Write a key-value pair into engine
     RetCode EngineRace::Write(const PolarString &key, const PolarString &value) {
-        static thread_local uint32_t tid = (uint32_t)(++write_num_threads) % NUM_THREADS;
+        static thread_local uint32_t tid = (uint32_t) (++write_num_threads) % NUM_THREADS;
         static thread_local uint32_t local_block_offset = 0;
         uint64_t key_int_big_endian = bswap_64(TO_UINT64(key.data()));
         uint32_t bucket_id = get_par_bucket_id(key_int_big_endian);
@@ -524,14 +524,14 @@ namespace polar_race {
                               static_cast<double>(1000000000);
         total_time_ += elapsed_time;
 #ifdef STAT
-        if (bucket_id < MAX_TOTAL_BUFFER_NUM + 16 || bucket_id % 256 == 255) {
-            double bucket_size = static_cast<double>(mmap_meta_cnt_[bucket_id] * VALUE_SIZE) / (1024. * 1024.);
-            log_info(
-                    "In Bucket %d, Free Buf: %d, Read time %.9lf s, Acc time: %.9lf s, "
-                    "Bucket size: %.6lf MB, Speed: %.6lf MB/s",
-                    bucket_id, free_buffers_->size(), elapsed_time,
-                    total_time_, bucket_size, bucket_size / elapsed_time);
-        }
+//        if (bucket_id < MAX_TOTAL_BUFFER_NUM + 16 || bucket_id % 256 == 255) {
+        double bucket_size = static_cast<double>(mmap_meta_cnt_[bucket_id] * VALUE_SIZE) / (1024. * 1024.);
+        log_info(
+                "In Bucket %d, Free Buf: %d, Read time %.9lf s, Acc time: %.9lf s, "
+                "Bucket size: %.6lf MB, Speed: %.6lf MB/s",
+                bucket_id, free_buffers_->size(), elapsed_time,
+                total_time_, bucket_size, bucket_size / elapsed_time);
+//        }
 #endif
         if (bucket_id == BUCKET_NUM - 1) {
             printTS(__FUNCTION__, __LINE__, clock_start);
@@ -614,8 +614,15 @@ namespace polar_race {
                 bucket_consumed_num_[next_bucket_idx].store(0);
                 futures_[next_bucket_idx] = range_io_worker_pool_->enqueue(
                         [this, next_bucket_idx]() {
+                            auto range_clock_beg = high_resolution_clock::now();
                             char *buffer = free_buffers_->pop(total_io_sleep_time_);
+                            auto range_clock_end = high_resolution_clock::now();
+                            double elapsed_time =
+                                    duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
+                                    static_cast<double>(1000000000);
+                            total_blocking_queue_time_ += elapsed_time;
                             ReadBucketToBuffer(next_bucket_idx, buffer);
+
                             return buffer;
                         });
             }
@@ -629,7 +636,13 @@ namespace polar_race {
                 futures_[future_id] = range_io_worker_pool_->enqueue(
                         [this, next_bucket_idx]() {
                             if (next_bucket_idx >= KEEP_REUSE_BUFFER_NUM) {
+                                auto range_clock_beg = high_resolution_clock::now();
                                 char *buffer = free_buffers_->pop(total_io_sleep_time_);
+                                auto range_clock_end = high_resolution_clock::now();
+                                double elapsed_time =
+                                        duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
+                                        static_cast<double>(1000000000);
+                                total_blocking_queue_time_ += elapsed_time;
                                 ReadBucketToBuffer(next_bucket_idx, buffer);
                                 return buffer;
                             }
@@ -692,7 +705,7 @@ namespace polar_race {
                     double elapsed_time = duration_cast<nanoseconds>(wait_end_clock - wait_start_clock).count() /
                                           static_cast<double>(1000000000);
 #ifdef STAT
-                    if (bucket_id < KEEP_REUSE_BUFFER_NUM) {
+                    if (bucket_id < MAX_TOTAL_BUFFER_NUM) {
                         log_info("Elapsed Wait For Bucket %d: %.6lf s", bucket_id, elapsed_time);
                     }
 #endif
