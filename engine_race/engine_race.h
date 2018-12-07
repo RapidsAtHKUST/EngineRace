@@ -29,7 +29,7 @@
 #define VALUE_SIZE (4096)
 
 // Buckets.
-#define BUCKET_DIGITS (10)      // k-v-buckets must be the same for the range query
+#define BUCKET_DIGITS (11)      // k-v-buckets must be the same for the range query
 #define BUCKET_NUM (1 << BUCKET_DIGITS)
 
 // Max Bucket Size * BUCKET_NUM.
@@ -52,7 +52,7 @@
 #define KEY_READ_BLOCK_COUNT (8192u)
 // Range.
 #define RECYCLE_BUFFER_NUM (2u)
-#define KEEP_REUSE_BUFFER_NUM (3u)
+#define KEEP_REUSE_BUFFER_NUM (9u)
 #define MAX_TOTAL_BUFFER_NUM (RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
 
 namespace polar_race {
