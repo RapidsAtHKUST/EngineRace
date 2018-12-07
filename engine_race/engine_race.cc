@@ -17,7 +17,7 @@
 #include "util.h"
 #include "file_util.h"
 
-#define STAT
+//#define STAT
 #define FLUSH_IN_WRITER_DESTRUCTOR
 
 namespace polar_race {
