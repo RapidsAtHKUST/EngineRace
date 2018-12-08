@@ -95,7 +95,8 @@ namespace polar_race {
             value_file_dp_(nullptr), value_buffer_file_dp_(-1),
             mmap_value_aligned_buffer_(nullptr), mmap_value_aligned_buffer_view_(nullptr),
             bucket_mtx_(nullptr), write_barrier_(WRITE_BARRIER_NUM),
-            aligned_read_buffer_(nullptr), read_barrier_(READ_BARRIER_NUM),
+            aligned_read_buffer_(nullptr), read_init_barrier_(NUM_THREADS),
+            reader_pool_(nullptr), read_barrier_(READ_BARRIER_NUM),
             is_range_init_(false), range_barrier_ptr_(nullptr), polar_keys_(NUM_THREADS),
             total_time_(0), total_blocking_queue_time_(0), total_io_sleep_time_(0), wait_get_time_(0),
             val_buffer_max_size_(0),
@@ -239,6 +240,12 @@ namespace polar_race {
 
     EngineRace::~EngineRace() {
         printTS(__FUNCTION__, __LINE__, clock_start);
+        if (reader_pool_ != nullptr) {
+            for (uint32_t fid = 0; fid < VAL_FILE_NUM; fid++) {
+                delete reader_pool_[fid];
+            }
+        }
+
         // Range: Thread.
         if (is_range_init_) {
             for (auto &kv_pair : polar_keys_) {
@@ -414,6 +421,15 @@ namespace polar_race {
         static thread_local uint32_t local_block_offset = 0;
 
         uint64_t big_endian_key_uint = bswap_64(TO_UINT64(key.data()));
+        if (local_block_offset == 0) {
+            if (tid == 0) {
+                reader_pool_ = new ThreadPool *[VAL_FILE_NUM];
+                for (uint32_t i = 0; i < VAL_FILE_NUM; i++) {
+                    reader_pool_[i] = new ThreadPool(1);
+                }
+            }
+            read_init_barrier_.Wait();
+        }
 
         KeyEntry tmp{};
         tmp.key_ = big_endian_key_uint;
@@ -421,10 +437,12 @@ namespace polar_race {
 
         auto it = index_[bucket_id] + branchfree_search(index_[bucket_id], mmap_meta_cnt_[bucket_id], tmp);
         local_block_offset++;
-
+#ifdef READ_BARRIER
         if (local_block_offset % 100000 == 0 && tid < READ_BARRIER_NUM) {
             read_barrier_.Wait();
         }
+#endif
+        // Case 1: Key Not Found.
         if (it == index_[bucket_id] + mmap_meta_cnt_[bucket_id] || it->key_ != big_endian_key_uint) {
             if (is_first_not_found) {
                 log_info("not found in tid: %d\n", tid);
@@ -436,7 +454,12 @@ namespace polar_race {
         uint32_t fid;
         uint64_t foff;
         std::tie(fid, foff) = get_value_fid_foff(bucket_id, it->value_offset_);
-        pread(value_file_dp_[fid], value_buffer, VALUE_SIZE, foff);
+
+        // Case 2: Overlap IO and Binary Search, String Copy Computation.
+        char *buff = value_buffer;
+        reader_pool_[fid]->enqueue([fid, foff, this, buff]() {
+            pread(value_file_dp_[fid], buff, VALUE_SIZE, foff);
+        }).get();
 
         value->assign(value_buffer, VALUE_SIZE);
         return kSucc;
@@ -449,7 +472,7 @@ namespace polar_race {
             return;
         }
 
-        // get fid, and off
+        // Get fid, and off.
         uint32_t fid;
         uint64_t foff;
         std::tie(fid, foff) = get_value_fid_foff(bucket_id, 0);

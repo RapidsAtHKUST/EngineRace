@@ -86,6 +86,8 @@ namespace polar_race {
 
         // Read.
         char **aligned_read_buffer_;
+        Barrier read_init_barrier_;
+        ThreadPool **reader_pool_;
         Barrier read_barrier_;
 
         vector<KeyEntry *> index_;
@@ -107,7 +109,7 @@ namespace polar_race {
 
         double wait_get_time_;
         uint64_t val_buffer_max_size_;
-        thread* single_range_io_worker_;
+        thread *single_range_io_worker_;
 
         // Range Sequential IO.
         blocking_queue<char *> *free_buffers_;
