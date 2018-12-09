@@ -169,6 +169,9 @@ namespace polar_race {
     private:
         void InitRandomReadAIOContext();
 
+        bool HandleReadSubmission(uint32_t io_tid, double &sleep_time,
+                                  int read_cnt, uint32_t &to_submit_num, iocb **iocb_ptrs);
+
         void ReadEventLoop(uint32_t io_tid);
 
     private:

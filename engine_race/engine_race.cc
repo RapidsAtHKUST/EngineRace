@@ -437,6 +437,27 @@ namespace polar_race {
         }
     }
 
+    bool EngineRace::HandleReadSubmission(uint32_t io_tid, double &sleep_time,
+                                          int read_cnt, uint32_t &to_submit_num, iocb **iocb_ptrs) {
+        auto request = rw_aio_bq_arr_[io_tid].pop(sleep_time);
+        auto req_tid = request.tid_;
+#ifdef STAT
+        if (read_cnt < 5 || (read_cnt >= EVENT_LOOP_STAT_THRESHOLD &&
+                             read_cnt < EVENT_LOOP_STAT_THRESHOLD + 5)) {
+            log_info("Event Loop Stat...: %d, %d", req_tid, request.local_offset_);
+        }
+#endif
+        // Handle Termination.
+        if (req_tid == -1) {
+            log_info("Terminate EventLoop: %d, Pop Time: %.6lf s, Pending: %d", io_tid, sleep_time,
+                     to_submit_num);
+            return true;
+        }
+        iocb_ptrs[to_submit_num] = &rw_iocbs_[req_tid];
+        to_submit_num++;
+        return false;
+    }
+
     void EngineRace::ReadEventLoop(uint32_t io_tid) {
         iocb **iocb_ptrs = new iocb *[NUM_THREADS];
         int wait_complete_tasks = 0;
@@ -446,23 +467,18 @@ namespace polar_race {
         for (int read_cnt = 0;; read_cnt++) {
             // Handle Submissions.
             uint32_t to_submit_num = 0;
-            while (rw_aio_bq_arr_[io_tid].size() > 0) {
-                auto request = rw_aio_bq_arr_[io_tid].pop(sleep_time);
-                auto req_tid = request.tid_;
-#ifdef STAT
-                if (read_cnt < 5 || (read_cnt >= EVENT_LOOP_STAT_THRESHOLD &&
-                                     read_cnt < EVENT_LOOP_STAT_THRESHOLD + 5)) {
-                    log_info("Event Loop Stat...: %d, %d", req_tid, request.local_offset_);
-                }
-#endif
-                // Handle Termination.
-                if (req_tid == -1) {
-                    log_info("Terminate EventLoop: %d, Pop Time: %.6lf s, Pending: %d", io_tid, sleep_time,
-                             to_submit_num);
+            // Block If Nothing Available.
+            if (wait_complete_tasks == 0) {
+                auto is_exit = HandleReadSubmission(io_tid, sleep_time, read_cnt, to_submit_num, iocb_ptrs);
+                if (is_exit) {
                     return;
                 }
-                iocb_ptrs[to_submit_num] = &rw_iocbs_[req_tid];
-                to_submit_num++;
+            }
+            while (rw_aio_bq_arr_[io_tid].size() > 0) {
+                auto is_exit = HandleReadSubmission(io_tid, sleep_time, read_cnt, to_submit_num, iocb_ptrs);
+                if (is_exit) {
+                    return;
+                }
             }
             if (to_submit_num > 0) {
                 auto ret = io_submit(rw_aio_ctx_[io_tid], to_submit_num, iocb_ptrs);
