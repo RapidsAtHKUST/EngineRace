@@ -396,11 +396,15 @@ namespace polar_race {
     }
 
     void EngineRace::NotifyRandomReader(uint32_t local_block_offset, int64_t tid) {
-        if (tid % 2 == 0) {
-            notify_queues_[(local_block_offset) % 2 + 2]->enqueue(1);   // Notify This Round
-        } else {
-            notify_queues_[(local_block_offset + 1) % 2]->enqueue(1);   // Notify Next Round
+        uint32_t current_round = local_block_offset - 1;
+        if ((current_round % SHRINK_SYNC_FACTOR) == SHRINK_SYNC_FACTOR - 1) {
+            if (tid % 2 == 0) {
+                notify_queues_[(local_block_offset) % 2 + 2]->enqueue(1);   // Notify This Round
+            } else {
+                notify_queues_[(local_block_offset + 1) % 2]->enqueue(1);   // Notify Next Round
+            }
         }
+
 #ifdef STAT
         if (local_block_offset == 1000000) {
 //        if (local_block_offset == 255) {
@@ -446,10 +450,13 @@ namespace polar_race {
         local_block_offset++;
 
         int32_t tmp_val;
-        if (tid % 2 == 0) {
-            notify_queues_[local_block_offset % 2]->wait_dequeue(tmp_val);
-        } else {
-            notify_queues_[local_block_offset % 2 + 2]->wait_dequeue(tmp_val);
+        uint32_t current_round = local_block_offset - 1;
+        if ((current_round % SHRINK_SYNC_FACTOR) == 0) {
+            if (tid % 2 == 0) {
+                notify_queues_[local_block_offset % 2]->wait_dequeue(tmp_val);
+            } else {
+                notify_queues_[local_block_offset % 2 + 2]->wait_dequeue(tmp_val);
+            }
         }
         if (it == index_[bucket_id] + mmap_meta_cnt_[bucket_id] || it->key_ != big_endian_key_uint) {
             if (is_first_not_found) {
