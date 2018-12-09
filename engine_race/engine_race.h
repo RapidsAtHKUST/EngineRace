@@ -56,7 +56,7 @@
 #define KEEP_REUSE_BUFFER_NUM (3u)
 #define MAX_TOTAL_BUFFER_NUM (RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
 
-#define SHRINK_SYNC_FACTOR (20)      // should be divided
+#define SHRINK_SYNC_FACTOR (50)      // should be divided
 
 namespace polar_race {
     using namespace std;
@@ -88,7 +88,7 @@ namespace polar_race {
         Barrier write_barrier_;
 
         // Read.
-        vector<moodycamel::BlockingConcurrentQueue<int32_t> *>notify_queues_;
+        vector<moodycamel::BlockingConcurrentQueue<int32_t> *> notify_queues_;
         char **aligned_read_buffer_;
         Barrier read_barrier_;
 

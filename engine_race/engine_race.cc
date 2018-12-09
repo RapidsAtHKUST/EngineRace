@@ -21,6 +21,8 @@
 #define DSTAT_TESTING
 #define FLUSH_IN_WRITER_DESTRUCTOR
 
+#define FADVISE_EXP
+
 namespace polar_race {
     using namespace std;
 
@@ -76,6 +78,10 @@ namespace polar_race {
         uint32_t fid = bucket_id / BUCKET_NUM_PER_FILE;
         uint64_t foff = MAX_VAL_BUCKET_SIZE * (bucket_id % BUCKET_NUM_PER_FILE) + bucket_off;
         return make_pair(fid, foff * VALUE_SIZE);
+    }
+
+    inline uint32_t get_notify_big_round(uint32_t current_local_offset) {
+        return current_local_offset / SHRINK_SYNC_FACTOR;
     }
 
     RetCode Engine::Open(const std::string &name, Engine **eptr) {
@@ -398,10 +404,11 @@ namespace polar_race {
     void EngineRace::NotifyRandomReader(uint32_t local_block_offset, int64_t tid) {
         uint32_t current_round = local_block_offset - 1;
         if ((current_round % SHRINK_SYNC_FACTOR) == SHRINK_SYNC_FACTOR - 1) {
+            uint32_t notify_big_round_idx = get_notify_big_round(current_round);
             if (tid % 2 == 0) {
-                notify_queues_[(local_block_offset) % 2 + 2]->enqueue(1);   // Notify This Round
+                notify_queues_[(notify_big_round_idx) % 2 + 2]->enqueue(1);   // Notify This Round
             } else {
-                notify_queues_[(local_block_offset + 1) % 2]->enqueue(1);   // Notify Next Round
+                notify_queues_[(notify_big_round_idx + 1) % 2]->enqueue(1);   // Notify Next Round
             }
         }
 
@@ -431,12 +438,16 @@ namespace polar_race {
                     notify_queues_[i] = new moodycamel::BlockingConcurrentQueue<int32_t>(NUM_THREADS);
                 }
                 for (uint32_t i = 0; i < NUM_THREADS / 2; i++) {
-                    notify_queues_[1]->enqueue(1);
+                    notify_queues_[0]->enqueue(1);
                 }
+#ifdef FADVISE_EXP
                 for (int i = 0; i < VAL_FILE_NUM; i++) {
-                    posix_fadvise(value_file_dp_[i], 0, static_cast<size_t>(i) * MAX_VAL_BUCKET_SIZE * VALUE_SIZE,
-                                  POSIX_FADV_DONTNEED);
+                    size_t off = static_cast<size_t>(i) * MAX_VAL_BUCKET_SIZE * VALUE_SIZE * BUCKET_NUM / VAL_FILE_NUM;
+                    size_t size = static_cast<size_t >(MAX_VAL_BUCKET_SIZE) * VALUE_SIZE * BUCKET_NUM / VAL_FILE_NUM;
+                    log_info("Off: %zu, Size Not Need : %zu", off, size);
+                    posix_fadvise(value_file_dp_[i], off, size, POSIX_FADV_DONTNEED);
                 }
+#endif
             }
             read_barrier_.Wait();
         }
@@ -452,10 +463,11 @@ namespace polar_race {
         int32_t tmp_val;
         uint32_t current_round = local_block_offset - 1;
         if ((current_round % SHRINK_SYNC_FACTOR) == 0) {
+            uint32_t notify_big_round_idx = get_notify_big_round(current_round);
             if (tid % 2 == 0) {
-                notify_queues_[local_block_offset % 2]->wait_dequeue(tmp_val);
+                notify_queues_[notify_big_round_idx % 2]->wait_dequeue(tmp_val);
             } else {
-                notify_queues_[local_block_offset % 2 + 2]->wait_dequeue(tmp_val);
+                notify_queues_[notify_big_round_idx % 2 + 2]->wait_dequeue(tmp_val);
             }
         }
         if (it == index_[bucket_id] + mmap_meta_cnt_[bucket_id] || it->key_ != big_endian_key_uint) {

@@ -99,7 +99,7 @@ int main() {
     uint64_t NUM_THREADS = 64;
     exec(("rm -r " + std::string(kEnginePath)).c_str());
 
-    uint64_t round_size = 300 * NUM_THREADS;
+    uint64_t round_size = 350 * NUM_THREADS;
 //    uint64_t round_size = 837 * NUM_THREADS;
     uint64_t iter_num = 1;   // switch this to test different settings
 
