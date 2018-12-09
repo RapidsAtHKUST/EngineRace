@@ -20,7 +20,7 @@
 //#define STAT
 //#define DSTAT_TESTING
 #define FLUSH_IN_WRITER_DESTRUCTOR
-
+#define ENABLE_WRITE_BARRIER
 //#define FADVISE_EXP
 
 namespace polar_race {
@@ -352,7 +352,7 @@ namespace polar_race {
         uint32_t bucket_id = get_par_bucket_id(key_int_big_endian);
 
 #ifdef ENABLE_WRITE_BARRIER
-        if (local_block_offset % 100000 == 0 && local_block_offset < 1000000 && tid < WRITE_BARRIER_NUM) {
+        if (local_block_offset % 10000 == 0 && local_block_offset < 1000000 && tid < WRITE_BARRIER_NUM) {
             write_barrier_.Wait();
         }
 #endif

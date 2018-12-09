@@ -34,7 +34,7 @@
 #define BUCKET_NUM (1 << BUCKET_DIGITS)
 
 // Max Bucket Size * BUCKET_NUM.
-#define MAX_TOTAL_SIZE (68 * 1024 * 1024)
+#define MAX_TOTAL_SIZE (64 * 1024 * 1024)
 
 #define KEY_FILE_DIGITS (5)     // must make sure same bucket in the same file
 #define KEY_FILE_NUM (1 << KEY_FILE_DIGITS)
@@ -45,7 +45,7 @@
 #define MAX_VAL_BUCKET_SIZE (MAX_TOTAL_SIZE / BUCKET_NUM / FILESYSTEM_BLOCK_SIZE * FILESYSTEM_BLOCK_SIZE)
 
 // Write.
-#define WRITE_BARRIER_NUM (16)
+#define WRITE_BARRIER_NUM (32)
 // Read.
 #define NUM_READ_KEY_THREADS (NUM_THREADS)
 #define NUM_FLUSH_TMP_THREADS (32u)
