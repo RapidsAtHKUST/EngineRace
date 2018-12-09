@@ -11,6 +11,7 @@ endif ()
 
 add_executable(test_engine_nonoff test_engine.cpp ../engine_race/engine_race.cc ../engine_race/log.cc
         )
+target_link_libraries(test_engine_nonoff PRIVATE rt)
 #link_directories(${CMAKE_SOURCE_DIR}/lib)
 message(${CMAKE_SOURCE_DIR})
 

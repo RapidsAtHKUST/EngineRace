@@ -3,6 +3,8 @@
 // Copyright [2018] Alibaba Cloud All rights reserved
 #include "engine_race.h"
 
+// Posix AIO.
+#include <aio.h>
 #include <malloc.h>
 
 #include <atomic>
@@ -13,11 +15,13 @@
 
 #include <byteswap.h>
 
+
 #include "log.h"
 #include "util.h"
 #include "file_util.h"
 
-//#define STAT
+#define STAT
+#define DSTAT_TESTING
 #define FLUSH_IN_WRITER_DESTRUCTOR
 
 namespace polar_race {
@@ -95,7 +99,8 @@ namespace polar_race {
             value_file_dp_(nullptr), value_buffer_file_dp_(-1),
             mmap_value_aligned_buffer_(nullptr), mmap_value_aligned_buffer_view_(nullptr),
             bucket_mtx_(nullptr), write_barrier_(WRITE_BARRIER_NUM),
-            aligned_read_buffer_(nullptr), read_barrier_(READ_BARRIER_NUM),
+            aligned_read_buffer_(nullptr),
+//            read_barrier_(READ_BARRIER_NUM),
             is_range_init_(false), range_barrier_ptr_(nullptr), polar_keys_(NUM_THREADS),
             total_time_(0), total_blocking_queue_time_(0), total_io_sleep_time_(0), wait_get_time_(0),
             val_buffer_max_size_(0),
@@ -412,7 +417,13 @@ namespace polar_race {
         static thread_local char *value_buffer = aligned_read_buffer_[tid];
         static thread_local bool is_first_not_found = true;
         static thread_local uint32_t local_block_offset = 0;
+        static thread_local aiocb my_aiocb;
+        static thread_local aiocb *my_aiocb_lst[1];
 
+        if (local_block_offset == 0) {
+            bzero((char *) &my_aiocb, sizeof(struct aiocb));
+            my_aiocb.aio_buf = value_buffer;
+        }
         uint64_t big_endian_key_uint = bswap_64(TO_UINT64(key.data()));
 
         KeyEntry tmp{};
@@ -422,9 +433,9 @@ namespace polar_race {
         auto it = index_[bucket_id] + branchfree_search(index_[bucket_id], mmap_meta_cnt_[bucket_id], tmp);
         local_block_offset++;
 
-        if (local_block_offset % 100000 == 0 && tid < READ_BARRIER_NUM) {
-            read_barrier_.Wait();
-        }
+//        if (local_block_offset % 100000 == 0 && tid < READ_BARRIER_NUM) {
+//            read_barrier_.Wait();
+//        }
         if (it == index_[bucket_id] + mmap_meta_cnt_[bucket_id] || it->key_ != big_endian_key_uint) {
             if (is_first_not_found) {
                 log_info("not found in tid: %d\n", tid);
@@ -436,9 +447,33 @@ namespace polar_race {
         uint32_t fid;
         uint64_t foff;
         std::tie(fid, foff) = get_value_fid_foff(bucket_id, it->value_offset_);
-        pread(value_file_dp_[fid], value_buffer, VALUE_SIZE, foff);
 
-        value->assign(value_buffer, VALUE_SIZE);
+        // Init fd, size, offset as parameters in pread.
+        my_aiocb.aio_fildes = value_file_dp_[fid];
+        my_aiocb.aio_nbytes = VALUE_SIZE;
+        my_aiocb.aio_offset = foff;
+        my_aiocb_lst[0] = &my_aiocb;
+        auto ret = aio_read(&my_aiocb);
+        if (ret < 0) perror("aio_read");
+
+        while (aio_error(&my_aiocb) == EINPROGRESS) {
+            aio_suspend(my_aiocb_lst, 1, nullptr);
+        }
+        if ((ret = aio_return(&my_aiocb)) > 0) {
+            /* got ret bytes on the read */
+            value->assign(value_buffer, VALUE_SIZE);
+        } else {
+            /* read failed, consult errno */
+            log_error("return err :%d, %s", ret, strerror(errno));
+        }
+#ifdef STAT
+        if (local_block_offset == 1000000) {
+            auto last_write_clk = high_resolution_clock::now();
+            log_info("Read Stat of tid %d, elapsed time: %.3lf s, ts: %.3lf s",
+                     tid, duration_cast<milliseconds>(last_write_clk - clock_start).count() / 1000.0,
+                     duration_cast<milliseconds>(last_write_clk.time_since_epoch()).count() / 1000.0);
+        }
+#endif
         return kSucc;
     }
 

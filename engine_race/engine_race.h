@@ -86,7 +86,7 @@ namespace polar_race {
 
         // Read.
         char **aligned_read_buffer_;
-        Barrier read_barrier_;
+//        Barrier read_barrier_;
 
         vector<KeyEntry *> index_;
 
