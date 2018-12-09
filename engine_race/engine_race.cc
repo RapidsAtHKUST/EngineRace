@@ -351,11 +351,43 @@ namespace polar_race {
         uint64_t key_int_big_endian = bswap_64(TO_UINT64(key.data()));
         uint32_t bucket_id = get_par_bucket_id(key_int_big_endian);
 
-#ifdef ENABLE_WRITE_BARRIER
-        if (local_block_offset % 10000 == 0 && local_block_offset < 1000000 && tid < WRITE_BARRIER_NUM) {
-            write_barrier_.Wait();
-        }
+//#ifdef ENABLE_WRITE_BARRIER
+//        if (local_block_offset % 10000 == 0 && local_block_offset < 1000000 && tid < WRITE_BARRIER_NUM) {
+//            write_barrier_.Wait();
+//        }
+//#endif
+        if (local_block_offset == 0) {
+            if (tid == 0) {
+                notify_queues_.resize(4);
+                for (auto i = 0; i < 4; i++) {
+                    // Even-0,1  Odd-2,3
+                    notify_queues_[i] = new moodycamel::BlockingConcurrentQueue<int32_t>(NUM_THREADS);
+                }
+                for (uint32_t i = 0; i < NUM_THREADS / 2; i++) {
+                    notify_queues_[0]->enqueue(1);
+                }
+#ifdef FADVISE_EXP
+                for (int i = 0; i < VAL_FILE_NUM; i++) {
+                    size_t off = static_cast<size_t>(i) * MAX_VAL_BUCKET_SIZE * VALUE_SIZE * BUCKET_NUM / VAL_FILE_NUM;
+                    size_t size = static_cast<size_t >(MAX_VAL_BUCKET_SIZE) * VALUE_SIZE * BUCKET_NUM / VAL_FILE_NUM;
+                    log_info("Off: %zu, Size Not Need : %zu", off, size);
+                    posix_fadvise(value_file_dp_[i], off, size, POSIX_FADV_DONTNEED);
+                }
 #endif
+            }
+            read_barrier_.Wait();
+        }
+
+        uint32_t tmp_val;
+        uint32_t current_round = local_block_offset;
+        if ((current_round % SHRINK_SYNC_FACTOR) == 0) {
+            uint32_t notify_big_round_idx = get_notify_big_round(current_round);
+            if (tid % 2 == 0) {
+                notify_queues_[notify_big_round_idx % 2]->wait_dequeue(tmp_val);
+            } else {
+                notify_queues_[notify_big_round_idx % 2 + 2]->wait_dequeue(tmp_val);
+            }
+        }
         {
             unique_lock<mutex> lock(bucket_mtx_[bucket_id]);
             // Write value to the value file, with a tmp file as value_buffer.
@@ -388,7 +420,9 @@ namespace polar_race {
             // Update the meta data.
             mmap_meta_cnt_[bucket_id]++;
         }
+
         local_block_offset++;
+        NotifyRandomReader(local_block_offset, tid);
 #ifdef STAT
         if (local_block_offset == 1000000) {
 //        if (local_block_offset == 255) {
