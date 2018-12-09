@@ -17,7 +17,7 @@
 #include "util.h"
 #include "file_util.h"
 
-//#define STAT
+#define STAT
 #define FLUSH_IN_WRITER_DESTRUCTOR
 
 namespace polar_race {
@@ -462,6 +462,15 @@ namespace polar_race {
         }).get();
 
         value->assign(value_buffer, VALUE_SIZE);
+#ifdef STAT
+        if (local_block_offset == 1000000) {
+//        if (local_block_offset == 255) {
+            auto last_write_clk = high_resolution_clock::now();
+            log_info("Read Stat of tid %d, elapsed time: %.3lf s, ts: %.3lf s",
+                     tid, duration_cast<milliseconds>(last_write_clk - clock_start).count() / 1000.0,
+                     duration_cast<milliseconds>(last_write_clk.time_since_epoch()).count() / 1000.0);
+        }
+#endif
         return kSucc;
     }
 
