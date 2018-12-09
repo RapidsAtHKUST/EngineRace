@@ -85,6 +85,7 @@ namespace polar_race {
         Barrier write_barrier_;
 
         // Read.
+        blocking_queue<char>* notify_queues_;
         char **aligned_read_buffer_;
         Barrier read_barrier_;
 
@@ -144,6 +145,9 @@ namespace polar_race {
         RetCode Range(const PolarString &lower,
                       const PolarString &upper,
                       Visitor &visitor) override;
+
+    private:
+        void NotifyRandomReader(uint32_t local_block_offset, int64_t tid);
 
     private:
         void InitRangeReader();

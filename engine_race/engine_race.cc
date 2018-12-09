@@ -17,7 +17,8 @@
 #include "util.h"
 #include "file_util.h"
 
-//#define STAT
+#define STAT
+#define DSTAT_TESTING
 #define FLUSH_IN_WRITER_DESTRUCTOR
 
 namespace polar_race {
@@ -95,7 +96,7 @@ namespace polar_race {
             value_file_dp_(nullptr), value_buffer_file_dp_(-1),
             mmap_value_aligned_buffer_(nullptr), mmap_value_aligned_buffer_view_(nullptr),
             bucket_mtx_(nullptr), write_barrier_(WRITE_BARRIER_NUM),
-            aligned_read_buffer_(nullptr), read_barrier_(READ_BARRIER_NUM),
+            aligned_read_buffer_(nullptr), read_barrier_(NUM_THREADS),
             is_range_init_(false), range_barrier_ptr_(nullptr), polar_keys_(NUM_THREADS),
             total_time_(0), total_blocking_queue_time_(0), total_io_sleep_time_(0), wait_get_time_(0),
             val_buffer_max_size_(0),
@@ -350,13 +351,7 @@ namespace polar_race {
         static thread_local uint32_t local_block_offset = 0;
         uint64_t key_int_big_endian = bswap_64(TO_UINT64(key.data()));
         uint32_t bucket_id = get_par_bucket_id(key_int_big_endian);
-#ifdef STAT
-        static thread_local std::chrono::time_point<std::chrono::high_resolution_clock> first_write_clk;
-        static thread_local std::chrono::time_point<std::chrono::high_resolution_clock> last_write_clk;
-        if (local_block_offset == 0) {
-            first_write_clk = high_resolution_clock::now();
-        }
-#endif
+
 #ifdef ENABLE_WRITE_BARRIER
         if (local_block_offset % 100000 == 0 && local_block_offset < 1000000 && tid < WRITE_BARRIER_NUM) {
             write_barrier_.Wait();
@@ -397,13 +392,31 @@ namespace polar_race {
         local_block_offset++;
 #ifdef STAT
         if (local_block_offset == 1000000) {
-            last_write_clk = high_resolution_clock::now();
+//        if (local_block_offset == 255) {
+            auto last_write_clk = high_resolution_clock::now();
             log_info("Write Stat of tid %d, elapsed time: %.3lf s, ts: %.3lf s",
-                     tid, duration_cast<milliseconds>(last_write_clk - first_write_clk).count() / 1000.0,
+                     tid, duration_cast<milliseconds>(last_write_clk - clock_start).count() / 1000.0,
                      duration_cast<milliseconds>(last_write_clk.time_since_epoch()).count() / 1000.0);
         }
 #endif
         return kSucc;
+    }
+
+    void EngineRace::NotifyRandomReader(uint32_t local_block_offset, int64_t tid) {
+        if (tid % 2 == 0) {
+            notify_queues_[(local_block_offset) % 2 + 2].push(1);   // Notify This Round
+        } else {
+            notify_queues_[(local_block_offset + 1) % 2].push(1);   // Notify Next Round
+        }
+#ifdef STAT
+        if (local_block_offset == 1000000) {
+//        if (local_block_offset == 255) {
+            auto last_write_clk = high_resolution_clock::now();
+            log_info("Read Stat of tid %d, elapsed time: %.3lf s, ts: %.3lf s",
+                     tid, duration_cast<milliseconds>(last_write_clk - clock_start).count() / 1000.0,
+                     duration_cast<milliseconds>(last_write_clk.time_since_epoch()).count() / 1000.0);
+        }
+#endif
     }
 
 // 4. Read value of a key
@@ -413,6 +426,15 @@ namespace polar_race {
         static thread_local bool is_first_not_found = true;
         static thread_local uint32_t local_block_offset = 0;
 
+        if (local_block_offset == 0) {
+            if (tid == 0) {
+                notify_queues_ = new blocking_queue<char>[4];   // Even-0,1  Odd-2,3
+                for (uint32_t i = 0; i < NUM_THREADS / 2; i++) {
+                    notify_queues_[1].push(1);
+                }
+            }
+            read_barrier_.Wait();
+        }
         uint64_t big_endian_key_uint = bswap_64(TO_UINT64(key.data()));
 
         KeyEntry tmp{};
@@ -422,21 +444,27 @@ namespace polar_race {
         auto it = index_[bucket_id] + branchfree_search(index_[bucket_id], mmap_meta_cnt_[bucket_id], tmp);
         local_block_offset++;
 
-        if (local_block_offset % 100000 == 0 && tid < READ_BARRIER_NUM) {
-            read_barrier_.Wait();
+        if (tid % 2 == 0) {
+            notify_queues_[local_block_offset % 2].pop();
+        } else {
+            notify_queues_[local_block_offset % 2 + 2].pop();
         }
         if (it == index_[bucket_id] + mmap_meta_cnt_[bucket_id] || it->key_ != big_endian_key_uint) {
             if (is_first_not_found) {
                 log_info("not found in tid: %d\n", tid);
                 is_first_not_found = false;
             }
+            NotifyRandomReader(local_block_offset, tid);
             return kNotFound;
         }
 
         uint32_t fid;
         uint64_t foff;
         std::tie(fid, foff) = get_value_fid_foff(bucket_id, it->value_offset_);
+
+        // lock
         pread(value_file_dp_[fid], value_buffer, VALUE_SIZE, foff);
+        NotifyRandomReader(local_block_offset, tid);
 
         value->assign(value_buffer, VALUE_SIZE);
         return kSucc;

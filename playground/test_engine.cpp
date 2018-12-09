@@ -144,7 +144,8 @@ int main() {
         // 2nd: read
         Engine *engine = nullptr;
         Engine::Open(kEnginePath, &engine);
-#pragma omp parallel for num_threads(NUM_THREADS) schedule(dynamic, 48)
+        // static
+#pragma omp parallel for num_threads(NUM_THREADS)
         for (uint64_t i = 0; i < round_size * iter_num; i++) {
             static thread_local char polar_key_str[8];
             static thread_local std::string tmp_str;
