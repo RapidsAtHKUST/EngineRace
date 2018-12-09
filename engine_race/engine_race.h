@@ -14,7 +14,8 @@
 #include "include/engine.h"
 #include "barrier.h"
 #include "thread_pool.h"
-#include "blocking_queue.h"
+#include "blocking_queue_priority.h"
+#include "blocking_queue_deque.h"
 
 #define TO_UINT64(buffer) (*(uint64_t*)(buffer))
 
@@ -55,7 +56,7 @@
 #define KEEP_REUSE_BUFFER_NUM (3u)
 #define MAX_TOTAL_BUFFER_NUM (RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
 
-#define READ_EVENT_LOOP_NUM (VAL_FILE_NUM)
+#define READ_EVENT_LOOP_NUM (8u)
 
 namespace polar_race {
     using namespace std;
@@ -64,6 +65,17 @@ namespace polar_race {
         uint64_t key_;
         uint16_t value_offset_;
     }__attribute__((packed));
+
+    struct ReadTask {
+        int32_t tid_;
+        int32_t local_offset_;
+
+        ReadTask(int32_t tid, int32_t local_offset) : tid_(tid), local_offset_(local_offset) {}
+
+        bool operator<(const ReadTask &rhs) const {
+            return local_offset_ > rhs.local_offset_;
+        }
+    };
 
     bool operator<(KeyEntry l, KeyEntry r);
 
@@ -92,11 +104,11 @@ namespace polar_race {
         vector<thread> reader_threads_;
         Barrier read_barrier_;
         // Read AIO For Each Value.
-        iocb * rw_iocbs_;
+        iocb *rw_iocbs_;
         vector<io_event *> rw_io_events_;
         vector<aio_context_t> rw_aio_ctx_;
-        blocking_queue<int32_t>* rw_aio_bq_arr_;
-        blocking_queue<char >* notify_tls_queue;
+        blocking_priority_queue<ReadTask> *rw_aio_bq_arr_;
+        blocking_queue<char> *notify_tls_queue;
         vector<KeyEntry *> index_;
 
         // Range.
@@ -157,7 +169,7 @@ namespace polar_race {
     private:
         void InitRandomReadAIOContext();
 
-        void ReadEventLoop(uint32_t  io_tid);
+        void ReadEventLoop(uint32_t io_tid);
 
     private:
         void InitRangeReader();

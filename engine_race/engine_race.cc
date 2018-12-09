@@ -18,6 +18,8 @@
 #include "file_util.h"
 
 #define STAT
+#define EVENT_LOOP_STAT_THRESHOLD (61000000)
+
 #define FLUSH_IN_WRITER_DESTRUCTOR
 
 namespace polar_race {
@@ -243,7 +245,8 @@ namespace polar_race {
         if (!reader_threads_.empty()) {
             for (uint32_t i = 0; i < reader_threads_.size(); i++) {
                 auto &reader_thread = reader_threads_[i];
-                rw_aio_bq_arr_[i].push(-1);
+
+                rw_aio_bq_arr_[i].push(ReadTask(-1, 01));
                 reader_thread.join();
             }
             delete[] rw_aio_bq_arr_;
@@ -438,12 +441,20 @@ namespace polar_race {
         iocb **iocb_ptrs = new iocb *[NUM_THREADS];
         int wait_complete_tasks = 0;
         double sleep_time = 0;
+
         // Event Loop
-        for (;;) {
+        for (int read_cnt = 0;; read_cnt++) {
             // Handle Submissions.
             uint32_t to_submit_num = 0;
             while (rw_aio_bq_arr_[io_tid].size() > 0) {
-                int req_tid = rw_aio_bq_arr_[io_tid].pop(sleep_time);
+                auto request = rw_aio_bq_arr_[io_tid].pop(sleep_time);
+                auto req_tid = request.tid_;
+#ifdef STAT
+                if (read_cnt < 5 || (read_cnt >= EVENT_LOOP_STAT_THRESHOLD &&
+                                     read_cnt < EVENT_LOOP_STAT_THRESHOLD + 5)) {
+                    log_info("Event Loop Stat...: %d, %d", req_tid, request.local_offset_);
+                }
+#endif
                 // Handle Termination.
                 if (req_tid == -1) {
                     log_info("Terminate EventLoop: %d, Pop Time: %.6lf s, Pending: %d", io_tid, sleep_time,
@@ -453,12 +464,15 @@ namespace polar_race {
                 iocb_ptrs[to_submit_num] = &rw_iocbs_[req_tid];
                 to_submit_num++;
             }
-            auto ret = io_submit(rw_aio_ctx_[io_tid], to_submit_num, iocb_ptrs);
-            if (ret != to_submit_num) {
-                log_info("Commit error %d, %s", ret, strerror(errno));
-                exit(-1);
+            if (to_submit_num > 0) {
+                auto ret = io_submit(rw_aio_ctx_[io_tid], to_submit_num, iocb_ptrs);
+                if (ret != to_submit_num) {
+                    log_info("Commit error %d, %s", ret, strerror(errno));
+                    exit(-1);
+                }
+                wait_complete_tasks += to_submit_num;
             }
-            wait_complete_tasks += to_submit_num;
+
             // Handle Completions.
             if (wait_complete_tasks > 0) {
                 auto completed_num = io_getevents(rw_aio_ctx_[io_tid], 0, wait_complete_tasks,
@@ -496,7 +510,7 @@ namespace polar_race {
                 InitRandomReadAIOContext();
 
                 reader_threads_.resize(READ_EVENT_LOOP_NUM);
-                rw_aio_bq_arr_ = new blocking_queue<int32_t>[READ_EVENT_LOOP_NUM];
+                rw_aio_bq_arr_ = new blocking_priority_queue<ReadTask>[READ_EVENT_LOOP_NUM];
                 notify_tls_queue = new blocking_queue<char>[NUM_THREADS];
                 for (uint32_t io_tid = 0; io_tid < READ_EVENT_LOOP_NUM; io_tid++) {
                     reader_threads_[io_tid] = thread([this, io_tid]() {
@@ -534,7 +548,8 @@ namespace polar_race {
         // Case 2: Fill iocb, Submit Task, Wait.
         fill_aio_node(value_file_dp_[fid], &rw_iocbs_[tid], value_buffer, foff, VALUE_SIZE, IOCB_CMD_PREAD);
         // Submit Task.
-        rw_aio_bq_arr_[fid % READ_EVENT_LOOP_NUM].push(tid);
+
+        rw_aio_bq_arr_[fid % READ_EVENT_LOOP_NUM].push(ReadTask(tid, local_block_offset));
         // Wait.
         notify_tls_queue[tid].pop(wait_io_time);
 
