@@ -221,7 +221,6 @@ namespace polar_race {
     RetCode EngineRace::Open(const std::string &name, Engine **eptr) {
         printTS(__FUNCTION__, __LINE__, clock_start);
 #ifdef DSTAT_TESTING
-        PrintMemFree();
         DstatCorountine();
         IOStatCoroutine();
 #endif
@@ -259,9 +258,6 @@ namespace polar_race {
             }
         }
 
-#ifdef DSTAT_TESTING
-        PrintMemFree();
-#endif
         // Thread.
         for (uint32_t i = 0; i < NUM_THREADS; ++i) {
             if (aligned_read_buffer_ != nullptr) {
@@ -338,9 +334,6 @@ namespace polar_race {
         printTS(__FUNCTION__, __LINE__, clock_start);
 #endif
 
-#ifdef DSTAT_TESTING
-        PrintMemFree();
-#endif
         clock_end = high_resolution_clock::now();
         printTS(__FUNCTION__, __LINE__, clock_start);
     }

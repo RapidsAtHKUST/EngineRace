@@ -48,7 +48,7 @@ inline std::string exec(const char *cmd) {
 inline std::string dstat() {
     std::array<char, 512> buffer;
     std::string result;
-    std::shared_ptr<FILE> pipe(popen("dstat -tcdrlmgy --fs 1 95", "r"), pclose);
+    std::shared_ptr<FILE> pipe(popen("dstat -tcdrlmgy --fs 1 105", "r"), pclose);
     if (!pipe) throw std::runtime_error("popen() failed!");
     int times = 0;
     int global_times = 0;
@@ -96,7 +96,7 @@ inline void DstatCorountine() {
 inline std::string iostat() {
     std::array<char, 512> buffer;
     std::string result;
-    std::shared_ptr<FILE> pipe(popen("iostat -d -x -k /dev/nvme0n1 /dev/sda 1 95", "r"), pclose);
+    std::shared_ptr<FILE> pipe(popen("iostat -d -x -m /dev/nvme0n1 /dev/sda 1 105", "r"), pclose);
     if (!pipe) throw std::runtime_error("popen() failed!");
     while (!feof(pipe.get())) {
         if (fgets(buffer.data(), 512, pipe.get()) != nullptr) {
