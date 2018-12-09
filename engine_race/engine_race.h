@@ -56,7 +56,7 @@
 #define KEEP_REUSE_BUFFER_NUM (3u)
 #define MAX_TOTAL_BUFFER_NUM (RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
 
-#define READ_EVENT_LOOP_NUM (8u)
+#define READ_EVENT_LOOP_NUM (1u)
 
 namespace polar_race {
     using namespace std;
