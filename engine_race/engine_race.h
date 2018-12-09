@@ -34,7 +34,7 @@
 #define BUCKET_NUM (1 << BUCKET_DIGITS)
 
 // Max Bucket Size * BUCKET_NUM.
-#define MAX_TOTAL_SIZE (68 * 1024 * 1024)
+#define MAX_TOTAL_SIZE (64 * 1024 * 1024)
 
 #define KEY_FILE_DIGITS (5)     // must make sure same bucket in the same file
 #define KEY_FILE_NUM (1 << KEY_FILE_DIGITS)
