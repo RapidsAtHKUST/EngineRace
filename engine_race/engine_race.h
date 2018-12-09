@@ -56,7 +56,7 @@
 #define KEEP_REUSE_BUFFER_NUM (3u)
 #define MAX_TOTAL_BUFFER_NUM (RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
 
-#define SHRINK_SYNC_FACTOR (50)      // should be divided
+#define SHRINK_SYNC_FACTOR (10)      // should be divided
 
 namespace polar_race {
     using namespace std;
