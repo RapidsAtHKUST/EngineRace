@@ -15,6 +15,7 @@
 #include "barrier.h"
 #include "thread_pool.h"
 #include "blocking_queue.h"
+#include "concurrentqueue.h"
 
 #define TO_UINT64(buffer) (*(uint64_t*)(buffer))
 
@@ -95,7 +96,7 @@ namespace polar_race {
         iocb * rw_iocbs_;
         vector<io_event *> rw_io_events_;
         vector<aio_context_t> rw_aio_ctx_;
-        blocking_queue<int32_t>* rw_aio_bq_arr_;
+        vector<moodycamel::ConcurrentQueue<int32_t>*> rw_aio_queue_arr_;
         blocking_queue<char >* notify_tls_queue;
         vector<KeyEntry *> index_;
 

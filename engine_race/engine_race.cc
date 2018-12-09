@@ -243,10 +243,9 @@ namespace polar_race {
         if (!reader_threads_.empty()) {
             for (uint32_t i = 0; i < reader_threads_.size(); i++) {
                 auto &reader_thread = reader_threads_[i];
-                rw_aio_bq_arr_[i].push(-1);
+                rw_aio_queue_arr_[i]->enqueue(-1);
                 reader_thread.join();
             }
-            delete[] rw_aio_bq_arr_;
             delete[] notify_tls_queue;
             printTS(__FUNCTION__, __LINE__, clock_start);
         }
@@ -437,27 +436,32 @@ namespace polar_race {
     void EngineRace::ReadEventLoop(uint32_t io_tid) {
         iocb **iocb_ptrs = new iocb *[NUM_THREADS];
         int wait_complete_tasks = 0;
-        double sleep_time = 0;
         // Event Loop
         for (;;) {
             // Handle Submissions.
             uint32_t to_submit_num = 0;
-            while (rw_aio_bq_arr_[io_tid].size() > 0) {
-                int req_tid = rw_aio_bq_arr_[io_tid].pop(sleep_time);
-                // Handle Termination.
-                if (req_tid == -1) {
-                    log_info("Terminate EventLoop: %d, Pop Time: %.6lf s, Pending: %d", io_tid, sleep_time,
-                             to_submit_num);
-                    return;
+            bool is_possible_dequeue = true;
+            while (is_possible_dequeue) {
+                int req_tid;
+                is_possible_dequeue = rw_aio_queue_arr_[io_tid]->try_dequeue(req_tid);
+                if (is_possible_dequeue) {
+                    // Handle Termination.
+                    if (req_tid == -1) {
+                        log_info("Terminate EventLoop: %d, Pending: %d", io_tid, to_submit_num);
+                        return;
+                    }
+                    iocb_ptrs[to_submit_num] = &rw_iocbs_[req_tid];
+                    to_submit_num++;
                 }
-                iocb_ptrs[to_submit_num] = &rw_iocbs_[req_tid];
-                to_submit_num++;
             }
-            auto ret = io_submit(rw_aio_ctx_[io_tid], to_submit_num, iocb_ptrs);
-            if (ret != to_submit_num) {
-                log_info("Commit error %d, %s", ret, strerror(errno));
-                exit(-1);
+            if (to_submit_num != 0) {
+                auto ret = io_submit(rw_aio_ctx_[io_tid], to_submit_num, iocb_ptrs);
+                if (ret != to_submit_num) {
+                    log_info("Commit error %d, %s", ret, strerror(errno));
+                    exit(-1);
+                }
             }
+
             wait_complete_tasks += to_submit_num;
             // Handle Completions.
             if (wait_complete_tasks > 0) {
@@ -496,9 +500,10 @@ namespace polar_race {
                 InitRandomReadAIOContext();
 
                 reader_threads_.resize(READ_EVENT_LOOP_NUM);
-                rw_aio_bq_arr_ = new blocking_queue<int32_t>[READ_EVENT_LOOP_NUM];
+                rw_aio_queue_arr_.resize(READ_EVENT_LOOP_NUM);
                 notify_tls_queue = new blocking_queue<char>[NUM_THREADS];
                 for (uint32_t io_tid = 0; io_tid < READ_EVENT_LOOP_NUM; io_tid++) {
+                    rw_aio_queue_arr_[io_tid] = new moodycamel::ConcurrentQueue<int32_t>(NUM_THREADS);
                     reader_threads_[io_tid] = thread([this, io_tid]() {
                         this->ReadEventLoop(io_tid);
                     });
@@ -534,7 +539,7 @@ namespace polar_race {
         // Case 2: Fill iocb, Submit Task, Wait.
         fill_aio_node(value_file_dp_[fid], &rw_iocbs_[tid], value_buffer, foff, VALUE_SIZE, IOCB_CMD_PREAD);
         // Submit Task.
-        rw_aio_bq_arr_[fid % READ_EVENT_LOOP_NUM].push(tid);
+        rw_aio_queue_arr_[fid % READ_EVENT_LOOP_NUM]->enqueue(tid);
         // Wait.
         notify_tls_queue[tid].pop(wait_io_time);
 
