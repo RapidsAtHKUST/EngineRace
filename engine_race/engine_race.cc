@@ -17,11 +17,9 @@
 #include "util.h"
 #include "file_util.h"
 
-#define STAT
-#define DSTAT_TESTING
+//#define STAT
+//#define DSTAT_TESTING
 #define FLUSH_IN_WRITER_DESTRUCTOR
-#define ENABLE_WRITE_BARRIER
-//#define FADVISE_EXP
 
 namespace polar_race {
     using namespace std;
@@ -351,11 +349,6 @@ namespace polar_race {
         uint64_t key_int_big_endian = bswap_64(TO_UINT64(key.data()));
         uint32_t bucket_id = get_par_bucket_id(key_int_big_endian);
 
-//#ifdef ENABLE_WRITE_BARRIER
-//        if (local_block_offset % 10000 == 0 && local_block_offset < 1000000 && tid < WRITE_BARRIER_NUM) {
-//            write_barrier_.Wait();
-//        }
-//#endif
         if (local_block_offset == 0) {
             if (tid == 0) {
                 notify_queues_.resize(4);
@@ -366,14 +359,6 @@ namespace polar_race {
                 for (uint32_t i = 0; i < NUM_THREADS / 2; i++) {
                     notify_queues_[0]->enqueue(1);
                 }
-#ifdef FADVISE_EXP
-                for (int i = 0; i < VAL_FILE_NUM; i++) {
-                    size_t off = static_cast<size_t>(i) * MAX_VAL_BUCKET_SIZE * VALUE_SIZE * BUCKET_NUM / VAL_FILE_NUM;
-                    size_t size = static_cast<size_t >(MAX_VAL_BUCKET_SIZE) * VALUE_SIZE * BUCKET_NUM / VAL_FILE_NUM;
-                    log_info("Off: %zu, Size Not Need : %zu", off, size);
-                    posix_fadvise(value_file_dp_[i], off, size, POSIX_FADV_DONTNEED);
-                }
-#endif
             }
             read_barrier_.Wait();
         }
@@ -474,14 +459,6 @@ namespace polar_race {
                 for (uint32_t i = 0; i < NUM_THREADS / 2; i++) {
                     notify_queues_[0]->enqueue(1);
                 }
-#ifdef FADVISE_EXP
-                for (int i = 0; i < VAL_FILE_NUM; i++) {
-                    size_t off = static_cast<size_t>(i) * MAX_VAL_BUCKET_SIZE * VALUE_SIZE * BUCKET_NUM / VAL_FILE_NUM;
-                    size_t size = static_cast<size_t >(MAX_VAL_BUCKET_SIZE) * VALUE_SIZE * BUCKET_NUM / VAL_FILE_NUM;
-                    log_info("Off: %zu, Size Not Need : %zu", off, size);
-                    posix_fadvise(value_file_dp_[i], off, size, POSIX_FADV_DONTNEED);
-                }
-#endif
             }
             read_barrier_.Wait();
         }
