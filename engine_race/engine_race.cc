@@ -21,7 +21,7 @@
 #define DSTAT_TESTING
 #define FLUSH_IN_WRITER_DESTRUCTOR
 
-#define FADVISE_EXP
+//#define FADVISE_EXP
 
 namespace polar_race {
     using namespace std;
