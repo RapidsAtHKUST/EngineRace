@@ -17,8 +17,8 @@
 #include "util.h"
 #include "file_util.h"
 
-#define STAT
-#define DSTAT_TESTING
+//#define STAT
+//#define DSTAT_TESTING
 #define FLUSH_IN_WRITER_DESTRUCTOR
 
 //#define FADVISE_EXP
