@@ -55,6 +55,8 @@
 #define KEEP_REUSE_BUFFER_NUM (3u)
 #define MAX_TOTAL_BUFFER_NUM (RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
 
+#define READ_EVENT_LOOP_NUM (8u)
+
 namespace polar_race {
     using namespace std;
 
@@ -86,8 +88,15 @@ namespace polar_race {
 
         // Read.
         char **aligned_read_buffer_;
+        Barrier read_init_barrier_;
+        vector<thread> reader_threads_;
         Barrier read_barrier_;
-
+        // Read AIO For Each Value.
+        iocb * rw_iocbs_;
+        vector<io_event *> rw_io_events_;
+        vector<aio_context_t> rw_aio_ctx_;
+        blocking_queue<int32_t>* rw_aio_bq_arr_;
+        blocking_queue<char >* notify_tls_queue;
         vector<KeyEntry *> index_;
 
         // Range.
@@ -107,7 +116,7 @@ namespace polar_race {
 
         double wait_get_time_;
         uint64_t val_buffer_max_size_;
-        thread* single_range_io_worker_;
+        thread *single_range_io_worker_;
 
         // Range Sequential IO.
         blocking_queue<char *> *free_buffers_;
@@ -116,13 +125,13 @@ namespace polar_race {
         int32_t total_range_num_threads_;
 
         // AIO.
-        iocb **iocb_ptrs;
-        iocb *iocbs;
-        io_event *io_events;
-        aio_context_t aio_ctx;
-        uint32_t queue_depth;
+        iocb **range_iocb_ptrs;
+        iocb *range_iocbs;
+        io_event *range_io_events;
+        aio_context_t range_aio_ctx;
+        uint32_t range_queue_depth;
 
-        list<iocb *> free_nodes;
+        list<iocb *> range_free_nodes;
 
     public:
         static RetCode Open(const std::string &name, Engine **eptr);
@@ -144,6 +153,11 @@ namespace polar_race {
         RetCode Range(const PolarString &lower,
                       const PolarString &upper,
                       Visitor &visitor) override;
+
+    private:
+        void InitRandomReadAIOContext();
+
+        void ReadEventLoop(uint32_t  io_tid);
 
     private:
         void InitRangeReader();

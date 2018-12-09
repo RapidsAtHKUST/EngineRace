@@ -17,7 +17,7 @@
 #include "util.h"
 #include "file_util.h"
 
-//#define STAT
+#define STAT
 #define FLUSH_IN_WRITER_DESTRUCTOR
 
 namespace polar_race {
@@ -95,7 +95,8 @@ namespace polar_race {
             value_file_dp_(nullptr), value_buffer_file_dp_(-1),
             mmap_value_aligned_buffer_(nullptr), mmap_value_aligned_buffer_view_(nullptr),
             bucket_mtx_(nullptr), write_barrier_(WRITE_BARRIER_NUM),
-            aligned_read_buffer_(nullptr), read_barrier_(READ_BARRIER_NUM),
+            aligned_read_buffer_(nullptr), read_init_barrier_(NUM_THREADS),
+            read_barrier_(READ_BARRIER_NUM),
             is_range_init_(false), range_barrier_ptr_(nullptr), polar_keys_(NUM_THREADS),
             total_time_(0), total_blocking_queue_time_(0), total_io_sleep_time_(0), wait_get_time_(0),
             val_buffer_max_size_(0),
@@ -239,6 +240,17 @@ namespace polar_race {
 
     EngineRace::~EngineRace() {
         printTS(__FUNCTION__, __LINE__, clock_start);
+        if (!reader_threads_.empty()) {
+            for (uint32_t i = 0; i < reader_threads_.size(); i++) {
+                auto &reader_thread = reader_threads_[i];
+                rw_aio_bq_arr_[i].push(-1);
+                reader_thread.join();
+            }
+            delete[] rw_aio_bq_arr_;
+            delete[] notify_tls_queue;
+            printTS(__FUNCTION__, __LINE__, clock_start);
+        }
+
         // Range: Thread.
         if (is_range_init_) {
             for (auto &kv_pair : polar_keys_) {
@@ -406,14 +418,94 @@ namespace polar_race {
         return kSucc;
     }
 
+    void EngineRace::InitRandomReadAIOContext() {
+        rw_aio_ctx_ = vector<aio_context_t>(READ_EVENT_LOOP_NUM, 0);
+        rw_iocbs_ = new iocb[NUM_THREADS];
+        rw_io_events_ = vector<io_event *>(READ_EVENT_LOOP_NUM, nullptr);
+        for (uint32_t tid = 0; tid < READ_EVENT_LOOP_NUM; tid++) {
+            rw_io_events_[tid] = new io_event[NUM_THREADS];
+        }
+
+        for (uint32_t i = 0; i < READ_EVENT_LOOP_NUM; i++) {
+            if (io_setup(NUM_THREADS, &rw_aio_ctx_[i]) < 0) {
+                log_info("Setup fail\n");
+                exit(-1);
+            }
+        }
+    }
+
+    void EngineRace::ReadEventLoop(uint32_t io_tid) {
+        iocb **iocb_ptrs = new iocb *[NUM_THREADS];
+        int wait_complete_tasks = 0;
+        double sleep_time = 0;
+        // Event Loop
+        for (;;) {
+            // Handle Submissions.
+            uint32_t to_submit_num = 0;
+            while (rw_aio_bq_arr_[io_tid].size() > 0) {
+                int req_tid = rw_aio_bq_arr_[io_tid].pop(sleep_time);
+                // Handle Termination.
+                if (req_tid == -1) {
+                    log_info("Terminate EventLoop: %d, Pop Time: %.6lf s, Pending: %d", io_tid, sleep_time,
+                             to_submit_num);
+                    return;
+                }
+                iocb_ptrs[to_submit_num] = &rw_iocbs_[req_tid];
+                to_submit_num++;
+            }
+            auto ret = io_submit(rw_aio_ctx_[io_tid], to_submit_num, iocb_ptrs);
+            if (ret != to_submit_num) {
+                log_info("Commit error %d, %s", ret, strerror(errno));
+                exit(-1);
+            }
+            wait_complete_tasks += to_submit_num;
+            // Handle Completions.
+            if (wait_complete_tasks > 0) {
+                auto completed_num = io_getevents(rw_aio_ctx_[io_tid], 0, wait_complete_tasks,
+                                                  rw_io_events_[io_tid], nullptr);
+                if (completed_num < 0) {
+                    log_info("Get Event error %d, %s", completed_num, strerror(errno));
+                    exit(-1);
+                }
+                for (uint32_t j = 0; j < completed_num; ++j) {
+                    io_event *complete_event = &rw_io_events_[io_tid][j];
+                    if (complete_event->res2 != 0 || complete_event->res < VALUE_SIZE) {
+                        log_info("Return error.\n");
+                        exit(-1);
+                    }
+                    iocb *iocb_ptr = (iocb *) complete_event->data;
+                    auto req_tid = iocb_ptr - rw_iocbs_;
+                    notify_tls_queue[req_tid].push(1);
+                }
+                wait_complete_tasks -= completed_num;
+            }
+        }
+    }
+
 // 4. Read value of a key
     RetCode EngineRace::Read(const PolarString &key, std::string *value) {
-        static thread_local int64_t tid = (++read_num_threads_count) % NUM_THREADS;
+        static thread_local int32_t tid = (++read_num_threads_count) % NUM_THREADS;
         static thread_local char *value_buffer = aligned_read_buffer_[tid];
         static thread_local bool is_first_not_found = true;
         static thread_local uint32_t local_block_offset = 0;
+        static thread_local double wait_io_time = 0;
 
         uint64_t big_endian_key_uint = bswap_64(TO_UINT64(key.data()));
+        if (local_block_offset == 0) {
+            if (tid == 0) {
+                InitRandomReadAIOContext();
+
+                reader_threads_.resize(READ_EVENT_LOOP_NUM);
+                rw_aio_bq_arr_ = new blocking_queue<int32_t>[READ_EVENT_LOOP_NUM];
+                notify_tls_queue = new blocking_queue<char>[NUM_THREADS];
+                for (uint32_t io_tid = 0; io_tid < READ_EVENT_LOOP_NUM; io_tid++) {
+                    reader_threads_[io_tid] = thread([this, io_tid]() {
+                        this->ReadEventLoop(io_tid);
+                    });
+                }
+            }
+            read_init_barrier_.Wait();
+        }
 
         KeyEntry tmp{};
         tmp.key_ = big_endian_key_uint;
@@ -421,10 +513,12 @@ namespace polar_race {
 
         auto it = index_[bucket_id] + branchfree_search(index_[bucket_id], mmap_meta_cnt_[bucket_id], tmp);
         local_block_offset++;
-
+#ifdef READ_BARRIER
         if (local_block_offset % 100000 == 0 && tid < READ_BARRIER_NUM) {
             read_barrier_.Wait();
         }
+#endif
+        // Case 1: Key Not Found.
         if (it == index_[bucket_id] + mmap_meta_cnt_[bucket_id] || it->key_ != big_endian_key_uint) {
             if (is_first_not_found) {
                 log_info("not found in tid: %d\n", tid);
@@ -436,9 +530,25 @@ namespace polar_race {
         uint32_t fid;
         uint64_t foff;
         std::tie(fid, foff) = get_value_fid_foff(bucket_id, it->value_offset_);
-        pread(value_file_dp_[fid], value_buffer, VALUE_SIZE, foff);
+
+        // Case 2: Fill iocb, Submit Task, Wait.
+        fill_aio_node(value_file_dp_[fid], &rw_iocbs_[tid], value_buffer, foff, VALUE_SIZE, IOCB_CMD_PREAD);
+        // Submit Task.
+        rw_aio_bq_arr_[fid % READ_EVENT_LOOP_NUM].push(tid);
+        // Wait.
+        notify_tls_queue[tid].pop(wait_io_time);
 
         value->assign(value_buffer, VALUE_SIZE);
+#ifdef STAT
+        if (local_block_offset == 1000000) {
+//        if (local_block_offset == 255) {
+            auto last_write_clk = high_resolution_clock::now();
+            log_info("Read Stat of tid %d, elapsed time: %.3lf s, ts: %.3lf s, Wait Time: %.6lf s",
+                     tid, duration_cast<milliseconds>(last_write_clk - clock_start).count() / 1000.0,
+                     duration_cast<milliseconds>(last_write_clk.time_since_epoch()).count() / 1000.0,
+                     wait_io_time);
+        }
+#endif
         return kSucc;
     }
 
@@ -449,7 +559,7 @@ namespace polar_race {
             return;
         }
 
-        // get fid, and off
+        // Get fid, and off.
         uint32_t fid;
         uint64_t foff;
         std::tie(fid, foff) = get_value_fid_foff(bucket_id, 0);
@@ -466,7 +576,7 @@ namespace polar_race {
                                     (remain_value_num * VALUE_SIZE));
 
         while (completed_block_num < total_block_num) {
-            uint32_t free_nodes_num = (uint32_t) free_nodes.size();
+            uint32_t free_nodes_num = (uint32_t) range_free_nodes.size();
             uint32_t remain_block_num = total_block_num - submitted_block_num;
             uint32_t to_submit = min(free_nodes_num, remain_block_num);
 
@@ -474,18 +584,18 @@ namespace polar_race {
                 for (uint32_t i = 0; i < to_submit; ++i) {
                     uint32_t block_id = i + submitted_block_num;
 
-                    iocb *iocb_ptr = free_nodes.front();
-                    free_nodes.pop_front();
+                    iocb *iocb_ptr = range_free_nodes.front();
+                    range_free_nodes.pop_front();
 
                     size_t offset = block_id * (size_t) value_agg_num * VALUE_SIZE;
                     size_t size = (block_id == (total_block_num - 1) ? last_block_size : (value_agg_num * VALUE_SIZE));
                     fill_aio_node(value_file_dp_[fid], iocb_ptr,
                                   value_buffer + offset, offset + foff, size, IOCB_CMD_PREAD);
 
-                    iocb_ptrs[i] = iocb_ptr;
+                    range_iocb_ptrs[i] = iocb_ptr;
                 }
 
-                auto ret = io_submit(aio_ctx, to_submit, iocb_ptrs);
+                auto ret = io_submit(range_aio_ctx, to_submit, range_iocb_ptrs);
 
                 if (ret != to_submit) {
                     log_info("Commit error %d", ret);
@@ -498,7 +608,7 @@ namespace polar_race {
             uint32_t in_flight = submitted_block_num - completed_block_num;
             uint32_t expected = (0 <= in_flight ? 0 : in_flight);
 
-            auto ret = io_getevents(aio_ctx, expected, in_flight, io_events, NULL);
+            auto ret = io_getevents(range_aio_ctx, expected, in_flight, range_io_events, NULL);
 
             if (ret < 0) {
                 log_info("Get error.");
@@ -508,14 +618,14 @@ namespace polar_race {
             uint32_t to_complete = ret;
             if (to_complete > 0) {
                 for (uint32_t j = 0; j < to_complete; ++j) {
-                    io_event *complete_event = &io_events[j];
+                    io_event *complete_event = &range_io_events[j];
                     if (complete_event->res2 != 0 || complete_event->res < VALUE_SIZE) {
                         log_info("Return error.\n");
                         exit(-1);
                     }
 
                     iocb *iocb_ptr = (iocb *) complete_event->data;
-                    free_nodes.push_back(iocb_ptr);
+                    range_free_nodes.push_back(iocb_ptr);
                 }
 
                 completed_block_num += to_complete;
@@ -543,16 +653,16 @@ namespace polar_race {
     void EngineRace::InitAIOContext() {
         // AIO
         // Init aio context.
-        queue_depth = 32;
-        aio_ctx = 0;
-        iocb_ptrs = new iocb *[queue_depth];
-        iocbs = new iocb[queue_depth];
-        io_events = new io_event[queue_depth];
-        for (uint32_t i = 0; i < queue_depth; ++i) {
-            free_nodes.push_back(&iocbs[i]);
+        range_queue_depth = 32;
+        range_aio_ctx = 0;
+        range_iocb_ptrs = new iocb *[range_queue_depth];
+        range_iocbs = new iocb[range_queue_depth];
+        range_io_events = new io_event[range_queue_depth];
+        for (uint32_t i = 0; i < range_queue_depth; ++i) {
+            range_free_nodes.push_back(&range_iocbs[i]);
         }
 
-        if (io_setup(queue_depth, &aio_ctx) < 0) {
+        if (io_setup(range_queue_depth, &range_aio_ctx) < 0) {
             log_info("Setup fail\n");
             exit(-1);
         }
