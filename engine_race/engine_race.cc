@@ -456,9 +456,7 @@ namespace polar_race {
         auto ret = aio_read(&my_aiocb);
         if (ret < 0) perror("aio_read");
 
-        while (aio_error(&my_aiocb) == EINPROGRESS) {
-            aio_suspend(my_aiocb_lst, 1, nullptr);
-        }
+        while (aio_error(&my_aiocb) == EINPROGRESS);
         if ((ret = aio_return(&my_aiocb)) > 0) {
             /* got ret bytes on the read */
             value->assign(value_buffer, VALUE_SIZE);
