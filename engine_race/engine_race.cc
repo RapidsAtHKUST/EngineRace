@@ -397,9 +397,9 @@ namespace polar_race {
 
     void EngineRace::NotifyRandomReader(uint32_t local_block_offset, int64_t tid) {
         if (tid % 2 == 0) {
-            notify_queues_[(local_block_offset) % 2 + 2].push(1);   // Notify This Round
+            notify_queues_[(local_block_offset) % 2 + 2]->enqueue(1);   // Notify This Round
         } else {
-            notify_queues_[(local_block_offset + 1) % 2].push(1);   // Notify Next Round
+            notify_queues_[(local_block_offset + 1) % 2]->enqueue(1);   // Notify Next Round
         }
 #ifdef STAT
         if (local_block_offset == 1000000) {
@@ -421,9 +421,17 @@ namespace polar_race {
 
         if (local_block_offset == 0) {
             if (tid == 0) {
-                notify_queues_ = new blocking_queue<char>[4];   // Even-0,1  Odd-2,3
+                notify_queues_.resize(4);
+                for (auto i = 0; i < 4; i++) {
+                    // Even-0,1  Odd-2,3
+                    notify_queues_[i] = new moodycamel::BlockingConcurrentQueue<int32_t>(NUM_THREADS);
+                }
                 for (uint32_t i = 0; i < NUM_THREADS / 2; i++) {
-                    notify_queues_[1].push(1);
+                    notify_queues_[1]->enqueue(1);
+                }
+                for (int i = 0; i < VAL_FILE_NUM; i++) {
+                    posix_fadvise(value_file_dp_[i], 0, static_cast<size_t>(i) * MAX_VAL_BUCKET_SIZE * VALUE_SIZE,
+                                  POSIX_FADV_DONTNEED);
                 }
             }
             read_barrier_.Wait();
@@ -437,10 +445,11 @@ namespace polar_race {
         auto it = index_[bucket_id] + branchfree_search(index_[bucket_id], mmap_meta_cnt_[bucket_id], tmp);
         local_block_offset++;
 
+        int32_t tmp_val;
         if (tid % 2 == 0) {
-            notify_queues_[local_block_offset % 2].pop();
+            notify_queues_[local_block_offset % 2]->wait_dequeue(tmp_val);
         } else {
-            notify_queues_[local_block_offset % 2 + 2].pop();
+            notify_queues_[local_block_offset % 2 + 2]->wait_dequeue(tmp_val);
         }
         if (it == index_[bucket_id] + mmap_meta_cnt_[bucket_id] || it->key_ != big_endian_key_uint) {
             if (is_first_not_found) {

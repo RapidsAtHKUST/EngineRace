@@ -15,6 +15,7 @@
 #include "barrier.h"
 #include "thread_pool.h"
 #include "blocking_queue.h"
+#include "blockingconcurrentqueue.h"
 
 #define TO_UINT64(buffer) (*(uint64_t*)(buffer))
 
@@ -85,7 +86,7 @@ namespace polar_race {
         Barrier write_barrier_;
 
         // Read.
-        blocking_queue<char>* notify_queues_;
+        vector<moodycamel::BlockingConcurrentQueue<int32_t> *>notify_queues_;
         char **aligned_read_buffer_;
         Barrier read_barrier_;
 
@@ -108,7 +109,7 @@ namespace polar_race {
 
         double wait_get_time_;
         uint64_t val_buffer_max_size_;
-        thread* single_range_io_worker_;
+        thread *single_range_io_worker_;
 
         // Range Sequential IO.
         blocking_queue<char *> *free_buffers_;

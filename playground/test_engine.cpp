@@ -166,6 +166,18 @@ int main() {
                 }
             }
         }
+
+        log_info("Now Key Not Found...");
+#pragma omp parallel for num_threads(NUM_THREADS)
+        for (uint64_t i = round_size * iter_num; i < 2*round_size * iter_num; i++) {
+            static thread_local char polar_key_str[8];
+            static thread_local std::string tmp_str;
+            static thread_local bool is_first = true;
+            auto verify_int = static_cast<uint64_t>(-1);
+            memcpy(polar_key_str, &i, sizeof(uint64_t));
+            PolarString polar_key(polar_key_str, 8);
+            assert(engine->Read(polar_key, &tmp_str) == kNotFound);
+        }
         delete engine;
     }
 #endif
