@@ -10,7 +10,7 @@
 
 #include "log.h"
 
-//#define PRINT_LOG
+#define PRINT_LOG
 
 using namespace std;
 using namespace std::chrono;

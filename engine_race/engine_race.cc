@@ -62,7 +62,7 @@ namespace polar_race {
     }
 
     inline uint32_t get_par_bucket_id(uint64_t key) {
-        return static_cast<uint32_t >((key >> (NUM_THREADS - BUCKET_DIGITS)) & 0xffffffu);
+        return static_cast<uint32_t >((key >> (64 - BUCKET_DIGITS)) & 0xffffffu);
     }
 
     inline pair<uint32_t, uint64_t> get_key_fid_foff(uint32_t bucket_id, uint32_t bucket_off) {

@@ -1,18 +1,7 @@
-## All you have to do:
+## Disclaimer
 
-Complete engine_race/engine_race.[h,cc], and execute
+此项目仅供学习与交流使用，请遵循MIT协议，如果您在任何项目中使用相关代码，请保留此项目的LICENSE文件。
 
-```
-make
-```
-to build your own engine
+## Code Review文档
 
-## Example for you
-
-For quick start, we have already implemented a simple
-example engine in engine_example, you can view it and execute
-
-```
-make TARGET_ENGINE=engine_example
-```
-to build this example engine
+[Code-Reivew文档](documents/ReadMe.md)
