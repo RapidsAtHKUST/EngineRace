@@ -21,6 +21,7 @@
 [engine_race/file_util.h](engine_race/file_util.h) | Linux-AIO和文件相关的封装
 [engine_race/util.h](engine_race/util.h) | 统计性能调优的信息: `dstat`, `iostat`, 内存占用; 打印timestamp和对应代码行位置util
 [engine_race/log.h](engine_race/log.h), [engine_race/log.cc](engine_race/log.cc) | log工具, 稍做修改
+[engine_race/engine_race.h](engine_race/engine_race.h), [engine_race/engine_race.cc](engine_race/engine_race.cc) | KV-DB具体实现
 
 * 曾经使用的文件
 
@@ -50,4 +51,33 @@ mkdir build && cd build
 cmake ..
 make -j
 ./playground/test_engine_nonoff        
+```
+
+## 其他实验分支
+
+命名 | 意图
+--- | ---
+`write...` | 写入实验分支
+`randomread...` | 随机读实验分支
+`range...` | 顺序读实验分支
+`test-device...` | optane性能评测分支
+
+## 最终线上效果
+
+* 历史最佳成绩: `413.69 seconds`
+
+* 进程elapsed time
+
+```
+写入进程的历史最佳状态: 114.1 seconds左右
+读取进程的历史最佳状态: 105.9 seconds左右 (包括0.2 seconds index构建)
+Range进程的历史最佳状态: 192.1 seconds左右 (包括0.2 seconds index构建)
+```
+
+* 进程启动间隔
+
+```
+写入启动的间隔: 0.1 seconds 左右
+写入到读取的间隔: 0.35 seconds左右
+读取到Range的间隔: 0.45 seconds左右
 ```
