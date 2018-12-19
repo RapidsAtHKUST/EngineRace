@@ -30,7 +30,7 @@
 #define VALUE_SIZE (4096)
 
 // Buckets.
-#define BUCKET_DIGITS (11)      // k-v-buckets must be the same for the range query
+#define BUCKET_DIGITS (10)      // k-v-buckets must be the same for the range query
 #define BUCKET_NUM (1 << BUCKET_DIGITS)
 
 // Max Bucket Size * BUCKET_NUM.
@@ -49,14 +49,22 @@
 // Read.
 #define NUM_READ_KEY_THREADS (NUM_THREADS)
 #define NUM_FLUSH_TMP_THREADS (32u)
-#define READ_BARRIER_NUM (32)
 #define KEY_READ_BLOCK_COUNT (8192u)
 // Range.
 #define RECYCLE_BUFFER_NUM (2u)
-#define KEEP_REUSE_BUFFER_NUM (9u)
+#define KEEP_REUSE_BUFFER_NUM (3u)
 #define MAX_TOTAL_BUFFER_NUM (RECYCLE_BUFFER_NUM + KEEP_REUSE_BUFFER_NUM)
 
 #define SHRINK_SYNC_FACTOR (2)      // should be divided
+
+// Range Thread Pool.
+#define RANGE_QUEUE_DEPTH (8u)
+#define VAL_AGG_NUM (32)
+
+#define WORKER_IDLE (0)
+#define WORKER_SUBMITTED (1)
+#define WORKER_COMPLETED (2)
+#define FD_FINISHED (-2)
 
 namespace polar_race {
     using namespace std;
@@ -65,6 +73,19 @@ namespace polar_race {
         uint64_t key_;
         uint16_t value_offset_;
     }__attribute__((packed));
+
+    struct UserIOCB {
+        char *buffer_;
+        int fd_;
+        uint32_t size_;
+        uint64_t offset_;
+
+        UserIOCB() : buffer_(nullptr), fd_(-1), size_(0), offset_(0) {}
+
+        UserIOCB(char *buf, int fd, uint32_t size, uint64_t offset) :
+                buffer_(buf), fd_(fd), size_(size), offset_(offset) {
+        }
+    };
 
     bool operator<(KeyEntry l, KeyEntry r);
 
@@ -119,14 +140,10 @@ namespace polar_race {
         atomic_int *bucket_consumed_num_;
         int32_t total_range_num_threads_;
 
-        // AIO.
-        iocb **iocb_ptrs;
-        iocb *iocbs;
-        io_event *io_events;
-        aio_context_t aio_ctx;
-        uint32_t queue_depth;
-
-        list<iocb *> free_nodes;
+        // Detail.
+        vector<moodycamel::BlockingConcurrentQueue<UserIOCB> *> range_worker_task_tls_;
+        atomic_int *range_worker_status_tls_;
+        vector<thread> io_threads_;
 
     public:
         static RetCode Open(const std::string &name, Engine **eptr);
@@ -155,7 +172,7 @@ namespace polar_race {
     private:
         void InitRangeReader();
 
-        void InitAIOContext();
+        void InitPoolingContext();
 
         void InitForRange(int64_t tid);
 

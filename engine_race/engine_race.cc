@@ -17,11 +17,13 @@
 #include "util.h"
 #include "file_util.h"
 
-//#define STAT
+#define STAT
 //#define DSTAT_TESTING
 #define FLUSH_IN_WRITER_DESTRUCTOR
 
 //#define FADVISE_EXP
+#define IO_AFFINITY_EXP
+#define WAIT_STAT_RANGE_WORKER
 
 namespace polar_race {
     using namespace std;
@@ -252,11 +254,20 @@ namespace polar_race {
                     delete[] kv_pair->data();
                 delete kv_pair;
             }
-            // Avoid Dead Lock.
+            // Join Range Submitter.
             for (int next_future_idx = 0; next_future_idx < BUCKET_NUM * 2; next_future_idx++) {
                 free_buffers_->push(nullptr);
             }
             single_range_io_worker_->join();
+            // Join Range IO Workers.
+            for (uint32_t io_id = 0; io_id < RANGE_QUEUE_DEPTH; io_id++) {
+                log_info("notify: %d", io_id);
+                range_worker_task_tls_[io_id]->enqueue(UserIOCB(nullptr, FD_FINISHED, 0, 0));
+                log_info("join: %d, %d", io_id, io_threads_[io_id].joinable() ? 1 : 0);
+                io_threads_[io_id].join();
+                log_info("join ok: %d, %d", io_id, io_threads_[io_id].joinable() ? 1 : 0);
+            }
+
             delete range_barrier_ptr_;
             if (total_time_ != 0) {
                 log_info("Total Range Time: %.9lf s, wait: %.9lf s,  io thread sleep: %.9lf s, bq-pop: %.9lf s",
@@ -503,107 +514,94 @@ namespace polar_race {
         uint64_t foff;
         std::tie(fid, foff) = get_value_fid_foff(bucket_id, 0);
 
-        // Replace with AIO.
-        uint32_t value_agg_num = 32;
+        // Replace with Thread Pool.
         uint32_t value_num = mmap_meta_cnt_[bucket_id];
-        uint32_t remain_value_num = value_num % value_agg_num;
-        uint32_t total_block_num = (remain_value_num == 0 ? (value_num / value_agg_num) :
-                                    (value_num / value_agg_num + 1));
-        uint32_t submitted_block_num = 0;
+        uint32_t remain_value_num = value_num % VAL_AGG_NUM;
+        uint32_t total_block_num = (remain_value_num == 0 ? (value_num / VAL_AGG_NUM) :
+                                    (value_num / VAL_AGG_NUM + 1));
         uint32_t completed_block_num = 0;
-        uint32_t last_block_size = (remain_value_num == 0 ? (VALUE_SIZE * value_agg_num) :
+        uint32_t last_block_size = (remain_value_num == 0 ? (VALUE_SIZE * VAL_AGG_NUM) :
                                     (remain_value_num * VALUE_SIZE));
-
+        uint32_t submitted_block_num = 0;
+        // Finish Do Next Instantly, Submit Maintain Queue Size 2
         while (completed_block_num < total_block_num) {
-            uint32_t free_nodes_num = (uint32_t) free_nodes.size();
-            uint32_t remain_block_num = total_block_num - submitted_block_num;
-            uint32_t to_submit = min(free_nodes_num, remain_block_num);
-
-            if (to_submit > 0) {
-                for (uint32_t i = 0; i < to_submit; ++i) {
-                    uint32_t block_id = i + submitted_block_num;
-
-                    iocb *iocb_ptr = free_nodes.front();
-                    free_nodes.pop_front();
-
-                    size_t offset = block_id * (size_t) value_agg_num * VALUE_SIZE;
-                    size_t size = (block_id == (total_block_num - 1) ? last_block_size : (value_agg_num * VALUE_SIZE));
-                    fill_aio_node(value_file_dp_[fid], iocb_ptr,
-                                  value_buffer + offset, offset + foff, size, IOCB_CMD_PREAD);
-
-                    iocb_ptrs[i] = iocb_ptr;
+            for (uint32_t io_id = 0; io_id < RANGE_QUEUE_DEPTH; io_id++) {
+                // Peek Completions If Possible.
+                if (range_worker_status_tls_[io_id] == WORKER_COMPLETED) {
+                    completed_block_num++;
+                    range_worker_status_tls_[io_id] = WORKER_IDLE;
                 }
 
-                auto ret = io_submit(aio_ctx, to_submit, iocb_ptrs);
-
-                if (ret != to_submit) {
-                    log_info("Commit error %d", ret);
-                    exit(-1);
+                // Submit If Possible.
+                if (submitted_block_num < total_block_num && range_worker_status_tls_[io_id] == WORKER_IDLE) {
+                    size_t offset = submitted_block_num * (size_t) VAL_AGG_NUM * VALUE_SIZE;
+                    uint32_t size = (submitted_block_num == (total_block_num - 1) ?
+                                     last_block_size : (VAL_AGG_NUM * VALUE_SIZE));
+                    range_worker_status_tls_[io_id] = WORKER_SUBMITTED;
+                    range_worker_task_tls_[io_id]->enqueue(
+                            UserIOCB(value_buffer + offset, value_file_dp_[fid], size, offset + foff));
+                    submitted_block_num++;
                 }
-
-                submitted_block_num += to_submit;
-            }
-
-            uint32_t in_flight = submitted_block_num - completed_block_num;
-            uint32_t expected = (0 <= in_flight ? 0 : in_flight);
-
-            auto ret = io_getevents(aio_ctx, expected, in_flight, io_events, NULL);
-
-            if (ret < 0) {
-                log_info("Get error.");
-                exit(-1);
-            }
-
-            uint32_t to_complete = ret;
-            if (to_complete > 0) {
-                for (uint32_t j = 0; j < to_complete; ++j) {
-                    io_event *complete_event = &io_events[j];
-                    if (complete_event->res2 != 0 || complete_event->res < VALUE_SIZE) {
-                        log_info("Return error.\n");
-                        exit(-1);
-                    }
-
-                    iocb *iocb_ptr = (iocb *) complete_event->data;
-                    free_nodes.push_back(iocb_ptr);
-                }
-
-                completed_block_num += to_complete;
             }
         }
+
         auto range_clock_end = high_resolution_clock::now();
         double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                               static_cast<double>(1000000000);
         total_time_ += elapsed_time;
 #ifdef STAT
-        if (bucket_id < MAX_TOTAL_BUFFER_NUM + 8 || bucket_id % 256 == 255) {
-            double bucket_size = static_cast<double>(mmap_meta_cnt_[bucket_id] * VALUE_SIZE) / (1024. * 1024.);
-            log_info(
-                    "In Bucket %d, Free Buf: %d, Read time %.9lf s, Acc time: %.9lf s, "
-                    "Bucket size: %.6lf MB, Speed: %.6lf MB/s",
-                    bucket_id, free_buffers_->size(), elapsed_time,
-                    total_time_, bucket_size, bucket_size / elapsed_time);
-        }
+//        if (bucket_id < MAX_TOTAL_BUFFER_NUM + 8 || bucket_id % 256 == 255) {
+        double bucket_size = static_cast<double>(mmap_meta_cnt_[bucket_id] * VALUE_SIZE) / (1024. * 1024.);
+        log_info(
+                "In Bucket %d, Free Buf: %d, Read time %.9lf s, Acc time: %.9lf s, "
+                "Bucket size: %.6lf MB, Speed: %.6lf MB/s",
+                bucket_id, free_buffers_->size(), elapsed_time,
+                total_time_, bucket_size, bucket_size / elapsed_time);
+//        }
 #endif
         if (bucket_id == BUCKET_NUM - 1) {
             printTS(__FUNCTION__, __LINE__, clock_start);
         }
     }
 
-    void EngineRace::InitAIOContext() {
-        // AIO
-        // Init aio context.
-        queue_depth = 32;
-        aio_ctx = 0;
-        iocb_ptrs = new iocb *[queue_depth];
-        iocbs = new iocb[queue_depth];
-        io_events = new io_event[queue_depth];
-        for (uint32_t i = 0; i < queue_depth; ++i) {
-            free_nodes.push_back(&iocbs[i]);
-        }
+    void EngineRace::InitPoolingContext() {
+        io_threads_ = vector<thread>(RANGE_QUEUE_DEPTH);
+        range_worker_task_tls_.resize(RANGE_QUEUE_DEPTH);
+        range_worker_status_tls_ = new atomic_int[RANGE_QUEUE_DEPTH];
+        for (uint32_t io_id = 0; io_id < RANGE_QUEUE_DEPTH; io_id++) {
+            range_worker_task_tls_[io_id] = new moodycamel::BlockingConcurrentQueue<UserIOCB>();
+            range_worker_status_tls_[io_id] = WORKER_IDLE;
+            io_threads_[io_id] = thread([this, io_id]() {
+                UserIOCB user_iocb;
+#ifdef IO_AFFINITY_EXP
+                setThreadSelfAffinity(io_id);
+#endif
+                double wait_time = 0;
+                for (;;) {
+                    // statistics here.
+#ifdef WAIT_STAT_RANGE_WORKER
+                    auto clock_beg = high_resolution_clock::now();
+#endif
+                    range_worker_task_tls_[io_id]->wait_dequeue(user_iocb);
 
-        if (io_setup(queue_depth, &aio_ctx) < 0) {
-            log_info("Setup fail\n");
-            exit(-1);
+#ifdef WAIT_STAT_RANGE_WORKER
+                    auto clock_end = high_resolution_clock::now();
+                    wait_time += static_cast<double>(duration_cast<nanoseconds>(clock_end - clock_beg).count()) /
+                                 1000000000.;
+#endif
+                    if (user_iocb.fd_ == FD_FINISHED) {
+#ifdef WAIT_STAT_RANGE_WORKER
+                        log_info("yes! notified, %d, total wait time: %.6lf s", io_id, wait_time);
+#else
+                        log_info("yes! notified, %d", io_id);
+#endif
+                        break;
+                    } else {
+                        pread(user_iocb.fd_, user_iocb.buffer_, user_iocb.size_, user_iocb.offset_);
+                        range_worker_status_tls_[io_id] = WORKER_COMPLETED;
+                    }
+                }
+            });
         }
     }
 
@@ -630,7 +628,7 @@ namespace polar_race {
             if (tid == 0) {
                 auto range_clock_beg = high_resolution_clock::now();
                 InitRangeReader();
-                InitAIOContext();
+                InitPoolingContext();
                 auto range_clock_end = high_resolution_clock::now();
                 double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                                       static_cast<double>(1000000000);
@@ -643,6 +641,8 @@ namespace polar_race {
                     log_info("Update Number of Threads Correctly");
                     total_range_num_threads_ = NUM_THREADS;
                 }
+                // Init IO Threads Pooling.
+
                 range_barrier_ptr_ = new Barrier(static_cast<size_t>(total_range_num_threads_));
                 log_info("Total number of range threads: %zu", total_range_num_threads_);
                 is_range_init_ = true;

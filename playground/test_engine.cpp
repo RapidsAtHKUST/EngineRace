@@ -19,7 +19,7 @@
 
 #define ENABLE_READ
 #define TWICE_RANGE
-static const char kEnginePath[] = "test_engine";
+static const char kEnginePath[] = "/DataRapids/test_engine";
 
 using namespace polar_race;
 
@@ -99,7 +99,7 @@ int main() {
     uint64_t NUM_THREADS = 64;
     exec(("rm -r " + std::string(kEnginePath)).c_str());
 
-    uint64_t round_size = 350 * NUM_THREADS;
+    uint64_t round_size = 4000 * NUM_THREADS;
 //    uint64_t round_size = 837 * NUM_THREADS;
     uint64_t iter_num = 1;   // switch this to test different settings
 
@@ -169,7 +169,7 @@ int main() {
 
         log_info("Now Key Not Found...");
 #pragma omp parallel for num_threads(NUM_THREADS)
-        for (uint64_t i = round_size * iter_num; i < 2*round_size * iter_num; i++) {
+        for (uint64_t i = round_size * iter_num; i < 2 * round_size * iter_num; i++) {
             static thread_local char polar_key_str[8];
             static thread_local std::string tmp_str;
             static thread_local bool is_first = true;
