@@ -89,6 +89,11 @@ namespace polar_race {
     RetCode Engine::Open(const std::string &name, Engine **eptr) {
         clock_start = high_resolution_clock::now();
         log_info("sizeof %d, %d, %d", sizeof(off_t), sizeof(off64_t), sizeof(KeyEntry));
+
+        char tmp[1024];
+        gethostname(tmp, 1024);
+        log_info("Open... %s", tmp);
+
         auto ret = EngineRace::Open(name, eptr);
         return ret;
     }
