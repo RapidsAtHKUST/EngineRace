@@ -550,14 +550,14 @@ namespace polar_race {
                               static_cast<double>(1000000000);
         total_time_ += elapsed_time;
 #ifdef STAT
-//        if (bucket_id < MAX_TOTAL_BUFFER_NUM + 8 || bucket_id % 256 == 255) {
-        double bucket_size = static_cast<double>(mmap_meta_cnt_[bucket_id] * VALUE_SIZE) / (1024. * 1024.);
-        log_info(
-                "In Bucket %d, Free Buf: %d, Read time %.9lf s, Acc time: %.9lf s, "
-                "Bucket size: %.6lf MB, Speed: %.6lf MB/s",
-                bucket_id, free_buffers_->size(), elapsed_time,
-                total_time_, bucket_size, bucket_size / elapsed_time);
-//        }
+        if (bucket_id < MAX_TOTAL_BUFFER_NUM + 8 || bucket_id % 64 == 63) {
+            double bucket_size = static_cast<double>(mmap_meta_cnt_[bucket_id] * VALUE_SIZE) / (1024. * 1024.);
+            log_info(
+                    "In Bucket %d, Free Buf: %d, Read time %.9lf s, Acc time: %.9lf s, "
+                    "Bucket size: %.6lf MB, Speed: %.6lf MB/s",
+                    bucket_id, free_buffers_->size(), elapsed_time,
+                    total_time_, bucket_size, bucket_size / elapsed_time);
+        }
 #endif
         if (bucket_id == BUCKET_NUM - 1) {
             printTS(__FUNCTION__, __LINE__, clock_start);
@@ -623,6 +623,7 @@ namespace polar_race {
     }
 
     void EngineRace::InitForRange(int64_t tid) {
+        static thread_local bool is_first = true;
         if (!is_range_init_) {
             unique_lock<mutex> lock(range_mtx_);
             if (tid == 0) {
@@ -653,6 +654,17 @@ namespace polar_race {
                 }
             }
         }
+
+        if (is_first && tid < MAX_TOTAL_BUFFER_NUM) {
+            // Really populate the physical memory.
+            log_info("Tid: %d, Load Physical Mem %d", tid, tid);
+            for (uint32_t off = 0; off < val_buffer_max_size_; off += FILESYSTEM_BLOCK_SIZE) {
+                value_shared_buffers_[tid][off] = -1;
+            }
+            is_first = false;
+            log_info("Tid: %d, Load Physical Mem Finish %d", tid, tid);
+        }
+        range_barrier_ptr_->Wait();
 
         if (tid == 0) {
             // Submit All IO Jobs.
