@@ -18,7 +18,7 @@
 [engine_race/barrier.h](engine_race/barrier.h) | 可以重复使用的barrier，通过generation来支持
 [engine_race/blocking_queue.h](engine_race/blocking_queue.h) | 简单的blocking-queue实现 (没有任何性能考虑的)
 [engine_race/concurrentqueue.h](engine_race/concurrentqueue.h), [engine_race/blockingconcurrentqueue.h](engine_race/blockingconcurrentqueue.h) | 工业级别的blocking-queue实现 [cameron314/concurrentqueue](https://github.com/cameron314/concurrentqueue)，具体使用参考两个文件中的license
-[engine_race/file_util.h](engine_race/file_util.h) | Linux-AIO和文件相关的封装
+[engine_race/file_util.h](engine_race/file_util.h) | 文件相关的封装
 [engine_race/util.h](engine_race/util.h) | 统计性能调优的信息: `dstat`, `iostat`, 内存占用; 打印timestamp和对应代码行位置util
 [engine_race/log.h](engine_race/log.h), [engine_race/log.cc](engine_race/log.cc) | log工具, 稍做修改
 [engine_race/engine_race.h](engine_race/engine_race.h), [engine_race/engine_race.cc](engine_race/engine_race.cc) | KV-DB具体实现
