@@ -18,10 +18,9 @@
 #include "file_util.h"
 
 #define STAT
-//#define DSTAT_TESTING
+#define DSTAT_TESTING
 #define FLUSH_IN_WRITER_DESTRUCTOR
 
-//#define FADVISE_EXP
 #define IO_AFFINITY_EXP
 #define WAIT_STAT_RANGE_WORKER
 
@@ -90,17 +89,13 @@ namespace polar_race {
         clock_start = high_resolution_clock::now();
         log_info("sizeof %d, %d, %d", sizeof(off_t), sizeof(off64_t), sizeof(KeyEntry));
 
-        char tmp[1024];
-        gethostname(tmp, 1024);
-        log_info("Open... %s", tmp);
-
         auto ret = EngineRace::Open(name, eptr);
         return ret;
     }
 
     Engine::~Engine() = default;
 
-    /*
+/*
  * Complete the functions below to implement you own engine
  */
     EngineRace::EngineRace(const std::string &dir) :
@@ -234,8 +229,8 @@ namespace polar_race {
     RetCode EngineRace::Open(const std::string &name, Engine **eptr) {
         printTS(__FUNCTION__, __LINE__, clock_start);
 #ifdef DSTAT_TESTING
-        DstatCorountine();
-        IOStatCoroutine();
+        DstatThreading();
+        IOStatThreading();
 #endif
         if (!file_exists(name.c_str())) {
             int ret = mkdir(name.c_str(), 0755);
@@ -407,7 +402,6 @@ namespace polar_race {
         local_block_offset++;
 #ifdef STAT
         if (local_block_offset == 1000000) {
-//        if (local_block_offset == 255) {
             auto last_write_clk = high_resolution_clock::now();
             log_info("Write Stat of tid %d, elapsed time: %.3lf s, ts: %.3lf s",
                      tid, duration_cast<milliseconds>(last_write_clk - clock_start).count() / 1000.0,
@@ -430,7 +424,6 @@ namespace polar_race {
 
 #ifdef STAT
         if (local_block_offset == 1000000) {
-//        if (local_block_offset == 255) {
             auto last_write_clk = high_resolution_clock::now();
             log_info("Read Stat of tid %d, elapsed time: %.3lf s, ts: %.3lf s",
                      tid, duration_cast<milliseconds>(last_write_clk - clock_start).count() / 1000.0,
@@ -456,14 +449,6 @@ namespace polar_race {
                 for (uint32_t i = 0; i < NUM_THREADS / 2; i++) {
                     notify_queues_[0]->enqueue(1);
                 }
-#ifdef FADVISE_EXP
-                for (int i = 0; i < VAL_FILE_NUM; i++) {
-                    size_t off = static_cast<size_t>(i) * MAX_VAL_BUCKET_SIZE * VALUE_SIZE * BUCKET_NUM / VAL_FILE_NUM;
-                    size_t size = static_cast<size_t >(MAX_VAL_BUCKET_SIZE) * VALUE_SIZE * BUCKET_NUM / VAL_FILE_NUM;
-                    log_info("Off: %zu, Size Not Need : %zu", off, size);
-                    posix_fadvise(value_file_dp_[i], off, size, POSIX_FADV_DONTNEED);
-                }
-#endif
             }
             read_barrier_.Wait();
         }
@@ -514,12 +499,11 @@ namespace polar_race {
             return;
         }
 
-        // get fid, and off
+        // Get fid, and off.
         uint32_t fid;
         uint64_t foff;
         std::tie(fid, foff) = get_value_fid_foff(bucket_id, 0);
 
-        // Replace with Thread Pool.
         uint32_t value_num = mmap_meta_cnt_[bucket_id];
         uint32_t remain_value_num = value_num % VAL_AGG_NUM;
         uint32_t total_block_num = (remain_value_num == 0 ? (value_num / VAL_AGG_NUM) :
@@ -528,7 +512,7 @@ namespace polar_race {
         uint32_t last_block_size = (remain_value_num == 0 ? (VALUE_SIZE * VAL_AGG_NUM) :
                                     (remain_value_num * VALUE_SIZE));
         uint32_t submitted_block_num = 0;
-        // Finish Do Next Instantly, Submit Maintain Queue Size 2
+        // Submit to Maintain Queue Depth.
         while (completed_block_num < total_block_num) {
             for (uint32_t io_id = 0; io_id < RANGE_QUEUE_DEPTH; io_id++) {
                 // Peek Completions If Possible.
@@ -569,7 +553,7 @@ namespace polar_race {
         }
     }
 
-    void EngineRace::InitPoolingContext() {
+    void EngineRace::InitPollingContext() {
         io_threads_ = vector<thread>(RANGE_QUEUE_DEPTH);
         range_worker_task_tls_.resize(RANGE_QUEUE_DEPTH);
         range_worker_status_tls_ = new atomic_int[RANGE_QUEUE_DEPTH];
@@ -583,7 +567,7 @@ namespace polar_race {
 #endif
                 double wait_time = 0;
                 for (;;) {
-                    // statistics here.
+                    // Statistics here.
 #ifdef WAIT_STAT_RANGE_WORKER
                     auto clock_beg = high_resolution_clock::now();
 #endif
@@ -634,7 +618,7 @@ namespace polar_race {
             if (tid == 0) {
                 auto range_clock_beg = high_resolution_clock::now();
                 InitRangeReader();
-                InitPoolingContext();
+                InitPollingContext();
                 auto range_clock_end = high_resolution_clock::now();
                 double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                                       static_cast<double>(1000000000);
@@ -647,7 +631,7 @@ namespace polar_race {
                     log_info("Update Number of Threads Correctly");
                     total_range_num_threads_ = NUM_THREADS;
                 }
-                // Init IO Threads Pooling.
+                // Init IO Threads Polling.
 
                 range_barrier_ptr_ = new Barrier(static_cast<size_t>(total_range_num_threads_));
                 log_info("Total number of range threads: %zu", total_range_num_threads_);
@@ -673,7 +657,6 @@ namespace polar_race {
 
         if (tid == 0) {
             // Submit All IO Jobs.
-            // Odd Round.
             printTS(__FUNCTION__, __LINE__, clock_start);
             promises_.resize(BUCKET_NUM * 2);
             for (int i = 0; i < BUCKET_NUM * 2; i++) {
@@ -738,10 +721,6 @@ namespace polar_race {
         range_barrier_ptr_->Wait();
     }
 
-/*
- * NOTICE: Implement 'Range' in quarter-final,
- *         you can skip it in preliminary.
- */
 // 5. Applies the given Vistor::Visit function to the result
 // of every key-value pair in the key range [first, last),
 // in order
@@ -818,6 +797,7 @@ namespace polar_race {
                 // Value.
                 uint64_t val_id = index_[bucket_id][in_par_id].value_offset_;
                 polar_val_ptr_ = PolarString(shared_buffer + val_id * VALUE_SIZE, VALUE_SIZE);
+
                 // Visit Key/Value.
                 visitor.Visit(*polar_key_ptr_, polar_val_ptr_);
             }

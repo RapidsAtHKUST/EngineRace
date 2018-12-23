@@ -277,32 +277,32 @@ value buffer不选择更小是为了防止sys-cpu过高影响性能。
 
 ### 1.6 Range顺序读阶段(两次)设计
 
-* 主体逻辑: 单个IO线程一直打IO, 其他线程消费内存, 
+* 主体逻辑: 单个IO协调线程一直发任务让IO线程打IO, 其他线程消费内存,
 每进行一个bucket进行一次barrier来防止visit内存占用太多资源。
 
-* 实现细节1 (IO线程通知memory visit 线程 value buffer结果ready 的同步): 
+* 实现细节1 (IO协调线程通知memory visit 线程 value buffer结果ready 的同步):
 通过使用promise和future进行 (`promises_`, `futures_`). 
 每个bucket会对应一个promise, 来表示一个未来的获取到的返回结果(也就是读取完的buffer), 
 这个promise对应了一个`shared_future`, 使得所有visitors可以等待该返回结果。
 
-* 实现细节2 (通知IO线程free buffers已经有了): 
+* 实现细节2 (通知IO协调线程free buffers已经有了):
 通过一个blocking queue `free_buffers_`来记录free buffers, 
 visitor线程push buffer进入 `free_buffers_`, 
 IO线程从中pop buffer。
 
-对应的IO-thread逻辑如下 (`ReadBucketToBuffer`通过aIO来打满IO): 
+对应的IO协调thread逻辑如下 (`ReadBucketToBuffer`通过aIO来打满IO):
 
 ```cpp
-single_range_IO_worker_ = new thread([this]() {
+single_range_io_worker_ = new thread([this]() {
                 // Odd Round.
                 log_info("In Range IO");
                 for (uint32_t next_bucket_idx = 0; next_bucket_idx < BUCKET_NUM; next_bucket_idx++) {
                     // 1st: Pop Buffer.
-                    auto range_clock_beg = high_resolutIOn_clock::now();
-                    char *buffer = free_buffers_->pop(total_IO_sleep_time_);
-                    auto range_clock_end = high_resolutIOn_clock::now();
+                    auto range_clock_beg = high_resolution_clock::now();
+                    char *buffer = free_buffers_->pop(total_io_sleep_time_);
+                    auto range_clock_end = high_resolution_clock::now();
                     double elapsed_time =
-                            duratIOn_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
+                            duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                             static_cast<double>(1000000000);
                     total_blocking_queue_time_ += elapsed_time;
 
@@ -318,11 +318,11 @@ single_range_IO_worker_ = new thread([this]() {
                     char *buffer;
                     if (next_bucket_idx >= KEEP_REUSE_BUFFER_NUM) {
                         // 1st: Pop Buffer.
-                        auto range_clock_beg = high_resolutIOn_clock::now();
-                        buffer = free_buffers_->pop(total_IO_sleep_time_);
-                        auto range_clock_end = high_resolutIOn_clock::now();
+                        auto range_clock_beg = high_resolution_clock::now();
+                        buffer = free_buffers_->pop(total_io_sleep_time_);
+                        auto range_clock_end = high_resolution_clock::now();
                         double elapsed_time =
-                                duratIOn_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
+                                duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
                                 static_cast<double>(1000000000);
                         total_blocking_queue_time_ += elapsed_time;
 
@@ -335,6 +335,116 @@ single_range_IO_worker_ = new thread([this]() {
                 }
                 log_info("In Range IO, Finish Even Round");
             });
+```
+
+具体的submit读单个bucket任务的逻辑如下:
+
+```cpp
+    void EngineRace::ReadBucketToBuffer(uint32_t bucket_id, char *value_buffer) {
+        auto range_clock_beg = high_resolution_clock::now();
+
+        if (value_buffer == nullptr) {
+            return;
+        }
+
+        // Get fid, and off.
+        uint32_t fid;
+        uint64_t foff;
+        std::tie(fid, foff) = get_value_fid_foff(bucket_id, 0);
+
+        uint32_t value_num = mmap_meta_cnt_[bucket_id];
+        uint32_t remain_value_num = value_num % VAL_AGG_NUM;
+        uint32_t total_block_num = (remain_value_num == 0 ? (value_num / VAL_AGG_NUM) :
+                                    (value_num / VAL_AGG_NUM + 1));
+        uint32_t completed_block_num = 0;
+        uint32_t last_block_size = (remain_value_num == 0 ? (VALUE_SIZE * VAL_AGG_NUM) :
+                                    (remain_value_num * VALUE_SIZE));
+        uint32_t submitted_block_num = 0;
+        // Submit to Maintain Queue Depth.
+        while (completed_block_num < total_block_num) {
+            for (uint32_t io_id = 0; io_id < RANGE_QUEUE_DEPTH; io_id++) {
+                // Peek Completions If Possible.
+                if (range_worker_status_tls_[io_id] == WORKER_COMPLETED) {
+                    completed_block_num++;
+                    range_worker_status_tls_[io_id] = WORKER_IDLE;
+                }
+
+                // Submit If Possible.
+                if (submitted_block_num < total_block_num && range_worker_status_tls_[io_id] == WORKER_IDLE) {
+                    size_t offset = submitted_block_num * (size_t) VAL_AGG_NUM * VALUE_SIZE;
+                    uint32_t size = (submitted_block_num == (total_block_num - 1) ?
+                                     last_block_size : (VAL_AGG_NUM * VALUE_SIZE));
+                    range_worker_status_tls_[io_id] = WORKER_SUBMITTED;
+                    range_worker_task_tls_[io_id]->enqueue(
+                            UserIOCB(value_buffer + offset, value_file_dp_[fid], size, offset + foff));
+                    submitted_block_num++;
+                }
+            }
+        }
+
+        auto range_clock_end = high_resolution_clock::now();
+        double elapsed_time = duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
+                              static_cast<double>(1000000000);
+        total_time_ += elapsed_time;
+#ifdef STAT
+        if (bucket_id < MAX_TOTAL_BUFFER_NUM + 8 || bucket_id % 64 == 63) {
+            double bucket_size = static_cast<double>(mmap_meta_cnt_[bucket_id] * VALUE_SIZE) / (1024. * 1024.);
+            log_info(
+                    "In Bucket %d, Free Buf: %d, Read time %.9lf s, Acc time: %.9lf s, "
+                    "Bucket size: %.6lf MB, Speed: %.6lf MB/s",
+                    bucket_id, free_buffers_->size(), elapsed_time,
+                    total_time_, bucket_size, bucket_size / elapsed_time);
+        }
+#endif
+        if (bucket_id == BUCKET_NUM - 1) {
+            printTS(__FUNCTION__, __LINE__, clock_start);
+        }
+    }
+```
+
+对应的IO线程逻辑如下:
+
+```cpp
+    void EngineRace::InitPoolingContext() {
+        io_threads_ = vector<thread>(RANGE_QUEUE_DEPTH);
+        range_worker_task_tls_.resize(RANGE_QUEUE_DEPTH);
+        range_worker_status_tls_ = new atomic_int[RANGE_QUEUE_DEPTH];
+        for (uint32_t io_id = 0; io_id < RANGE_QUEUE_DEPTH; io_id++) {
+            range_worker_task_tls_[io_id] = new moodycamel::BlockingConcurrentQueue<UserIOCB>();
+            range_worker_status_tls_[io_id] = WORKER_IDLE;
+            io_threads_[io_id] = thread([this, io_id]() {
+                UserIOCB user_iocb;
+#ifdef IO_AFFINITY_EXP
+                setThreadSelfAffinity(io_id);
+#endif
+                double wait_time = 0;
+                for (;;) {
+                    // statistics here.
+#ifdef WAIT_STAT_RANGE_WORKER
+                    auto clock_beg = high_resolution_clock::now();
+#endif
+                    range_worker_task_tls_[io_id]->wait_dequeue(user_iocb);
+
+#ifdef WAIT_STAT_RANGE_WORKER
+                    auto clock_end = high_resolution_clock::now();
+                    wait_time += static_cast<double>(duration_cast<nanoseconds>(clock_end - clock_beg).count()) /
+                                 1000000000.;
+#endif
+                    if (user_iocb.fd_ == FD_FINISHED) {
+#ifdef WAIT_STAT_RANGE_WORKER
+                        log_info("yes! notified, %d, total wait time: %.6lf s", io_id, wait_time);
+#else
+                        log_info("yes! notified, %d", io_id);
+#endif
+                        break;
+                    } else {
+                        pread(user_iocb.fd_, user_iocb.buffer_, user_iocb.size_, user_iocb.offset_);
+                        range_worker_status_tls_[io_id] = WORKER_COMPLETED;
+                    }
+                }
+            });
+        }
+    }
 ```
 
 对应的内存visitor线程的逻辑如下: 

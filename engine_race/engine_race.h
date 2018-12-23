@@ -172,7 +172,7 @@ namespace polar_race {
     private:
         void InitRangeReader();
 
-        void InitPoolingContext();
+        void InitPollingContext();
 
         void InitForRange(int64_t tid);
 

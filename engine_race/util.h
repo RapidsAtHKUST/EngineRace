@@ -81,7 +81,7 @@ inline std::string dstat() {
     return result;
 }
 
-inline void DstatCorountine() {
+inline void DstatThreading() {
     thread my_coroutine = thread([]() {
         dstat();
     });
@@ -102,7 +102,6 @@ inline std::string iostat() {
         if (fgets(buffer.data(), 512, pipe.get()) != nullptr) {
             if (memcmp(LINUX_STR, buffer.data(), strlen(LINUX_STR)) == 0 ||
                 memcmp(SPACE_LINUX_STR, buffer.data(), strlen(SPACE_LINUX_STR)) == 0) {
-                log_info(buffer.data());
                 continue;
             }
             if (memcmp(DEVICE_STR, buffer.data(), strlen(DEVICE_STR)) == 0 ||
@@ -119,7 +118,7 @@ inline std::string iostat() {
     return result;
 }
 
-inline void IOStatCoroutine() {
+inline void IOStatThreading() {
     thread my_coroutine = thread([]() {
         iostat();
     });
