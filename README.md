@@ -60,15 +60,6 @@ make -j
 ./playground/test_engine_nonoff        
 ```
 
-## 其他实验分支
-
-命名 | 意图
---- | ---
-`write...` | 写入实验分支
-`randomread...` | 随机读实验分支
-`range...` | 顺序读实验分支
-`test-device...` | optane性能评测分支
-
 ## 最终线上效果
 
 * 历史最佳成绩: `413.69 seconds`

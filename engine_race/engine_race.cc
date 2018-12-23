@@ -18,7 +18,7 @@
 #include "file_util.h"
 
 #define STAT
-#define DSTAT_TESTING
+//#define DSTAT_TESTING
 #define FLUSH_IN_WRITER_DESTRUCTOR
 
 #define IO_AFFINITY_EXP
