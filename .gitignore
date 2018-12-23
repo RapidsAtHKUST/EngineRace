@@ -1,12 +1,10 @@
 build
-input_data
-news.txt
+cmake-build-debug
+lib
 tmp
-logs-all
 *.iml
 .idea
 *.o
 *.a
-cmake-build-debug
 .cproject
 .project
