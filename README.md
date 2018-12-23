@@ -30,6 +30,13 @@
 [engine_race/thread_pool.h](engine_race/thread_pool.h) | 简单的线程池实现 [progschj/ThreadPool](https://github.com/progschj/ThreadPool), 在之前版本中使用, 后来改用`std::thread`, `std::promise`, `std::future`代替了
 [engine_race/sparsepp](engine_race/sparsepp) | 高效的sparese hashmap实现，特点: 空间占用少, [greg7mdp/sparsepp](https://github.com/greg7mdp/sparsepp)
 
+* 官方的样例
+
+目录 | 说明
+--- | ---
+[engine_example](engine_example) | 官方样例主要代码
+[test](test) | 官方样例测试代码
+
 ### 测试的代码
 
 文件 | 说明
