@@ -60,6 +60,8 @@ make -j
 ./playground/test_engine_nonoff        
 ```
 
+* 注意: [playground/test_engine.cpp](playground/test_engine.cpp)中的DB路径`/DataRapids/`需要存在, 请将SSD设备挂载到这个路径。
+
 ## 最终线上效果
 
 * 历史最佳成绩: `413.69 seconds`

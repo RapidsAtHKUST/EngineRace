@@ -8,9 +8,6 @@
 #include <atomic>
 #include <list>
 
-#include <linux/aio_abi.h>
-#include <sys/syscall.h>
-
 #include "include/engine.h"
 #include "barrier.h"
 #include "thread_pool.h"

@@ -6,8 +6,6 @@
 
 #include <fcntl.h>
 #include <unistd.h>
-#include <linux/aio_abi.h>
-#include <sys/syscall.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 

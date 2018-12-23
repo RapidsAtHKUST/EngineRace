@@ -4,14 +4,13 @@
 #include "engine_race.h"
 
 #include <malloc.h>
+#include <byteswap.h>
 
 #include <atomic>
 #include <iostream>
 #include <chrono>
 #include <thread>
 #include <algorithm>
-
-#include <byteswap.h>
 
 #include "log.h"
 #include "util.h"
