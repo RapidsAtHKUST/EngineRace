@@ -30,18 +30,22 @@
 [engine_race/thread_pool.h](engine_race/thread_pool.h) | 简单的线程池实现 [progschj/ThreadPool](https://github.com/progschj/ThreadPool), 在之前版本中使用, 后来改用`std::thread`, `std::promise`, `std::future`代替了
 [engine_race/sparsepp](engine_race/sparsepp) | 高效的sparese hashmap实现，特点: 空间占用少, [greg7mdp/sparsepp](https://github.com/greg7mdp/sparsepp)
 
-* 官方的样例
+* 官方头文件
 
-目录 | 说明
---- | ---
-[engine_example](engine_example) | 官方样例主要代码
-[test](test) | 官方样例测试代码
+请见[include](include), 主要有`engine`和`polar_string`的定义。
 
 ### 测试的代码
 
 文件 | 说明
 --- | ---
 [playground/test_engine.cpp](playground/test_engine.cpp) | 测试代码, 三阶段分别使用不同的omp线程池
+
+### 官方的样例代码
+
+目录 | 说明
+--- | ---
+[engine_example](engine_example) | 官方样例主要代码
+[test](test) | 官方样例测试代码
 
 
 ### Cmake Config文件
@@ -61,6 +65,14 @@ make -j
 ```
 
 * 注意: [playground/test_engine.cpp](playground/test_engine.cpp)中的DB路径`/DataRapids/`需要存在, 请将SSD设备挂载到这个路径。
+
+### 官方的Makefile build
+
+请见[Makefile](Makefile)和[engine_race/Makefile](engine_race/Makefile), 生成的静态链接库在`./lib`目录下。
+
+```zsh
+make -C . TARGET_ENGINE=engine_race
+```
 
 ## 最终线上效果
 
