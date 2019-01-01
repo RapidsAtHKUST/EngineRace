@@ -174,5 +174,75 @@ thread# |  32 ok, at least `4` (better than `2`)
 QueueDepth | 32 ok
 io_getevents block threshold | `4`, busy waiting cost too much cpu
 
+### Others
 
+small queue-depth is ok for write. (199064, 2018-11-14_11-36)
 
+8 thread per round is ok because in a no-dependency implementation.
+
+```
+14:46:40 396: Write Stat of tid 56, mem usage: 576,520 KB, elapsed time: 14.337 s, ts: 1542091600.226 s
+14:46:40 396: Write Stat of tid 57, mem usage: 576,768 KB, elapsed time: 14.337 s, ts: 1542091600.227 s
+14:46:40 396: Write Stat of tid 58, mem usage: 577,012 KB, elapsed time: 14.337 s, ts: 1542091600.227 s
+14:46:40 396: Write Stat of tid 63, mem usage: 577,256 KB, elapsed time: 14.337 s, ts: 1542091600.227 s
+14:46:40 396: Write Stat of tid 60, mem usage: 577,500 KB, elapsed time: 14.337 s, ts: 1542091600.227 s
+14:46:40 396: Write Stat of tid 59, mem usage: 577,744 KB, elapsed time: 14.338 s, ts: 1542091600.227 s
+14:46:40 396: Write Stat of tid 61, mem usage: 577,988 KB, elapsed time: 14.338 s, ts: 1542091600.228 s
+14:46:40 396: Write Stat of tid 62, mem usage: 577,988 KB, elapsed time: 14.338 s, ts: 1542091600.228 s
+14:46:54 396: Write Stat of tid 53, mem usage: 576,508 KB, elapsed time: 28.705 s, ts: 1542091614.593 s
+14:46:54 396: Write Stat of tid 51, mem usage: 576,548 KB, elapsed time: 28.706 s, ts: 1542091614.594 s
+14:46:54 396: Write Stat of tid 48, mem usage: 576,800 KB, elapsed time: 28.707 s, ts: 1542091614.595 s
+14:46:54 396: Write Stat of tid 54, mem usage: 577,052 KB, elapsed time: 28.707 s, ts: 1542091614.595 s
+14:46:54 396: Write Stat of tid 50, mem usage: 577,304 KB, elapsed time: 28.707 s, ts: 1542091614.595 s
+14:46:54 396: Write Stat of tid 52, mem usage: 577,556 KB, elapsed time: 28.707 s, ts: 1542091614.595 s
+14:46:54 396: Write Stat of tid 49, mem usage: 577,808 KB, elapsed time: 28.707 s, ts: 1542091614.595 s
+14:46:54 396: Write Stat of tid 55, mem usage: 578,060 KB, elapsed time: 28.707 s, ts: 1542091614.596 s
+14:47:08 396: Write Stat of tid 42, mem usage: 580,068 KB, elapsed time: 43.079 s, ts: 1542091628.965 s
+14:47:08 396: Write Stat of tid 45, mem usage: 580,068 KB, elapsed time: 43.079 s, ts: 1542091628.966 s
+14:47:08 396: Write Stat of tid 43, mem usage: 580,108 KB, elapsed time: 43.080 s, ts: 1542091628.966 s
+14:47:08 396: Write Stat of tid 41, mem usage: 580,108 KB, elapsed time: 43.081 s, ts: 1542091628.967 s
+14:47:08 396: Write Stat of tid 44, mem usage: 580,108 KB, elapsed time: 43.080 s, ts: 1542091628.967 s
+14:47:08 396: Write Stat of tid 40, mem usage: 580,108 KB, elapsed time: 43.082 s, ts: 1542091628.968 s
+14:47:08 396: Write Stat of tid 47, mem usage: 580,108 KB, elapsed time: 43.082 s, ts: 1542091628.970 s
+14:47:08 396: Write Stat of tid 46, mem usage: 580,108 KB, elapsed time: 43.088 s, ts: 1542091628.975 s
+14:47:23 396: Write Stat of tid 33, mem usage: 578,084 KB, elapsed time: 57.386 s, ts: 1542091643.269 s
+14:47:23 396: Write Stat of tid 32, mem usage: 578,336 KB, elapsed time: 57.387 s, ts: 1542091643.270 s
+14:47:23 396: Write Stat of tid 34, mem usage: 578,588 KB, elapsed time: 57.387 s, ts: 1542091643.271 s
+14:47:23 396: Write Stat of tid 38, mem usage: 578,840 KB, elapsed time: 57.388 s, ts: 1542091643.274 s
+14:47:23 396: Write Stat of tid 35, mem usage: 579,092 KB, elapsed time: 57.390 s, ts: 1542091643.275 s
+14:47:23 396: Write Stat of tid 36, mem usage: 579,336 KB, elapsed time: 57.390 s, ts: 1542091643.276 s
+14:47:23 396: Write Stat of tid 37, mem usage: 579,588 KB, elapsed time: 57.394 s, ts: 1542091643.279 s
+14:47:23 396: Write Stat of tid 39, mem usage: 579,840 KB, elapsed time: 57.395 s, ts: 1542091643.281 s
+14:47:37 396: Write Stat of tid 27, mem usage: 578,068 KB, elapsed time: 71.688 s, ts: 1542091657.570 s
+14:47:37 396: Write Stat of tid 30, mem usage: 578,320 KB, elapsed time: 71.688 s, ts: 1542091657.570 s
+14:47:37 396: Write Stat of tid 28, mem usage: 578,572 KB, elapsed time: 71.689 s, ts: 1542091657.571 s
+14:47:37 396: Write Stat of tid 25, mem usage: 578,824 KB, elapsed time: 71.690 s, ts: 1542091657.571 s
+14:47:37 396: Write Stat of tid 26, mem usage: 579,076 KB, elapsed time: 71.690 s, ts: 1542091657.572 s
+14:47:37 396: Write Stat of tid 29, mem usage: 579,328 KB, elapsed time: 71.691 s, ts: 1542091657.574 s
+14:47:37 396: Write Stat of tid 24, mem usage: 579,580 KB, elapsed time: 71.693 s, ts: 1542091657.575 s
+14:47:37 396: Write Stat of tid 31, mem usage: 579,832 KB, elapsed time: 71.694 s, ts: 1542091657.577 s
+14:47:51 396: Write Stat of tid 18, mem usage: 580,084 KB, elapsed time: 85.986 s, ts: 1542091671.863 s
+14:47:51 396: Write Stat of tid 17, mem usage: 580,336 KB, elapsed time: 85.988 s, ts: 1542091671.864 s
+14:47:51 396: Write Stat of tid 16, mem usage: 580,588 KB, elapsed time: 85.989 s, ts: 1542091671.864 s
+14:47:51 396: Write Stat of tid 22, mem usage: 580,840 KB, elapsed time: 85.985 s, ts: 1542091671.865 s
+14:47:51 396: Write Stat of tid 20, mem usage: 581,092 KB, elapsed time: 85.986 s, ts: 1542091671.866 s
+14:47:51 396: Write Stat of tid 21, mem usage: 581,344 KB, elapsed time: 85.986 s, ts: 1542091671.866 s
+14:47:51 396: Write Stat of tid 19, mem usage: 581,596 KB, elapsed time: 85.989 s, ts: 1542091671.867 s
+14:47:51 396: Write Stat of tid 23, mem usage: 581,848 KB, elapsed time: 85.988 s, ts: 1542091671.869 s
+14:48:06 396: Write Stat of tid 14, mem usage: 582,100 KB, elapsed time: 100.284 s, ts: 1542091686.158 s
+14:48:06 396: Write Stat of tid 15, mem usage: 582,352 KB, elapsed time: 100.286 s, ts: 1542091686.161 s
+14:48:06 396: Write Stat of tid 12, mem usage: 582,604 KB, elapsed time: 100.291 s, ts: 1542091686.165 s
+14:48:06 396: Write Stat of tid 13, mem usage: 582,856 KB, elapsed time: 100.291 s, ts: 1542091686.165 s
+14:48:06 396: Write Stat of tid 10, mem usage: 582,856 KB, elapsed time: 100.296 s, ts: 1542091686.165 s
+14:48:06 396: Write Stat of tid 11, mem usage: 583,140 KB, elapsed time: 100.297 s, ts: 1542091686.166 s
+14:48:06 396: Write Stat of tid 9, mem usage: 583,180 KB, elapsed time: 100.298 s, ts: 1542091686.166 s
+14:48:06 396: Write Stat of tid 8, mem usage: 583,220 KB, elapsed time: 100.299 s, ts: 1542091686.166 s
+14:48:20 396: Write Stat of tid 7, mem usage: 581,236 KB, elapsed time: 114.592 s, ts: 1542091700.458 s
+14:48:20 396: Write Stat of tid 6, mem usage: 581,276 KB, elapsed time: 114.592 s, ts: 1542091700.458 s
+14:48:20 396: Write Stat of tid 0, mem usage: 581,316 KB, elapsed time: 114.617 s, ts: 1542091700.472 s
+14:48:20 396: Write Stat of tid 4, mem usage: 581,356 KB, elapsed time: 114.608 s, ts: 1542091700.472 s
+14:48:20 396: Write Stat of tid 1, mem usage: 581,396 KB, elapsed time: 114.616 s, ts: 1542091700.472 s
+14:48:20 396: Write Stat of tid 3, mem usage: 581,428 KB, elapsed time: 114.612 s, ts: 1542091700.473 s
+14:48:20 396: Write Stat of tid 2, mem usage: 581,468 KB, elapsed time: 114.617 s, ts: 1542091700.476 s
+14:48:20 396: Write Stat of tid 5, mem usage: 581,508 KB, elapsed time: 114.614 s, ts: 1542091700.478 s
+```
