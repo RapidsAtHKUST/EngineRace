@@ -2,17 +2,19 @@
 
 ## 1.1. 赛题介绍
 
-> 评测程序分为2个阶段：
-  1）Recover正确性评测：
-  此阶段评测程序会并发写入特定数据（key 8B、value 4KB）同时进行任意次kill -9来模拟进程意外退出（参赛引擎需要保证进程意外退出时数据持久化不丢失），接着重新打开DB，调用Read、Range接口来进行正确性校验
+评测程序分为2个阶段：
 
->  2）性能评测
->  -  随机写入：64个线程并发随机写入，每个线程使用Write各写100万次随机数据（key 8B、value 4KB）
->  -  随机读取：64个线程并发随机读取，每个线程各使用Read读取100万次随机数据
->  -  顺序读取：64个线程并发顺序读取，每个线程各使用Range有序（增序）遍历全量数据2次
->  注：
->  2.2阶段会对所有读取的kv校验是否匹配，如不通过则终止，评测失败；
->  2.3阶段除了对迭代出来每条的kv校验是否匹配外，还会额外校验是否严格递增，如不通过则终止，评测失败。
+1）Recover正确性评测：  此阶段评测程序会并发写入特定数据（key 8B、value 4KB）
+同时进行任意次kill -9来模拟进程意外退出（参赛引擎需要保证进程意外退出时数据持久化不丢失），接着重新打开DB，调用Read、Range接口来进行正确性校验。
+
+2）性能评测
+-  随机写入：64个线程并发随机写入，每个线程使用Write各写100万次随机数据（key 8B、value 4KB）
+-  随机读取：64个线程并发随机读取，每个线程各使用Read读取100万次随机数据
+-  顺序读取：64个线程并发顺序读取，每个线程各使用Range有序（增序）遍历全量数据2次
+
+注：
+2.2阶段会对所有读取的kv校验是否匹配，如不通过则终止，评测失败；
+2.3阶段除了对迭代出来每条的kv校验是否匹配外，还会额外校验是否严格递增，如不通过则终止，评测失败。
 
 ## 1.2. 最终线上效果
 
@@ -49,7 +51,8 @@
 ## 2.1. 赛题注意点
 
 * Recover正确性评测要求: 每次Write调用都要将数据至少写入到page-cache。
-* 每个阶段开始，DB Engine都会被重新打开；每个阶段进行中， 只有读取或者写入中的一种情况发生；
+* 每个阶段开始，DB Engine都会被重新打开；
+每个阶段进行中， 只有读取或者写入中的一种情况发生；
 每一阶段结束，page cache会被清空(清空page cache的时间占用总时间)。
 * 对于复赛的顺序读取，recovery阶段使用单线程，并且只遍历全量数据1次，选手需要做相应处理。
 * 评测中， Key-Value大小都是固定的， Key可用64bit无符号整数表示，并且分布均匀。
@@ -60,17 +63,16 @@
 * 傲腾存储特征
     * 为达到磁盘的峰值吞吐量，
     需要保证`iostat`中的两个关键参数`avgrq-sz`(扇区个数，一般每个扇区`512B`)和`avgqu-sz`(IO队列长度) 处于合适大小。
-    并且每个request有最大大小，不能设置太大，具体可以查看`blockdev --getmaxsect /dev/sda`(`/dev/sda`为查看的设备)；
-    * 随机读写只要有合适大小块(`avgrq-sz`)，保证足够queue-depth(`avgqu-sz`)就可以达到接近顺序读写的效果；
-    * 顺序读取通过`128KB`大小请求,`QD=8`可以达到`2595-2605 MB/s`左右；
-    * 随机读取`4KB`大小请求, `QD=20+`可以达到`2290 MB/s`左右，波动很小；
+    并且每个request有最大大小，不能设置太大，具体可以查看`blockdev --getmaxsect /dev/sda`(`/dev/sda`为查看的设备)。
+    * 随机读写只要有合适大小块(`avgrq-sz`)，保证足够IO队列长度(`avgqu-sz`)就可以达到接近顺序读写的效果。
+    * 顺序读取通过`128KB`大小请求,`QD=8`可以达到`2595-2605 MB/s`左右。
+    * 随机读取`4KB`大小请求, `QD=20+`可以达到`2290 MB/s`左右，波动很小。
     * 随机写入`16KB`大小请求, `QD=20+`可以达到`2180-2200 MB/s`。
 
 * 注意点
-    * 随机写入：保证`iostat`中的合适大小的`avgrq-sz`(mmap buffer 16KB实验测得)，
-    保证`avgqu-sz`(handle tail threads)，至少需要`QD=8`(实验中测得8,16,32都差不多)，
-    通过写文件时候系统的同步(锁)。
-    * 随机读取：保证`iostat`中的合适大小的`avgrq-sz`(handle tail threads)，尝试了读`8KB`，命中不高。
+    * 随机写入：保证`iostat`中的合适大小的`avgrq-sz`(通过实验测得 mmap buffer 16KB比较优)，
+    保证`avgqu-sz`(handle tail threads)，至少需要`QD=8`(实验中测得8,16,32都差不多)，通过写文件时候系统的同步(锁)。
+    * 随机读取：保证`iostat`中的合适大小的`avgrq-sz`(handle tail threads)。
     * 顺序读取：保证`iostat`中的合适`avgrq-sz`和`avgqu-sz`。做好充分的overlap-io和内存访问(100-110秒左右)。
     * 三阶段是独立进行的(无混合的读写操作)，因此评测不要求索引支持`O(logn)`或更低复杂度的动态插入。
 
@@ -94,38 +96,146 @@
     * 评测中不要求索引支持`O(logn)`或更低复杂度的动态插入，因此采用 bucket + sorted array 的方案；
     按照Key的Big-Endian无符号整数高位分bucket，每个Bucekt内采用根据Bucket内偏移比较的sorted array；
     通过计算bucket id 和 branchless-lower-bound加跳过重复支持value in-bucket offset查询。
-    * 并行索引构建(0.2秒，`throughput=488.28125MB/0.2s=2.44GB/s`)，每个线程分配一些buckets，
+    * 并行索引构建(0.2秒，`throughput = 488.28125MB/0.2s = 2441.4 MB/s`)，每个线程分配一些buckets，
     因为每个bucket的大小均匀所以workload balanced，多bucket使得sort时间可以忽略，
     此外sort还和io overlap在一起。
 
-* 文件总结
-    * key/value write-ahead logs 各32个(一个文件里面分bucket, bucket id相邻的在文件中相邻)。
-    * meta-file, mmap key buffer file, mmap value buffer file各1个, slice成`BUCKET_NUM`的views
-    (e.g. 1024)。
-
-## 3.2. 三个子阶段设计思路
-
-* 写入设计
+* 写入相关的文件设计
     * 写入buffer必须使用文件作为backend的(通过mmap)，来保证正确性。
-    * 清空page cache占用总时间，傲腾存储iops和throughput都高，
-    因此使用DirectIO绕过page cache手动管理缓冲和写盘。
     * 考虑到range时候顺序读盘更快，写入时候同一bucket写在同一区域。
 
+### 3.1.1. 文件总结
+
+* key/value write-ahead logs 各32个(一个文件里面分bucket, bucket id相邻的在文件中相邻)。
+* meta-file, mmap key buffer file, mmap value buffer file各1个, slice成`BUCKET_NUM`的views (e.g. 1024)。
+
+文件整体设计分为三部分: 
+(1) K-V-Log文件, (2) Meta-Count文件, (3) Key/Value Buffer文件。
+
+### 3.1.2. K-V Log文件
+
+* key-value的对应:
+逻辑上, key-value被写到一个的相同bucket, 对应到相同的in-bucket offset, 
+通过write-ahead追加到对应的log文件。 
+我们把`8-byte-key`通过big-endian转化出`uint64_t`类型的整数`key`。
+
+对应从`key`到`bucket_id`的计算如下代码所示:
+
+```cpp
+inline uint32_t get_par_bucket_id(uint64_t key) {
+    return static_cast<uint32_t >((key >> (64 - BUCKET_DIGITS)) & 0xffffffu);
+}
+```
+
+* 逻辑上的bucket到实际中的文件, 通过下面的函数算出, 
+在设计中, 
+我们让相邻的value buckets被group到同一个value log file, 
+来为range查询顺序读服务。
+
+```cpp
+inline pair<uint32_t, uint64_t> get_key_fid_foff(uint32_t bucket_id, uint32_t bucket_off) {
+    constexpr uint32_t BUCKET_NUM_PER_FILE = (BUCKET_NUM / KEY_FILE_NUM);
+    uint32_t fid = bucket_id / BUCKET_NUM_PER_FILE;
+    uint64_t foff = MAX_KEY_BUCKET_SIZE * (bucket_id % BUCKET_NUM_PER_FILE) + bucket_off;
+    return make_pair(fid, foff * sizeof(uint64_t));
+}
+
+inline pair<uint32_t, uint64_t> get_value_fid_foff(uint32_t bucket_id, uint32_t bucket_off) {
+    // Buckets 0,1,2,3... grouped together.
+    constexpr uint32_t BUCKET_NUM_PER_FILE = (BUCKET_NUM / VAL_FILE_NUM);
+    uint32_t fid = bucket_id / BUCKET_NUM_PER_FILE;
+    uint64_t foff = MAX_VAL_BUCKET_SIZE * (bucket_id % BUCKET_NUM_PER_FILE) + bucket_off;
+    return make_pair(fid, foff * VALUE_SIZE);
+}
+```
+
+* 最终设计中, 我们采用了32个value文件和32个key文件。
+这是因为多线程写入同一文件时候可以有一定的同步作用(有写入锁的存在), 
+来缓解最后剩下tail threads打不满IO的情况。 
+此外，文件过多容易触发Linux操作系统的bug，从DirectIO进入BufferIO, 即使已经标志flag设置了`O_DIRECT`.
+
+### 3.1.3. Meta-Count 文件
+
+* meta-count文件用来记录每个bucket中现在write-ahead进行到第几个in-bucket位置了, 
+该文件通过内存映射的方式, 来通过操作对应数组`mmap_meta_cnt_`， 
+记录每个bucket写入write-ahead-entry个数。
+
+```cpp
+// Meta.
+meta_cnt_file_dp_ = open(meta_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
+ftruncate(meta_cnt_file_dp_, sizeof(uint32_t) * BUCKET_NUM);
+mmap_meta_cnt_ = (uint32_t *) mmap(nullptr, sizeof(uint32_t) * (BUCKET_NUM),
+                                               PROT_READ | PROT_WRITE, MAP_SHARED, meta_cnt_file_dp_, 0);
+memset(mmap_meta_cnt_, 0, sizeof(uint32_t) * (BUCKET_NUM));
+```
+
+### 3.1.4. Key/Value Buffer 文件
+
+buffer files用来在写入时候进行对每个bucket-entries的buffer
+(通过内存映射文件得到aligned buffer, 来具备`kill-9`容错功能).
+一个bucket对应相应的key-buffer和value-buffer; 
+所有的key-buffers从一个key-buffer文件内存映射出来;
+同理所有的val-buffers从一个val-buffer文件映射出来。
+
+我们给出一个Value Buffer文件的示例, Key Buffer文件相关的设计与之类似。
+
+```cpp
+// Value Buffers. (To be sliced into BUCKET_NUM slices)
+value_buffer_file_dp_ = open(value_buffers_file_path.c_str(), O_RDWR | O_CREAT, FILE_PRIVILEGE);
+if (value_buffer_file_dp_ < 0) {
+   log_info("valbuf err info: %s", strerror(errno));
+   exit(-1);
+}
+ftruncate(value_buffer_file_dp_, tmp_buffer_value_file_size);
+mmap_value_aligned_buffer_ = (char *) mmap(nullptr, tmp_buffer_value_file_size, \
+            PROT_READ | PROT_WRITE, MAP_SHARED, value_buffer_file_dp_, 0);
+for (int i = 0; i < BUCKET_NUM; i++) {
+    mmap_value_aligned_buffer_view_[i] =
+            mmap_value_aligned_buffer_ + VALUE_SIZE * TMP_VALUE_BUFFER_SIZE * i;
+}
+```
+
+* 在设计中, 我们使用了`16KB` value buffer 和 `4KB` key buffer, 
+分别整除`VALUE_SIZE`和`sizeof(uint64_t)`。
+我们选择较小的buffer是为了让IO尽可能快地均衡地被打出去(不要有很少的线程最后还在打IO以致于打不满), 
+value buffer不选择更小是为了防止sys-cpu过高影响性能，并且我们对磁盘的benchmark显示`16KB`是一个比较优的值。
+
+## 3.2. 写入阶段思路
+
+* 清空page cache占用总时间，傲腾存储iops和throughput都高，
+    因此使用DirectIO绕过page cache手动管理缓冲和写盘。
+* 写入时候先对bucket加锁，将Key/Value一一对应，分别写入这个bucket对应的key-mmap-buffer和value-mmap-buffer， 
+在buffer满的时候写入log文件。
+
+## 3.3. 随机和顺序读取阶段设计思路
+
 * 随机读取
-    * 做最小粒度的同步。奇数和偶数线程同步。
-    * 尝试了读`8KB`，命中率不高：2%。
+    * 做最小粒度的同步。奇数和偶数线程同步，来保证64线程间较小的读取进度差别和稳定的queue-depth（24左右）。
+    * 尝试了读`8KB`，并进行缓存置换，命中率不高：2%；这说明通过读更大block-size来优化随机读取不可行。
 
 * 顺序读取
-    * io部分(io协调者， io线程)。set-affinity减少numa结点间的切换。
-    * 内存读取部分(64threads)。
-    * 每块buffer为一个读取单位，通过打合适`avgrq-sz`和`avgqu-sz`来打满IO throughput，详见io协调者。
-    * 流水线使用2块buffer滚动，偶数次次遍历重用奇数次的前几块buffer。
+    * 流水线设计：io部分(io协调者， io线程)，通过set-affinity减少numa结点间的切换；内存读取部分(64threads)同步读一个bucket与下一块bucket的io overlap在一起。
+    * 每块buffer为一个读取单位，io协调者通过提交任务给io线程打到合适`avgrq-sz`和`avgqu-sz`，从而打满IO throughput，详见io协调者。
+    * 流水线使用2块buffer滚动。
+    * 在多次全量遍历中，偶数次次遍历重用奇数次的前几块buffer(块数通过程序中的`KEEP_REUSE_BUFFER_NUM`指定，作为cache)。
+
+## 3.4. 容错(K/V Buffer Files Flush)的思路
+
+* 大体思路: 我们通过`ParallelFlushTmp`并行flush key, value buffers; 
+该函数在写入阶段的析构函数调用(如果进行到对应代码), 
+否则在读取阶段构建index前会调用。
+
+* 优化: 我们通过`ftruncate`对应文件长度为0表示所有buckets对应的需要flush的buffers已经Flush出去了, 
+避免重复的Flush. 相应逻辑在`FlushTmpFiles`函数中。
 
 # 4. 关键代码
 
 ## 4.1. 随机写入
 
-通过锁一个bucket使得key-value在bucket中一一对应，并且使得bucket的meta-count被正确地更改;
+### 4.1.1. 实现逻辑
+
+通过锁一个bucket使得key-value在bucket中**一一对应**， 
+并且使得bucket的meta-count被正确地更改;
 写入之前先写bucket对应buffer, buffer满了之后进行阻塞的`pwrite`系统调用。
 
 大体逻辑如下代码所示:
@@ -165,7 +275,7 @@
 }
 ```
 
-### 4.1.1. 优化: 调整文件个数为32
+### 4.1.2. 优化: 调整文件个数为32
 
 调整文件个数为32后，
 可以利用不同线程写同一文件时候的阻塞，取得一定程度上的同步效果。
@@ -174,9 +284,11 @@
 
 ## 4.2. 并行索引构建设计
 
-* 思路: 对每个Bucket构建SortedArray作为Index。
+* 思路: 
+对每个Bucket构建SortedArray作为Index。
 
-* 回顾: 文件设计中统一bucket的key-value对应起来了,
+* 回顾: 
+文件设计中统一bucket的key-value对应起来了,
 那么在构建中key的in-bucket offset和value的in-bucket offset是一样的。
 
 每个worker处理对应的buckets, 逻辑上的buckets可以通过之前讲的K-V Log文件设计对应过去。
@@ -191,11 +303,14 @@ if (l.key_ == r.key_) {
 }
 ```
 
-* 具体逻辑：每个线程分配到的一个任务分成两部分：1. 读取填充in-bucket-offset, 2. 排序。
+* 具体逻辑： 
+每个线程分配到的一个任务分成两部分：1. 读取填充in-bucket-offset, 2. 排序。
 1024 buckets被均匀地分到64个线程(key大致均匀地分布到每个bucket)，
 构建过程中排序和磁盘IO是overlap在一起的。
 
-详细代码如下：
+* 这个阶段主要时间开销在于读key-logs文件(sort开销可以忽略不计), 总开销大概 `0.2 seconds`左右。
+
+* 详细代码如下：
 
 ```cpp
 vector <thread> workers(NUM_READ_KEY_THREADS);
@@ -255,8 +370,6 @@ for (uint32_t tid = 0; tid < NUM_READ_KEY_THREADS; ++tid) {
 }
 ```
 
-* 这个阶段主要时间开销在于读key-logs文件(sort开销可以忽略不计), 总开销大概 `0.2 seconds`左右。
-
 ## 4.3. 随机读取
 
 ### 4.3.1. 实现逻辑
@@ -296,7 +409,7 @@ value->assign(value_buffer, VALUE_SIZE);
 ### 4.3.2. 优化：细粒度同步
 
 思路: 我们设计了同步策略来保证足够的queue-depth (25-30之间)的同时，
-又使得不同线程可以尽量同时退出, 尽量避免少queue-depth打IO情况的出现.
+又使得不同线程可以尽量同时退出, 尽量避免少queue-depth打IO情况的出现。
 
 * 实现细节: 我们引入了4个blocking queues `notify_queues_`来作为
 偶数和奇数线程的 当前和下一轮读取的同步通信工具 (`tid%2==0`与`tid%2==1`线程互相通知)。
@@ -367,52 +480,54 @@ visitor线程push buffer进入 `free_buffers_`, IO协调者从中pop buffer。
 
 ### 4.4.2. 具体实现
 
+具体实现分为三个部分：IO协调者，IO线程，以及内存vistor线程。
+
 * 对应的IO协调thread逻辑如下 (其中最重要的`ReadBucketToBuffer`
 通过保证`request-size = 128KB`，和`queue-depth=8`来打满IO):
 
 ```cpp
-            single_range_io_worker_ = new thread([this]() {
-                // Odd Round.
-                log_info("In Range IO");
-                for (uint32_t next_bucket_idx = 0; next_bucket_idx < BUCKET_NUM; next_bucket_idx++) {
-                    // 1st: Pop Buffer.
-                    auto range_clock_beg = high_resolution_clock::now();
-                    char *buffer = free_buffers_->pop(total_io_sleep_time_);
-                    auto range_clock_end = high_resolution_clock::now();
-                    double elapsed_time =
-                            duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
-                            static_cast<double>(1000000000);
-                    total_blocking_queue_time_ += elapsed_time;
+single_range_io_worker_ = new thread([this]() {
+    // Odd Round.
+    log_info("In Range IO");
+    for (uint32_t next_bucket_idx = 0; next_bucket_idx < BUCKET_NUM; next_bucket_idx++) {
+        // 1st: Pop Buffer.
+        auto range_clock_beg = high_resolution_clock::now();
+        char *buffer = free_buffers_->pop(total_io_sleep_time_);
+        auto range_clock_end = high_resolution_clock::now();
+        double elapsed_time =
+                duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
+                    static_cast<double>(1000000000);
+        total_blocking_queue_time_ += elapsed_time;
 
-                    // 2nd: Read
-                    ReadBucketToBuffer(next_bucket_idx, buffer);
-                    promises_[next_bucket_idx].set_value(buffer);
-                }
-                log_info("In Range IO, Finish Odd Round");
+        // 2nd: Read
+        ReadBucketToBuffer(next_bucket_idx, buffer);
+        promises_[next_bucket_idx].set_value(buffer);
+    }
+    log_info("In Range IO, Finish Odd Round");
 
-                // Even Round.
-                for (uint32_t next_bucket_idx = 0; next_bucket_idx < BUCKET_NUM; next_bucket_idx++) {
-                    uint32_t future_id = next_bucket_idx + BUCKET_NUM;
-                    char *buffer;
-                    if (next_bucket_idx >= KEEP_REUSE_BUFFER_NUM) {
-                        // 1st: Pop Buffer.
-                        auto range_clock_beg = high_resolution_clock::now();
-                        buffer = free_buffers_->pop(total_io_sleep_time_);
-                        auto range_clock_end = high_resolution_clock::now();
-                        double elapsed_time =
-                                duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
-                                static_cast<double>(1000000000);
-                        total_blocking_queue_time_ += elapsed_time;
+    // Even Round.
+    for (uint32_t next_bucket_idx = 0; next_bucket_idx < BUCKET_NUM; next_bucket_idx++) {
+        uint32_t future_id = next_bucket_idx + BUCKET_NUM;
+        char *buffer;
+        if (next_bucket_idx >= KEEP_REUSE_BUFFER_NUM) {
+            // 1st: Pop Buffer.
+            auto range_clock_beg = high_resolution_clock::now();
+            buffer = free_buffers_->pop(total_io_sleep_time_);
+            auto range_clock_end = high_resolution_clock::now();
+            double elapsed_time =
+                    duration_cast<nanoseconds>(range_clock_end - range_clock_beg).count() /
+                        static_cast<double>(1000000000);
+            total_blocking_queue_time_ += elapsed_time;
 
-                        // 2nd: Read
-                        ReadBucketToBuffer(next_bucket_idx, buffer);
-                    } else {
-                        buffer = cached_front_buffers_[next_bucket_idx];
-                    }
-                    promises_[future_id].set_value(buffer);
-                }
-                log_info("In Range IO, Finish Even Round");
-            });
+            // 2nd: Read
+            ReadBucketToBuffer(next_bucket_idx, buffer);
+        } else {
+            buffer = cached_front_buffers_[next_bucket_idx];
+        }
+        promises_[future_id].set_value(buffer);
+    }
+    log_info("In Range IO, Finish Even Round");
+});
 ```
 
 * 其中IO协调thread具体的submit读单个bucket任务的ReadBucketToBufferh函数，
@@ -586,7 +701,9 @@ bucket_future_id_beg += BUCKET_NUM;
 * 每次处理两轮的任务, 来最小化没有overlapped的IO和内存访问的时间。
 详细可见IO线程的逻辑(Odd Round, Even Round)。
 
-### 4.4.4. 优化2： 利用Cache一些buffers减少IO数量): cache前几块buffer来进行第二次range的优化, 减少IO数量。
+### 4.4.4. 优化2： 减少IO数量 (充分利用剩余的内存)
+
+利用cache一些buffers减少IO数量: cache前几块buffer来进行第二次range的优化, 减少IO数量。
 
 我们设计了`free_buffers_`的逻辑来精确地控制IO buffers和cache的使用。
 详细实现可见内存visitor线程收尾阶段，核心代码如下：
@@ -605,7 +722,7 @@ if (my_order == total_range_num_threads_) {
 
 ### 4.4.5. 优化3： Populate内存
 
-* 通过耗时`0.06`seconds 左右的内存populate，来使得第一次buffer-IO时候能达到磁盘读取峰值性能(减少0.1秒)。
+* 通过耗时`0.06`seconds 左右的内存populate，来使得buffer在第一次使用时候也能达到磁盘读取峰值性能(减少0.1秒)。
 
 ```cpp
 if (is_first && tid < MAX_TOTAL_BUFFER_NUM) {
