@@ -4,7 +4,7 @@
 
 use vscode-plugin (toc)
 
-[contest_summary_toc.md](contest_summary_toc.md)
+[contest_summary_toc.md](contest_summary_toc.md), [throughput.md](throughput.md)
 
 ## Code-Review
 

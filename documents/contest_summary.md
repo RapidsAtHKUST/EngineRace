@@ -16,21 +16,21 @@
 
 ## 最终线上效果
 
-* 进程耗时(取各阶段历史最佳状态)
+* 进程耗时
 
-子阶段 | 进程占用时间
---- | ---
-随机写入 | 114.1 seconds左右
-随机读取 | 105.9 seconds左右 (包括0.2 seconds index构建)
-顺序读取 | 192.1 seconds左右 (包括0.2 seconds index构建)
+子阶段 | 进程最佳占用时间 | 机器波动吞吐量
+--- | --- | ---
+随机写入 | 114.1 seconds左右  |   `2176.27-2195.34` MB/s
+随机读取 | 105.9 seconds左右 (包括0.2 seconds index构建) | `2287.23-2291.56` MB/s
+顺序读取 | 192.1 seconds左右 (包括0.2 seconds index构建) | `2596.04-2601.45` MB/s
 
 * 进程启动间隔(取其中一次作为样本)
 
 启动阶段 | 耗时
 --- | ---
-随机写入启动的间隔 | 0.1 seconds 左右
-随机写入到读取的间隔 | 0.35 seconds左右
-随机读取到顺序读取的间隔 | 0.45 seconds左右
+随机写入启动的间隔 | `0.1` seconds 左右
+随机写入到读取的间隔 | `0.35` seconds 左右
+随机读取到顺序读取的间隔 | `0.45` seconds 左右
 
 * 最优成绩
 
@@ -618,6 +618,40 @@ single_range_io_worker_ = new thread([this]() {
 
 为了支持优化2，我们设计了`free_buffers_`的逻辑来精确地控制IO buffers和cache的使用。
 
+### 优化： Populate内存
+
+通过耗时`0.06`seconds 左右的内存populate，来使得第一次buffer-IO时候能达到磁盘读取峰值性能。
+
+```cpp
+        if (is_first && tid < MAX_TOTAL_BUFFER_NUM) {
+            // Really populate the physical memory.
+            log_info("Tid: %d, Load Physical Mem %d", tid, tid);
+            for (uint32_t off = 0; off < val_buffer_max_size_; off += FILESYSTEM_BLOCK_SIZE) {
+                value_shared_buffers_[tid][off] = -1;
+            }
+            is_first = false;
+            log_info("Tid: %d, Load Physical Mem Finish %d", tid, tid);
+        }
+```
+
+### 优化: ，设置affinity
+
+通过set-affinity减少numa之间的切换(io线程绑定到 core-id `0-7` )。
+
+可参考文档：https://blogs.igalia.com/dpino/2015/10/15/multicore-architectures-and-cpu-affinity/ 。
+
+> If a process is running on a core which heavily interacts with an I/O device
+belonging to different NUMA node, performance degradation issues may appear.
+NUMA considerably benefits from the data locality principle,
+so devices and processes operating on the same data should run within the same NUMA node.
+
+
+可参考文档：https://blogs.igalia.com/dpino/2015/10/15/multicore-architectures-and-cpu-affinity/ 。
+
+> If a process is running on a core which heavily interacts with an I/O device
+belonging to different NUMA node, performance degradation issues may appear.
+NUMA considerably benefits from the data locality principle,
+so devices and processes operating on the same data should run within the same NUMA node.
 
 # 比赛经验总结和感想
 
