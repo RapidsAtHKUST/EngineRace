@@ -290,7 +290,7 @@ value buffer不选择更小是为了防止sys-cpu过高影响性能。
 visitor线程push buffer进入 `free_buffers_`, 
 IO线程从中pop buffer。
 
-对应的IO协调thread逻辑如下 (`ReadBucketToBuffer`通过aIO来打满IO):
+对应的IO协调thread逻辑如下 (`ReadBucketToBuffer`来打满IO):
 
 ```cpp
 single_range_io_worker_ = new thread([this]() {

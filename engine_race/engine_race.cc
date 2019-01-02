@@ -483,7 +483,6 @@ namespace polar_race {
         uint64_t foff;
         std::tie(fid, foff) = get_value_fid_foff(bucket_id, it->value_offset_);
 
-        // lock
         pread(value_file_dp_[fid], value_buffer, VALUE_SIZE, foff);
         NotifyRandomReader(local_block_offset, tid);
 
