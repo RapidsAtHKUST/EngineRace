@@ -440,6 +440,10 @@ namespace polar_race {
 
         if (local_block_offset == 0) {
             if (tid == 0) {
+                read_group_barriers_.resize(2);
+                for (auto i = 0; i < 2; i++) {
+                    read_group_barriers_[i] = new Barrier(NUM_THREADS / 2);
+                }
                 notify_queues_.resize(4);
                 for (auto i = 0; i < 4; i++) {
                     // Even-0,1  Odd-2,3
@@ -464,6 +468,7 @@ namespace polar_race {
         uint32_t current_round = local_block_offset - 1;
         if ((current_round % SHRINK_SYNC_FACTOR) == 0) {
             uint32_t notify_big_round_idx = get_notify_big_round(current_round);
+            read_group_barriers_[tid % 2]->Wait();
             if (tid % 2 == 0) {
                 notify_queues_[notify_big_round_idx % 2]->wait_dequeue(tmp_val);
             } else {

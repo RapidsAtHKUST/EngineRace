@@ -106,6 +106,7 @@ namespace polar_race {
         Barrier write_barrier_;
 
         // Read.
+        vector<Barrier*> read_group_barriers_;
         vector<moodycamel::BlockingConcurrentQueue<int32_t> *> notify_queues_;
         char **aligned_read_buffer_;
         Barrier read_barrier_;
